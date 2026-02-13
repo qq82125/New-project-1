@@ -1,0 +1,5 @@
+.DS_Store
+.pycache/
+*.pyc
+.mail.env
+ivd_morning_*.txt

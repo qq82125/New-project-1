@@ -1,0 +1,38 @@
+name: IVD Cloud Backup Mail
+
+on:
+  schedule:
+    # 08:40 Beijing time (UTC+8) = 00:40 UTC
+    - cron: "40 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup-send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run cloud backup sender
+        env:
+          SMTP_HOST: smtp.mail.me.com
+          SMTP_PORT: "587"
+          SMTP_USER: ${{ secrets.IVD_SMTP_USER }}
+          SMTP_PASS: ${{ secrets.IVD_SMTP_PASS }}
+          SMTP_FROM: ${{ secrets.IVD_SMTP_FROM }}
+          TO_EMAIL: ${{ secrets.IVD_TO_EMAIL }}
+          IMAP_HOST: imap.mail.me.com
+          IMAP_PORT: "993"
+          IMAP_SENT_MAILBOX: ${{ secrets.IVD_IMAP_SENT_MAILBOX }}
+          REPORT_SUBJECT_PREFIX: "全球IVD晨报 - "
+          REPORT_TZ: "Asia/Shanghai"
+        run: |
+          python3 scripts/cloud_backup_send.py
