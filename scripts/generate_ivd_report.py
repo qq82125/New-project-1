@@ -12,7 +12,11 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from http.client import RemoteDisconnected
+from socket import timeout as SocketTimeout
 from typing import Optional
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 import feedparser
@@ -53,8 +57,21 @@ def to_dt(entry) -> Optional[dt.datetime]:
     return dt.datetime(*t[:6], tzinfo=dt.timezone.utc)
 
 
-def cn_lane(title: str) -> str:
-    t = title.lower()
+def has_term(text_lc: str, term_lc: str) -> bool:
+    """
+    Reduce false positives from substring matches (e.g., 'test' matching 'latest').
+    Uses word-boundary matching for short ASCII tokens.
+    """
+    if not term_lc:
+        return False
+    if " " in term_lc or "-" in term_lc or "/" in term_lc:
+        return term_lc in text_lc
+    if term_lc.isascii() and term_lc.isalpha() and len(term_lc) <= 5:
+        return re.search(rf"\\b{re.escape(term_lc)}\\b", text_lc) is not None
+    return term_lc in text_lc
+
+def cn_lane(text: str) -> str:
+    t = text.lower()
     if any(k in t for k in ["cancer", "tumor", "oncology", "carcinoma", "pd-l1", "biomarker"]):
         return "肿瘤检测"
     if any(k in t for k in ["infect", "virus", "covid", "flu", "influenza", "pathogen", "sepsis"]):
@@ -64,8 +81,39 @@ def cn_lane(title: str) -> str:
     return "其他"
 
 
-def cn_platform(title: str) -> str:
-    t = title.lower()
+def cn_platform(text: str) -> str:
+    t = text.lower()
+    # Guardrails: avoid mis-tagging obvious pharma/business items as IVD platforms.
+    if any(
+        k in t
+        for k in [
+            "earnings",
+            "quarter",
+            "revenue",
+            "sales",
+            "layoff",
+            "restructur",
+            "acquisition",
+            "takeover",
+        ]
+    ):
+        if not any(
+            k in t
+            for k in [
+                "diagnostic",
+                "assay",
+                "test",
+                "ivd",
+                "immunoassay",
+                "pcr",
+                "sequencing",
+                "ngs",
+                "poct",
+                "pathology",
+                "laboratory",
+            ]
+        ):
+            return "跨平台/未标注"
     if any(k in t for k in ["ngs", "sequencing", "whole genome", "wgs", "rna-seq"]):
         return "NGS"
     if "digital pcr" in t or "ddpcr" in t:
@@ -76,9 +124,9 @@ def cn_platform(title: str) -> str:
         return "质谱"
     if any(k in t for k in ["flow cytometry", "cytometry"]):
         return "流式细胞"
-    if any(k in t for k in ["immunoassay", "chemiluminescence", "elisa"]):
-        return "免疫诊断（化学发光/ELISA等）"
-    if any(k in t for k in ["point-of-care", "poc", "poct"]):
+    if any(k in t for k in ["immunoassay", "chemiluminescence", "elisa", "ihc"]):
+        return "免疫诊断（化学发光/ELISA/IHC等）"
+    if any(k in t for k in ["point-of-care", "poc", "poct", "self-test", "rapid test"]):
         return "POCT/分子POCT"
     return "跨平台/未标注"
 
@@ -95,26 +143,209 @@ def cn_region(source: str, link: str) -> str:
     return "北美"
 
 
-def is_ivd_relevant(title: str) -> bool:
-    t = title.lower()
-    # Wide net; you can tighten later.
-    return any(
-        k in t
-        for k in [
-            "diagnostic",
-            "diagnostics",
-            "assay",
-            "test",
-            "ivd",
-            "pcr",
-            "sequencing",
-            "biomarker",
-            "immunoassay",
-            "lab",
-            "laboratory",
-            "pathology",
-        ]
-    )
+def score_ivd(text: str) -> int:
+    """
+    Heuristic relevance scoring to reduce noise from pharma/business-only news.
+    """
+    t = text.lower()
+
+    anchors = [
+        "diagnostic",
+        "diagnostics",
+        "assay",
+        "test",
+        "ivd",
+        "immunoassay",
+        "chemiluminescence",
+        "elisa",
+        "ihc",
+        "pcr",
+        "ddpcr",
+        "digital pcr",
+        "ngs",
+        "sequencing",
+        "poct",
+        "point-of-care",
+        "rapid test",
+        "pathology",
+        "laboratory",
+        "reagent",
+        "analyzer",
+        "companion diagnostic",
+        "cdx",
+        "labcorp",
+        "quest",
+    ]
+
+    strong = [
+        "diagnostic",
+        "diagnostics",
+        "assay",
+        "test",
+        "ivd",
+        "ldt",
+        "clia",
+        "pathology",
+        "laboratory",
+        "immunoassay",
+        "chemiluminescence",
+        "elisa",
+        "ihc",
+        "pcr",
+        "ddpcr",
+        "digital pcr",
+        "ngs",
+        "sequencing",
+        "poct",
+        "point-of-care",
+        "rapid test",
+        "mass spec",
+        "lc-ms",
+        "flow cytometry",
+        "reagent",
+        "analyzer",
+        "companion diagnostic",
+        "cdx",
+        "udi",
+        "nmpa",
+        "pmda",
+        "tga",
+        "mfds",
+        "hsa",
+        "labcorp",
+        "quest",
+    ]
+    weak = ["biomarker", "screening", "clinical lab", "lab"]
+    negative = [
+        "earnings",
+        "revenue",
+        "sales",
+        "layoff",
+        "restructur",
+        "phase ",
+        "trial",
+        "drug",
+        "therapy",
+        "vaccine",
+        "glp-1",
+    ]
+
+    s = 0
+    for k in strong:
+        if has_term(t, k):
+            s += 2
+    for k in weak:
+        if has_term(t, k):
+            s += 1
+    for k in negative:
+        if has_term(t, k):
+            s -= 1
+    # Add an extra point if any anchor term is present.
+    if any(has_term(t, a) for a in anchors):
+        s += 1
+    return s
+
+
+def is_ivd_relevant(text: str) -> bool:
+    t = text.lower()
+    # Require at least one anchor term to avoid pharma-only/business-only noise.
+    anchors = [
+        "diagnostic",
+        "diagnostics",
+        "assay",
+        "test",
+        "ivd",
+        "immunoassay",
+        "pcr",
+        "sequencing",
+        "ngs",
+        "poct",
+        "pathology",
+        "laboratory",
+        "reagent",
+        "analyzer",
+        "companion diagnostic",
+        "cdx",
+        "labcorp",
+        "quest",
+    ]
+    # Company-name anchors: allow IVD-relevant news even when generic wording is used.
+    ivd_companies = [
+        "roche",
+        "abbott",
+        "danaher",
+        "beckman coulter",
+        "cepheid",
+        "thermo fisher",
+        "siemens healthineers",
+        "bio-rad",
+        "qiagen",
+        "illumina",
+        "hologic",
+        "bio mérieux",
+        "biomerieux",
+        "becton dickinson",
+        "bd ",
+        "agilent",
+        "guardant",
+        "natera",
+        "exact sciences",
+        "gilead diagnostics",
+        "myndray",
+        "mindray",
+        "snibe",
+        "mgi",
+        "bgi",
+    ]
+    has_anchor = any(has_term(t, a) for a in anchors)
+    has_company = any(c in t for c in ivd_companies)
+    if not (has_anchor or has_company):
+        return False
+    # Slightly lower threshold if a known IVD company is involved.
+    thresh = 1 if has_company else 2
+    return score_ivd(text) >= thresh
+
+
+def is_regulatory_ivd_relevant(text: str) -> bool:
+    """
+    Regulatory feeds (FDA/TGA) are device-wide. Keep only diagnostics/IVD-adjacent
+    items to avoid flooding the briefing with non-IVD devices.
+    """
+    t = text.lower()
+    keep_terms = [
+        "ivd",
+        "in vitro",
+        "diagnostic",
+        "assay",
+        "test",
+        "laboratory",
+        "pathology",
+        "glucose",
+        "cgm",
+        "monitor",
+        "sensor",
+    ]
+    return any(has_term(t, k) for k in keep_terms)
+
+
+def is_relaxed_relevant(text: str) -> bool:
+    """
+    Fallback when strict filtering yields too few items (<8). Keeps out the
+    noisiest pharma-only content while allowing general IVD-adjacent updates.
+    """
+    t = text.lower()
+    hard_exclude = [
+        "earnings",
+        "drug",
+        "therapy",
+        "vaccine",
+        "phase ",
+        "trial",
+        "glp-1",
+    ]
+    if any(has_term(t, k) for k in hard_exclude):
+        return False
+    return True
 
 
 def cn_summary(entry) -> str:
@@ -137,24 +368,125 @@ def window_tag(published: dt.datetime, now_utc: dt.datetime) -> str:
     return "7天补充"
 
 
+def fetch_text(url: str, timeout: int = 15) -> str:
+    req = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; IVDMorningBot/1.0)",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+    )
+    try:
+        with urlopen(req, timeout=timeout) as r:
+            data = r.read()
+            return data.decode("utf-8", errors="ignore")
+    except (HTTPError, URLError, SocketTimeout, TimeoutError, RemoteDisconnected):
+        return ""
+
+
+def fetch_bytes(url: str, timeout: int = 15) -> bytes:
+    req = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; IVDMorningBot/1.0)",
+            "Accept": "application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8",
+        },
+    )
+    try:
+        with urlopen(req, timeout=timeout) as r:
+            return r.read()
+    except (HTTPError, URLError, SocketTimeout, TimeoutError, RemoteDisconnected):
+        return b""
+
+
+def collect_nmpa_udi(now_utc: dt.datetime, tz_name: str) -> list[Item]:
+    """
+    Add NMPA UDI day/week updates as high-confidence China signals.
+    """
+    url = "https://udi.nmpa.gov.cn/download.html"
+    html = fetch_text(url)
+    if not html:
+        return []
+
+    day = re.findall(r"UDID_DAY_UPDATE_(\d{8})\.zip", html)
+    week = re.findall(r"UDID_WEEKLY_UPDATE_(\d{8})_(\d{8})\.zip", html)
+    out: list[Item] = []
+
+    def mk_pub(yyyymmdd: str) -> dt.datetime:
+        d = dt.datetime.strptime(yyyymmdd, "%Y%m%d").replace(tzinfo=ZoneInfo(tz_name))
+        return d.astimezone(dt.timezone.utc)
+
+    if day:
+        # Include several recent day updates to stabilize China/APAC coverage.
+        for yyyymmdd in sorted(set(day), reverse=True)[:10]:
+            pub = mk_pub(yyyymmdd)
+            if now_utc - pub > dt.timedelta(days=7):
+                continue
+            out.append(
+                Item(
+                    title=f"NMPA UDI数据库日更包：UDID_DAY_UPDATE_{yyyymmdd}.zip（含IVD类目）",
+                    link=url,
+                    published=pub,
+                    source="NMPA UDI",
+                    region="中国",
+                    lane="政策与监管",
+                    platform="跨平台（UDI/追溯）",
+                    window_tag=window_tag(pub, now_utc),
+                    summary_cn="摘要：NMPA UDI下载页显示日更增量持续更新，可用于追溯、流通与院端主数据治理。建议关注IVD试剂类条目增量与企业信息完整度变化。",
+                )
+            )
+            if len(out) >= 10:
+                break
+
+    if week:
+        a, b = sorted({(x, y) for x, y in week}, key=lambda t: t[1])[-1]
+        pub = mk_pub(b)
+        if now_utc - pub <= dt.timedelta(days=7):
+            out.append(
+                Item(
+                    title=f"NMPA UDI数据库周更包覆盖 {a[:4]}-{a[4:6]}-{a[6:]} 至 {b[:4]}-{b[4:6]}-{b[6:]}",
+                    link=url,
+                    published=pub,
+                    source="NMPA UDI",
+                    region="中国",
+                    lane="政策与监管",
+                    platform="跨平台（UDI/数据共享）",
+                    window_tag=window_tag(pub, now_utc),
+                    summary_cn="摘要：周更包便于企业与渠道批量同步一周增量数据，降低日更抓取运维压力。对招采、院内耗材管理与合规尽调有直接价值。",
+                )
+            )
+
+    return out
+
+
 def main() -> int:
     tz_name = env("REPORT_TZ", "Asia/Shanghai")
     now_local = now_in_tz(tz_name)
     now_utc = now_local.astimezone(dt.timezone.utc)
 
-    # RSS sources (v1). Extend with APAC/China sources as you add stable feeds.
+    # RSS sources. Broad media + targeted regulatory feeds (APAC & NA).
     sources = [
-        ("Fierce Biotech", "https://www.fiercebiotech.com/rss/xml", "北美"),
-        ("Fierce Healthcare", "https://www.fiercehealthcare.com/rss/xml", "北美"),
-        ("MedTech Dive", "https://www.medtechdive.com/feeds/news/", "北美"),
-        ("BioPharma Dive", "https://www.biopharmadive.com/feeds/news/", "北美"),
+        ("Fierce Biotech", "https://www.fiercebiotech.com/rss/xml", "北美", "media"),
+        ("Fierce Healthcare", "https://www.fiercehealthcare.com/rss/xml", "北美", "media"),
+        ("MedTech Dive", "https://www.medtechdive.com/feeds/news/", "北美", "media"),
+        ("BioPharma Dive", "https://www.biopharmadive.com/feeds/news/", "北美", "media"),
+        ("TGA Safety Alerts", "https://www.tga.gov.au/feeds/alert/safety-alerts.xml", "亚太", "regulatory"),
+        ("TGA Product Recalls", "https://www.tga.gov.au/feeds/alert/product-recalls.xml", "亚太", "regulatory"),
+        ("FDA MedWatch", "https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/medwatch/rss.xml", "北美", "regulatory"),
     ]
 
     items: list[Item] = []
     seen_links: set[str] = set()
+    relaxed_pool: list[Item] = []
 
-    for src_name, url, default_region in sources:
-        feed = feedparser.parse(url)
+    # China official: stabilize APAC/China share.
+    items.extend(collect_nmpa_udi(now_utc, tz_name))
+
+    for src_name, url, default_region, kind in sources:
+        data = fetch_bytes(url, timeout=15)
+        if not data:
+            continue
+        feed = feedparser.parse(data)
         for e in feed.entries[:50]:
             title = (getattr(e, "title", "") or "").strip()
             link = (getattr(e, "link", "") or "").strip()
@@ -162,8 +494,17 @@ def main() -> int:
                 continue
             if link in seen_links:
                 continue
-            if not is_ivd_relevant(title):
-                continue
+            fallback_ok = False
+            combined = title + " " + (getattr(e, "summary", "") or getattr(e, "description", "") or "")
+            if kind == "regulatory":
+                if not is_regulatory_ivd_relevant(combined):
+                    continue
+            else:
+                if not is_ivd_relevant(combined):
+                    # keep as a fallback candidate if it's not obviously pharma-only
+                    if not is_relaxed_relevant(combined):
+                        continue
+                    fallback_ok = True
             pub = to_dt(e)
             if not pub:
                 continue
@@ -173,24 +514,37 @@ def main() -> int:
 
             wt = window_tag(pub, now_utc)
             region = cn_region(src_name, link) or default_region
-            lane = cn_lane(title)
-            platform = cn_platform(title)
+            lane = cn_lane(combined)
+            platform = cn_platform(combined)
             summary = cn_summary(e)
 
-            items.append(
-                Item(
-                    title=title,
-                    link=link,
-                    published=pub,
-                    source=src_name,
-                    region=region,
-                    lane=lane,
-                    platform=platform,
-                    window_tag=wt,
-                    summary_cn=summary,
-                )
+            it = Item(
+                title=title,
+                link=link,
+                published=pub,
+                source=src_name,
+                region=region,
+                lane=lane,
+                platform=platform,
+                window_tag=wt,
+                summary_cn=summary,
             )
+            if kind != "regulatory" and fallback_ok:
+                relaxed_pool.append(it)
+            else:
+                items.append(it)
             seen_links.add(link)
+
+    # If strict filter yields too few items, top up from relaxed pool (newest first).
+    if len(items) < 8 and relaxed_pool:
+        relaxed_pool.sort(key=lambda x: x.published, reverse=True)
+        for it in relaxed_pool:
+            if len(items) >= 8:
+                break
+            # avoid dup links
+            if it.link in {x.link for x in items}:
+                continue
+            items.append(it)
 
     # Sort: newest first.
     items.sort(key=lambda x: x.published, reverse=True)
@@ -300,4 +654,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
