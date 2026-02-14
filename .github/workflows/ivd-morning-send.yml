@@ -31,7 +31,7 @@ jobs:
           REPORT_TZ: "Asia/Shanghai"
         run: |
           mkdir -p reports
-          python3 scripts/generate_ivd_report.py > "reports/ivd_morning_$(python3 -c 'import datetime as d; print(d.datetime.now().strftime(\"%Y-%m-%d\"))').txt"
+          python3 scripts/generate_ivd_report.py > "reports/ivd_morning_$(python3 -c 'import datetime as d; from zoneinfo import ZoneInfo; print(d.datetime.now(ZoneInfo(\"Asia/Shanghai\")).strftime(\"%Y-%m-%d\"))').txt"
 
       - name: Send email via iCloud SMTP
         env:
