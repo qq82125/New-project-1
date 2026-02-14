@@ -7,6 +7,7 @@ import smtplib
 import ssl
 import sys
 from email.mime.text import MIMEText
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 
@@ -79,10 +80,19 @@ def load_body(report_file: str, date_str: str) -> str:
 
     return (
         f"全球IVD晨报 - {date_str}\n\n"
-        "这是云端兜底补发邮件。\n"
-        "本次未检测到本机8:30发送记录，已触发备份通道。\n"
-        "请回复本邮件或检查自动化日志。"
+        "【云端兜底补发】\n"
+        "触发原因：未检测到当日“已发送”记录（可能为本机未联网/本机任务未运行/发送失败）。\n"
+        "建议：查看GitHub Actions运行日志，并检查本机8:30任务与网络状态。\n"
     )
+
+
+def ensure_report_file(body: str, date_str: str) -> Path:
+    reports_dir = Path("reports")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    p = reports_dir / f"ivd_morning_{date_str}.txt"
+    if not p.exists():
+        p.write_text(body, encoding="utf-8")
+    return p
 
 
 def send_email(
@@ -147,6 +157,7 @@ def main() -> int:
         print(f"IMAP check failed, continue with backup send: {e}")
 
     body = load_body(report_file, date_str)
+    out = ensure_report_file(body, date_str)
     send_email(
         smtp_host=smtp_host,
         smtp_port=smtp_port,
@@ -157,7 +168,7 @@ def main() -> int:
         subject=subject,
         body=body,
     )
-    print("Backup sent")
+    print(f"Backup sent (report={out})")
     return 0
 
 

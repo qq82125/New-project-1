@@ -47,7 +47,9 @@ jobs:
           python3 scripts/send_report_smtp.py reports
 
       - name: Upload report artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ivd-morning-report
           path: reports/*.txt
+          retention-days: 14
