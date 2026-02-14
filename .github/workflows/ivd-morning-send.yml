@@ -1,0 +1,53 @@
+name: IVD Morning Send
+
+on:
+  schedule:
+    # 08:30 Beijing time (UTC+8) = 00:30 UTC
+    - cron: "30 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python3 -m pip install --quiet --upgrade pip
+          python3 -m pip install --quiet feedparser requests beautifulsoup4 lxml
+
+      - name: Generate report
+        env:
+          REPORT_TZ: "Asia/Shanghai"
+        run: |
+          mkdir -p reports
+          python3 scripts/generate_ivd_report.py > "reports/ivd_morning_$(python3 -c 'import datetime as d; print(d.datetime.now().strftime(\"%Y-%m-%d\"))').txt"
+
+      - name: Send email via iCloud SMTP
+        env:
+          SMTP_HOST: smtp.mail.me.com
+          SMTP_PORT: "587"
+          SMTP_USER: ${{ secrets.IVD_SMTP_USER }}
+          SMTP_PASS: ${{ secrets.IVD_SMTP_PASS }}
+          SMTP_FROM: ${{ secrets.IVD_SMTP_FROM }}
+          TO_EMAIL: ${{ secrets.IVD_TO_EMAIL }}
+          REPORT_TZ: "Asia/Shanghai"
+          REPORT_SUBJECT_PREFIX: "全球IVD晨报 - "
+        run: |
+          python3 scripts/send_report_smtp.py reports
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ivd-morning-report
+          path: reports/*.txt
