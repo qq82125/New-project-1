@@ -150,6 +150,10 @@ def select_sources(
     selector: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     selector = selector or {}
+    # Trust tier filter: allow only sources with tier >= min_trust_tier (A highest).
+    trust_rank = {"A": 3, "B": 2, "C": 1}
+    min_tt = str(selector.get("min_trust_tier", "C")).strip().upper() or "C"
+    min_rank = trust_rank.get(min_tt, 1)
     include_tags = set(str(x) for x in selector.get("include_tags", []))
     exclude_tags = set(str(x) for x in selector.get("exclude_tags", []))
     include_ids = set(str(x) for x in selector.get("include_source_ids", []))
@@ -158,6 +162,9 @@ def select_sources(
 
     out = []
     for s in sources:
+        tt = str(s.get("trust_tier", "C")).strip().upper() or "C"
+        if trust_rank.get(tt, 0) < min_rank:
+            continue
         sid = str(s.get("id", ""))
         if enabled_only and not bool(s.get("enabled", True)):
             continue

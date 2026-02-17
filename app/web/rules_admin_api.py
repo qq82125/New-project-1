@@ -303,20 +303,20 @@ def create_app(project_root: Path | None = None) -> FastAPI:
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>@@TITLE@@</title>
   <style>
-	    :root {
-	      --bg: #0b0f17;
-	      --panel: #0f1523;
-	      --panel2: #101a2d;
-	      --text: #e8eefc;
-	      --muted: rgba(232,238,252,.70);
-	      --border: rgba(232,238,252,.12);
-	      --ok: #4be38f;
-	      --err: #ff667a;
-	      --warn: #ffd166;
-	      --accent: #7aa6ff;
-	      --activeRowBg: rgba(75,227,143,.10);
-	      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-	    }
+        :root {
+          --bg: #0b0f17;
+          --panel: #0f1523;
+          --panel2: #101a2d;
+          --text: #e8eefc;
+          --muted: rgba(232,238,252,.70);
+          --border: rgba(232,238,252,.12);
+          --ok: #4be38f;
+          --err: #ff667a;
+          --warn: #ffd166;
+          --accent: #7aa6ff;
+          --activeRowBg: rgba(75,227,143,.10);
+          --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        }
     body { font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif; margin: 0; background: radial-gradient(1200px 600px at 20% 0%, #162245 0%, var(--bg) 60%); color: var(--text); }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
@@ -344,36 +344,38 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     pre { background: rgba(0,0,0,.25); padding:10px; border-radius:12px; overflow:auto; border:1px solid var(--border); }
     table { width:100%; border-collapse: collapse; table-layout: fixed; }
     th, td { border-bottom:1px solid var(--border); padding:8px 6px; text-align:left; vertical-align:top; overflow:hidden; }
-	    th { font-size: 12px; color: var(--muted); font-weight: 700; }
-	    tr:hover td { background: rgba(122,166,255,.06); }
-	    /* Active version highlight: keep contrast on dark background */
-	    tr.activeRow td { background: var(--activeRowBg) !important; color: var(--text) !important; }
-	    tr.activeRow td:first-child { box-shadow: inset 3px 0 0 rgba(75,227,143,.65); }
-	    tr.activeRow a { color: var(--text) !important; text-decoration: underline dotted rgba(232,238,252,.40); }
-	    .ok { color: var(--ok); font-weight:700; }
-	    .err { color: var(--err); font-weight:700; }
-	    .warn { color: var(--warn); font-weight:700; }
+        th { font-size: 12px; color: var(--muted); font-weight: 700; }
+        tr:hover td { background: rgba(122,166,255,.06); }
+        /* Active version highlight: keep contrast on dark background */
+        tr.activeRow td { background: var(--activeRowBg) !important; color: var(--text) !important; }
+        tr.activeRow td:first-child { box-shadow: inset 3px 0 0 rgba(75,227,143,.65); }
+        tr.activeRow a { color: var(--text) !important; text-decoration: underline dotted rgba(232,238,252,.40); }
+        .ok { color: var(--ok); font-weight:700; }
+        .err { color: var(--err); font-weight:700; }
+        .warn { color: var(--warn); font-weight:700; }
     .pill { display:inline-block; font-size: 12px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); }
     .row { display:flex; gap: 10px; align-items: center; }
     .grow { flex: 1; }
     .toastWrap { position: fixed; right: 14px; top: 14px; display:flex; flex-direction: column; gap: 10px; z-index: 50; }
     .toast { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: rgba(15,21,35,.92); box-shadow: 0 20px 60px rgba(0,0,0,.35); max-width: 420px; }
     .toast .t { font-weight: 800; margin-bottom: 4px; }
-	    .drawer { margin-top: 10px; border:1px solid var(--border); border-radius: 12px; padding: 10px; background: rgba(10,16,28,.55); }
-	    .kvs { display:grid; grid-template-columns: 120px 1fr; gap: 6px 10px; font-size: 12px; color: var(--muted); }
-	    .kvs b { color: var(--text); font-weight: 700; }
-	    details.help { margin-top: 10px; }
-	    details.help summary { cursor: pointer; color: var(--muted); font-size: 12px; }
-	    details.help .box { margin-top: 8px; border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: rgba(10,16,28,.45); }
-	    details.help ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
-	    details.help li { margin: 6px 0; }
-	    .cards { display:grid; grid-template-columns: 1fr; gap: 10px; }
-	    .clusterCard { border:1px solid var(--border); border-radius: 12px; padding: 10px; background: rgba(16,26,45,.55); }
-	    .clusterTitle { font-weight: 800; }
-    .small { font-size: 12px; color: var(--muted); }
-    td.urlcol { width: 340px; }
-    a.url { display:inline-block; max-width: 100%; overflow:hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
-    td.tagcol { width: 220px; }
+        .drawer { margin-top: 10px; border:1px solid var(--border); border-radius: 12px; padding: 10px; background: rgba(10,16,28,.55); }
+        .kvs { display:grid; grid-template-columns: 120px 1fr; gap: 6px 10px; font-size: 12px; color: var(--muted); }
+        .kvs b { color: var(--text); font-weight: 700; }
+        details.help { margin-top: 10px; }
+        details.help summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+        details.help .box { margin-top: 8px; border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: rgba(10,16,28,.45); }
+        details.help ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
+        details.help li { margin: 6px 0; }
+        .cards { display:grid; grid-template-columns: 1fr; gap: 10px; }
+            .clusterCard { border:1px solid var(--border); border-radius: 12px; padding: 10px; background: rgba(16,26,45,.55); }
+            .clusterTitle { font-weight: 800; }
+        .small { font-size: 12px; color: var(--muted); }
+        .chk { display:inline-flex; align-items:center; gap: 8px; margin: 4px 12px 4px 0; font-size: 12px; color: var(--muted); user-select: none; }
+        .chk input { width: auto; }
+        td.urlcol { width: 340px; }
+        a.url { display:inline-block; max-width: 100%; overflow:hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+        td.tagcol { width: 220px; }
     .nowrap { white-space: nowrap; }
     td.actionscol { width: 160px; }
   </style>
@@ -383,13 +385,13 @@ def create_app(project_root: Path | None = None) -> FastAPI:
   <div class="app">
     @@NAV@@
     <main class="main">
-	      <div class="topbar">
-	        <div class="title">@@TITLE@@</div>
-	        <div class="statusbar" id="statusbar">就绪</div>
-	      </div>
-	      @@BODY@@
-	    </main>
-	  </div>
+          <div class="topbar">
+            <div class="title">@@TITLE@@</div>
+            <div class="statusbar" id="statusbar">就绪</div>
+          </div>
+          @@BODY@@
+        </main>
+      </div>
   <script>
   function setStatus(s) {
     const el = document.getElementById('statusbar');
@@ -880,58 +882,58 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     @app.get("/admin/email", response_class=HTMLResponse)
     def page_email(_: dict[str, str] = Depends(_auth_guard)) -> str:
         body = """
-	        <div class="layout">
-	          <div class="card">
-	            <label>规则 Profile</label>
-	            <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
-	            <label>启用开关</label><select id="enabled"><option value="true">true</option><option value="false">false</option></select>
-	            <label>发送时间(小时)</label><input id="hour" type="number" min="0" max="23"/>
-	            <label>发送时间(分钟)</label><input id="minute" type="number" min="0" max="59"/>
-	            <label>收件人列表(逗号分隔)</label><input id="recipients" placeholder="a@b.com,c@d.com"/>
-	            <label>主题模板</label><input id="subject_template" />
-	            <label>操作人</label><input id="created_by" value="rules-admin-ui"/>
-	            <div>
-	              <button onclick="saveDraft()">保存草稿并校验</button>
-	              <button id="btnPublish" onclick="publishDraft()" disabled>发布生效</button>
-	              <span class="pill" id="verPill">生效版本: -</span>
-	            </div>
-	            <p id="status"></p>
-	            <details class="help">
-	              <summary>字段说明/用法</summary>
-	              <div class="box">
-	                <ul>
-	                  <li><b>规则 Profile</b>：灰度/配置档位。通常用 <code>legacy</code> 保持原行为，用 <code>enhanced</code> 启用增强规则。</li>
-	                  <li><b>启用开关</b>：关闭后不发送邮件（用于临时停发或维护窗口）。</li>
-	                  <li><b>发送时间</b>：按北京时间定时触发（GitHub Actions 兜底补发逻辑不受这里影响）。</li>
-	                  <li><b>收件人列表</b>：逗号分隔邮箱地址（将写入 rules 的 recipient 字段）。</li>
-	                  <li><b>主题模板</b>：支持占位符（例如 <code>{{date}}</code>），用于生成邮件主题。</li>
-	                </ul>
-	              </div>
-	            </details>
-	          </div>
-	          <div class="card">
-	            <label>试跑日期(可选, YYYY-MM-DD)</label><input id="dryrun_date" />
-	            <div class="row">
-	              <button onclick="preview()">试跑预览(不发信)</button>
-	              <button onclick="copyPreview()">复制预览</button>
-	            </div>
-	            <div>
-	              <label>高亮关键词(逗号分隔，留空自动从 content_rules 读取 include/exclude)</label>
-	              <input id="highlight_terms" />
-	            </div>
-	            <pre id="preview"></pre>
-	            <details class="help">
-	              <summary>预览说明</summary>
-	              <div class="box">
-	                <ul>
-	                  <li><b>试跑预览</b>：走一遍内容生成链路并输出预览，但不会真实发信。</li>
-	                  <li><b>高亮关键词</b>：用于在预览里标注命中词；留空会自动读取当前采集规则里的包含/排除词。</li>
-	                </ul>
-	              </div>
-	            </details>
-	          </div>
-	        </div>
-	        """
+            <div class="layout">
+              <div class="card">
+                <label>规则 Profile</label>
+                <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
+                <label>启用开关</label><select id="enabled"><option value="true">true</option><option value="false">false</option></select>
+                <label>发送时间(小时)</label><input id="hour" type="number" min="0" max="23"/>
+                <label>发送时间(分钟)</label><input id="minute" type="number" min="0" max="59"/>
+                <label>收件人列表(逗号分隔)</label><input id="recipients" placeholder="a@b.com,c@d.com"/>
+                <label>主题模板</label><input id="subject_template" />
+                <label>操作人</label><input id="created_by" value="rules-admin-ui"/>
+                <div>
+                  <button onclick="saveDraft()">保存草稿并校验</button>
+                  <button id="btnPublish" onclick="publishDraft()" disabled>发布生效</button>
+                  <span class="pill" id="verPill">生效版本: -</span>
+                </div>
+                <p id="status"></p>
+                <details class="help">
+                  <summary>字段说明/用法</summary>
+                  <div class="box">
+                    <ul>
+                      <li><b>规则 Profile</b>：灰度/配置档位。通常用 <code>legacy</code> 保持原行为，用 <code>enhanced</code> 启用增强规则。</li>
+                      <li><b>启用开关</b>：关闭后不发送邮件（用于临时停发或维护窗口）。</li>
+                      <li><b>发送时间</b>：按北京时间定时触发（GitHub Actions 兜底补发逻辑不受这里影响）。</li>
+                      <li><b>收件人列表</b>：逗号分隔邮箱地址（将写入 rules 的 recipient 字段）。</li>
+                      <li><b>主题模板</b>：支持占位符（例如 <code>{{date}}</code>），用于生成邮件主题。</li>
+                    </ul>
+                  </div>
+                </details>
+              </div>
+              <div class="card">
+                <label>试跑日期(可选, YYYY-MM-DD)</label><input id="dryrun_date" />
+                <div class="row">
+                  <button onclick="preview()">试跑预览(不发信)</button>
+                  <button onclick="copyPreview()">复制预览</button>
+                </div>
+                <div>
+                  <label>高亮关键词(逗号分隔，留空自动从 content_rules 读取 include/exclude)</label>
+                  <input id="highlight_terms" />
+                </div>
+                <pre id="preview"></pre>
+                <details class="help">
+                  <summary>预览说明</summary>
+                  <div class="box">
+                    <ul>
+                      <li><b>试跑预览</b>：走一遍内容生成链路并输出预览，但不会真实发信。</li>
+                      <li><b>高亮关键词</b>：用于在预览里标注命中词；留空会自动读取当前采集规则里的包含/排除词。</li>
+                    </ul>
+                  </div>
+                </details>
+              </div>
+            </div>
+            """
         js = """
         let currentConfig = null;
         let currentDraftId = null;
@@ -950,12 +952,12 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           }
           return out;
         }
-	        async function loadActive() {
-	          const profile = document.getElementById('profile').value;
-	          const j = await api(`/admin/api/email_rules/active?profile=${encodeURIComponent(profile)}`);
-	          if (!j || !j.ok) { document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
-	          currentConfig = j.config_json;
-	          document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
+            async function loadActive() {
+              const profile = document.getElementById('profile').value;
+              const j = await api(`/admin/api/email_rules/active?profile=${encodeURIComponent(profile)}`);
+              if (!j || !j.ok) { document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
+              currentConfig = j.config_json;
+              document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
           document.getElementById('enabled').value = String(!!(currentConfig.overrides||{}).enabled);
           const sw = (currentConfig.defaults||{}).send_window || {};
           document.getElementById('hour').value = sw.hour ?? 8;
@@ -963,7 +965,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           const rec = (currentConfig.defaults||{}).recipient || '';
           document.getElementById('recipients').value = rec;
           document.getElementById('subject_template').value = (currentConfig.defaults||{}).subject_template || '';
-	          document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
+              document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
           document.getElementById('btnPublish').disabled = true;
           currentDraftId = null;
         }
@@ -981,37 +983,37 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           cfg.ruleset = 'email_rules';
           return cfg;
         }
-	        async function saveDraft() {
+            async function saveDraft() {
           const profile = document.getElementById('profile').value;
           const created_by = document.getElementById('created_by').value || 'rules-admin-ui';
           const j = await api('/admin/api/email_rules/draft','POST',{ profile, created_by, config_json: buildConfig() });
           if (!j) return;
           currentDraftId = j.draft?.id || null;
           const errs = j.draft?.validation_errors || [];
-	          if (j.ok) {
-	            document.getElementById('status').innerHTML = `<span class="ok">草稿校验通过（draft_id=${currentDraftId}）</span>`;
-	            document.getElementById('btnPublish').disabled = false;
-	            toast('ok','草稿校验通过',`draft_id=${currentDraftId}`);
-	          } else {
-	            document.getElementById('status').innerHTML = `<span class="err">草稿校验失败</span>\\n${JSON.stringify(errs,null,2)}`;
-	            document.getElementById('btnPublish').disabled = true;
-	            toast('err','草稿校验失败', `${errs.length} 处错误`);
-	          }
-	        }
+              if (j.ok) {
+                document.getElementById('status').innerHTML = `<span class="ok">草稿校验通过（draft_id=${currentDraftId}）</span>`;
+                document.getElementById('btnPublish').disabled = false;
+                toast('ok','草稿校验通过',`draft_id=${currentDraftId}`);
+              } else {
+                document.getElementById('status').innerHTML = `<span class="err">草稿校验失败</span>\\n${JSON.stringify(errs,null,2)}`;
+                document.getElementById('btnPublish').disabled = true;
+                toast('err','草稿校验失败', `${errs.length} 处错误`);
+              }
+            }
         async function publishDraft() {
           const profile = document.getElementById('profile').value;
           const created_by = document.getElementById('created_by').value || 'rules-admin-ui';
           const j = await api('/admin/api/email_rules/publish','POST',{ profile, draft_id: currentDraftId, created_by });
-	          if (j && j.ok) {
+              if (j && j.ok) {
             document.getElementById('status').innerHTML = `<span class="ok">已生效版本号：${j.version}</span>`;
             document.getElementById('btnPublish').disabled = true;
             toast('ok','发布成功', `version=${j.version}`);
             await loadActive();
-	          } else {
-	            document.getElementById('status').innerHTML = `<span class="err">发布失败</span>\\n${JSON.stringify(j,null,2)}`;
-	            toast('err','发布失败', JSON.stringify(j?.errors||j?.error||j));
-	          }
-	        }
+              } else {
+                document.getElementById('status').innerHTML = `<span class="err">发布失败</span>\\n${JSON.stringify(j,null,2)}`;
+                toast('err','发布失败', JSON.stringify(j?.errors||j?.error||j));
+              }
+            }
         async function preview() {
           const profile = document.getElementById('profile').value;
           const date = document.getElementById('dryrun_date').value.trim();
@@ -1030,12 +1032,12 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             includeTerms = inc.include_keywords||[];
             excludeTerms = exc.exclude_keywords||[];
           }
-	          const md = j.preview_markdown || '(空)';
+              const md = j.preview_markdown || '(空)';
           const base = escHtml(md);
           const html = highlightInEscaped(base, includeTerms, 'hl-inc');
           const html2 = highlightInEscaped(html, excludeTerms, 'hl-exc');
           document.getElementById('preview').innerHTML = html2;
-	          toast('ok','试跑完成', `运行ID=${j.run_id}`);
+              toast('ok','试跑完成', `运行ID=${j.run_id}`);
         }
         async function copyPreview(){
           const el = document.getElementById('preview');
@@ -1057,248 +1059,371 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     @app.get("/admin/content", response_class=HTMLResponse)
     def page_content(_: dict[str, str] = Depends(_auth_guard)) -> str:
         body = """
-		        <div class="layout">
-		          <div class="card">
-		            <label>规则 Profile</label>
-		            <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
-		            <label>全局采集频次(小时)</label><input id="primary_hours" type="number" min="1" max="168"/>
-		            <label>去重窗口(天)</label><input id="fallback_days" type="number" min="1" max="30"/>
-		            <label>关键词包含(逗号分隔)</label><input id="include_keywords"/>
-		            <label>关键词排除(逗号分隔)</label><input id="exclude_keywords"/>
-		            <label>赛道映射（lane_mapping）</label>
-		            <textarea id="lane_mapping" rows="6" placeholder="示例：\n肿瘤检测: 肿瘤, 癌, oncology, cancer\n感染检测: 感染, 病原, virus, influenza\n生殖与遗传检测: 生殖, 遗传, NIPT, prenatal\n其他: 免疫, 代谢, 心血管"></textarea>
-		            <label>技术平台映射（platform_mapping）</label>
-		            <textarea id="platform_mapping" rows="6" placeholder="示例：\nNGS: ngs, sequencing, wgs\nPCR: pcr, 核酸\n数字PCR: ddpcr, digital pcr, 数字pcr\n免疫诊断（化学发光/ELISA/IHC等）: 化学发光, immunoassay, elisa\nPOCT/分子POCT: poct, rapid test\n微流控/单分子: microfluidic, single molecule"></textarea>
-		            <label>事件类型映射（event_mapping）</label>
-		            <textarea id="event_mapping" rows="6" placeholder="示例：\n监管审批与指南: NMPA, CMDE, FDA, guideline, approval\n并购融资/IPO与合作: acquisition, financing, IPO, partnership\n注册上市: registration, launch\n产品发布: product, assay, kit\n临床与科研证据: clinical, study, trial\n支付与招采: tender, procurement, 招采, 采购\n政策与市场动态: policy, reimbursement, market"></textarea>
-		            <label>地区过滤(逗号分隔)</label><input id="allowed_regions"/>
-		            <label>赛道过滤(逗号分隔)</label><input id="tracks"/>
-		            <label>最低可信度</label><input id="min_confidence" type="number" step="0.01" min="0" max="1"/>
-		            <label>操作人</label><input id="created_by" value="rules-admin-ui"/>
-		            <div>
-		              <button onclick="saveDraft()">保存草稿并校验</button>
-		              <button id="btnPublish" onclick="publishDraft()" disabled>发布生效</button>
-		              <span class="pill" id="verPill">生效版本: -</span>
-		            </div>
-		            <p id="status"></p>
-		            <details class="help">
-		              <summary>字段说明/用法</summary>
-		              <div class="box">
-		                <ul>
-		                  <li><b>全局采集频次</b>：控制主要抓取周期（小时）。越短越及时，但更耗时/更易触发限流。</li>
-		                  <li><b>去重窗口</b>：用于“24小时优先，不足则补近7天”的时间窗策略，以及 story 聚合/去重的窗口基准。</li>
-		                  <li><b>关键词包含/排除</b>：基础过滤器。包含为空通常表示不过滤；排除用于剔除软文/非相关噪音。</li>
-		                  <li><b>映射规则（lane/platform/event）</b>：用于把标题/摘要中的关键词映射到“赛道/平台/事件类型”标签。支持两种填写方式：每行 <code>标签: 关键词1,关键词2</code>；或直接粘贴 JSON（对象：key 为标签，value 为关键词数组）。</li>
-		                  <li><b>地区/赛道过滤</b>：用于聚焦某些区域或业务方向（例如 <code>cn</code>/<code>apac</code>、<code>肿瘤</code>/<code>感染</code> 等）。</li>
-		                  <li><b>最低可信度</b>：0-1 的阈值，低于该值的条目不会入选候选集。</li>
-		                </ul>
-		              </div>
-		            </details>
-		          </div>
-	          <div class="card">
-	            <label>试跑日期(可选, YYYY-MM-DD)</label><input id="dryrun_date" />
-	            <button onclick="preview()">试跑预览(不发信)</button>
-	            <div class="drawer" id="summary"></div>
-	            <div class="cards" id="clusters"></div>
-	            <details class="help">
-	              <summary>预览说明</summary>
-	              <div class="box">
-	                <ul>
-	                  <li><b>候选条数</b>：过滤/分类前的入选候选数量。</li>
-	                  <li><b>聚合后条数</b>：启用 story 聚合后，只保留主条目的数量（other_sources 会挂在主条目下）。</li>
-		                  <li><b>聚合簇列表</b>：展示聚合规模较大的簇，便于检查去重是否“过度合并”。</li>
-	                </ul>
-	              </div>
-	            </details>
-	          </div>
-	        </div>
-	        """
+                    <div class="layout">
+                      <div class="card">
+                        <label>规则 Profile</label>
+                        <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
+                        <label>24小时优先窗口(小时, primary_hours)</label><input id="primary_hours" type="number" min="1" max="72"/>
+                        <label>回补窗口(天, fallback_days)</label><input id="fallback_days" type="number" min="1" max="14"/>
+
+                        <label>条目数量目标（min/max）</label>
+                        <div class="row">
+                          <input id="items_min" type="number" min="1" max="30"/>
+                          <input id="items_max" type="number" min="1" max="50"/>
+                        </div>
+                        <label>24小时内不足该值则启用7天回补（topup_if_24h_lt）</label>
+                        <input id="topup_if_24h_lt" type="number" min="0" max="30"/>
+
+                        <label>区域纠偏目标（apac_min_share / china_min_share，0-1）</label>
+                        <div class="row">
+                          <input id="apac_min_share" type="number" step="0.01" min="0" max="1"/>
+                          <input id="china_min_share" type="number" step="0.01" min="0" max="1"/>
+                        </div>
+
+                        <label>关键词包（keywords_pack，逗号分隔）</label>
+                        <input id="keywords_pack" placeholder="ivd_core,oncology,infection,repro_genetics,policy_market"/>
+                        <label>最低信源可信等级（content_sources.min_trust_tier）</label>
+                        <select id="min_trust_tier">
+                          <option value="A">A（最严格）</option>
+                          <option value="B">B</option>
+                          <option value="C">C（最宽松）</option>
+                        </select>
+                        <label>关键词包含(逗号分隔)</label><input id="include_keywords"/>
+                        <label>关键词排除(逗号分隔)</label><input id="exclude_keywords"/>
+
+                        <label>去重与重复率阈值</label>
+                        <div class="row">
+                          <input id="title_similarity_threshold" type="number" step="0.01" min="0.5" max="1" placeholder="标题相似度阈值 0.78"/>
+                          <input id="daily_max_repeat_rate" type="number" step="0.01" min="0" max="1" placeholder="昨日报重复率上限 0.25"/>
+                        </div>
+                        <input id="recent_7d_max_repeat_rate" type="number" step="0.01" min="0" max="1" placeholder="近7日峰值重复率上限 0.40"/>
+
+                        <label>故事级聚合（Story Clustering）</label>
+                        <div class="row">
+                          <label style="margin:0;min-width:140px">启用</label>
+                          <select id="cluster_enabled" style="width:140px"><option value="true">true</option><option value="false">false</option></select>
+                          <label style="margin:0;min-width:140px">窗口(小时)</label>
+                          <input id="cluster_window_hours" type="number" min="1" max="720" style="width:140px"/>
+                        </div>
+                        <div class="box" style="margin-top:8px">
+                          <div class="small" style="margin-bottom:6px">聚合键策略（按顺序尝试，命中即用）</div>
+                          <label class="chk"><input type="checkbox" name="cluster_key" value="canonical_url"/> canonical_url</label>
+                          <label class="chk"><input type="checkbox" name="cluster_key" value="normalized_url_host_path"/> normalized_url_host_path</label>
+                          <label class="chk"><input type="checkbox" name="cluster_key" value="title_fingerprint_v1"/> title_fingerprint_v1</label>
+                        </div>
+                        <div class="box" style="margin-top:8px">
+                          <div class="small" style="margin-bottom:6px">主条目选择（同一簇内，按顺序比较）</div>
+                          <label class="chk"><input type="checkbox" name="cluster_primary" value="source_priority"/> source_priority</label>
+                          <label class="chk"><input type="checkbox" name="cluster_primary" value="evidence_grade"/> evidence_grade</label>
+                          <label class="chk"><input type="checkbox" name="cluster_primary" value="published_at_earliest"/> published_at_earliest</label>
+                          <label class="chk"><input type="checkbox" name="cluster_primary" value="published_at_latest"/> published_at_latest</label>
+                          <label class="chk"><input type="checkbox" name="cluster_primary" value="first_seen_earliest"/> first_seen_earliest</label>
+                        </div>
+                        <label>other_sources 最大保留数（max_other_sources）</label>
+                        <input id="cluster_max_other_sources" type="number" min="0" max="20"/>
+
+                        <label>赛道映射（lane_mapping）</label>
+                        <textarea id="lane_mapping" rows="6" placeholder="示例：\n肿瘤检测: 肿瘤, 癌, oncology, cancer\n感染检测: 感染, 病原, virus, influenza\n生殖与遗传检测: 生殖, 遗传, NIPT, prenatal\n其他: 免疫, 代谢, 心血管"></textarea>
+                        <label>技术平台映射（platform_mapping）</label>
+                        <textarea id="platform_mapping" rows="6" placeholder="示例：\nNGS: ngs, sequencing, wgs\nPCR: pcr, 核酸\n数字PCR: ddpcr, digital pcr, 数字pcr\n免疫诊断（化学发光/ELISA/IHC等）: 化学发光, immunoassay, elisa\nPOCT/分子POCT: poct, rapid test\n微流控/单分子: microfluidic, single molecule"></textarea>
+                    <label>事件类型映射（event_mapping）</label>
+                    <textarea id="event_mapping" rows="6" placeholder="示例：\n监管审批与指南: NMPA, CMDE, FDA, guideline, approval\n并购融资/IPO与合作: acquisition, financing, IPO, partnership\n注册上市: registration, launch\n产品发布: product, assay, kit\n临床与科研证据: clinical, study, trial\n支付与招采: tender, procurement, 招采, 采购\n政策与市场动态: policy, reimbursement, market"></textarea>
+                    <label>地区过滤(逗号分隔)</label><input id="allowed_regions"/>
+                    <label>赛道过滤(逗号分隔)</label><input id="tracks"/>
+                    <label>最低可信度</label><input id="min_confidence" type="number" step="0.01" min="0" max="1"/>
+                    <label>操作人</label><input id="created_by" value="rules-admin-ui"/>
+                    <div>
+                      <button onclick="saveDraft()">保存草稿并校验</button>
+                      <button id="btnPublish" onclick="publishDraft()" disabled>发布生效</button>
+                      <span class="pill" id="verPill">生效版本: -</span>
+                    </div>
+                    <p id="status"></p>
+                        <details class="help">
+                          <summary>字段说明/用法</summary>
+                          <div class="box">
+                            <ul>
+                              <li><b>24小时优先窗口/回补窗口</b>：严格优先选择过去24小时内信息；不足时从近7天候选池回补，并在每条前标注“24小时内/7天补充”。</li>
+                              <li><b>条目数量目标</b>：控制 A 段“今日要点”的候选数量区间。<code>topup_if_24h_lt</code> 用于触发“24h不足则7d回补”。</li>
+                              <li><b>区域纠偏目标</b>：用于约束候选集的区域占比（例如 亚太>=40%），不足时可配合 QC 的回补偏好优先补 CN/APAC 监管/招采。</li>
+                              <li><b>关键词包含/排除</b>：基础过滤器。包含为空通常表示不过滤；排除用于剔除软文/非相关噪音。</li>
+                              <li><b>去重/重复率阈值</b>：标题相似度阈值越高越严格；重复率阈值用于 QC 审计（建议配合 Versions/Dry-run 验证）。</li>
+                              <li><b>故事级聚合</b>：同一新闻多源转载只保留 1 条主条目，其他来源挂载到 <code>other_sources</code>（不丢信息）。</li>
+                              <li><b>映射规则（lane/platform/event）</b>：用于把标题/摘要中的关键词映射到“赛道/平台/事件类型”标签。支持两种填写方式：每行 <code>标签: 关键词1,关键词2</code>；或直接粘贴 JSON（对象：key 为标签，value 为关键词数组）。</li>
+                              <li><b>地区/赛道过滤</b>：用于聚焦某些区域或业务方向（例如 <code>cn</code>/<code>apac</code>、<code>肿瘤</code>/<code>感染</code> 等）。</li>
+                              <li><b>最低可信度</b>：0-1 的阈值，低于该值的条目不会入选候选集。</li>
+                            </ul>
+                          </div>
+                        </details>
+                  </div>
+              <div class="card">
+                <label>试跑日期(可选, YYYY-MM-DD)</label><input id="dryrun_date" />
+                <button onclick="preview()">试跑预览(不发信)</button>
+                <div class="drawer" id="summary"></div>
+                <div class="cards" id="clusters"></div>
+                <details class="help">
+                  <summary>预览说明</summary>
+                  <div class="box">
+                    <ul>
+                      <li><b>候选条数</b>：过滤/分类前的入选候选数量。</li>
+                      <li><b>聚合后条数</b>：启用 story 聚合后，只保留主条目的数量（other_sources 会挂在主条目下）。</li>
+                          <li><b>聚合簇列表</b>：展示聚合规模较大的簇，便于检查去重是否“过度合并”。</li>
+                    </ul>
+                  </div>
+                </details>
+              </div>
+            </div>
+            """
         js = """
-	        let currentConfig = null;
-	        let currentDraftId = null;
-	        function csv(v){ return (v||[]).join(','); }
-	        function arr(v){ return (v||'').split(',').map(s=>s.trim()).filter(Boolean); }
-	        function esc(s){ return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
-	        function mappingToText(m){
-	          if(!m || typeof m !== 'object') return '';
-	          const lines = [];
-	          for(const k of Object.keys(m)){
-	            const v = m[k];
-	            if(Array.isArray(v)){
-	              const toks = v.map(x=>String(x||'').trim()).filter(Boolean);
-	              if(toks.length) lines.push(`${k}: ${toks.join(', ')}`);
-	            }
-	          }
-	          return lines.join('\\n');
-	        }
-	        function parseMapping(text){
-	          const t = String(text||'').trim();
-	          if(!t) return {};
-	          if(t.startsWith('{')){
-	            try{
-	              const obj = JSON.parse(t);
-	              if(obj && typeof obj === 'object' && !Array.isArray(obj)) return obj;
-	            }catch(e){}
-	          }
-	          const out = {};
-	          for(const raw of t.split(/\\r?\\n/)){
-	            const line = raw.trim();
-	            if(!line) continue;
-	            const idx = line.indexOf(':');
-	            if(idx < 0) continue;
-	            const label = line.slice(0, idx).trim();
-	            const rhs = line.slice(idx+1).trim();
-	            if(!label || !rhs) continue;
-	            const parts = rhs.split(/[，,;；]/).map(s=>s.trim()).filter(Boolean);
-	            if(parts.length) out[label] = parts;
-	          }
-	          return out;
-	        }
-	        function ensureRule(cfg, type, id, priority){
-	          let r = (cfg.rules||[]).find(x=>x.type===type);
-	          if(!r){
-	            r = {id, enabled:true, priority, type, params:{}};
-	            cfg.rules = (cfg.rules||[]).concat([r]);
-	          }
-	          if(!r.id) r.id = id;
-	          if(r.priority == null) r.priority = priority;
-	          if(r.enabled == null) r.enabled = true;
-	          if(!r.params || typeof r.params !== 'object') r.params = {};
-	          return r;
-	        }
-		        async function loadActive() {
-		          const profile = document.getElementById('profile').value;
-		          const j = await api(`/admin/api/content_rules/active?profile=${encodeURIComponent(profile)}`);
-		          if (!j || !j.ok) { document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
-		          currentConfig = j.config_json;
-		          document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
-	          const tw = (currentConfig.defaults||{}).time_window || {};
-	          document.getElementById('primary_hours').value = tw.primary_hours ?? 24;
-	          document.getElementById('fallback_days').value = tw.fallback_days ?? 7;
-	          const includeRule = ((currentConfig.rules||[]).find(r=>r.type==='include_filter')||{}).params||{};
-	          const excludeRule = ((currentConfig.rules||[]).find(r=>r.type==='exclude_filter')||{}).params||{};
-	          const laneRule = (currentConfig.rules||[]).find(r=>r.type==='lane_mapping') || {};
-	          const platformRule = (currentConfig.rules||[]).find(r=>r.type==='platform_mapping') || {};
-	          const eventRule = (currentConfig.rules||[]).find(r=>r.type==='event_mapping') || {};
-	          document.getElementById('include_keywords').value = csv(includeRule.include_keywords||[]);
-	          document.getElementById('exclude_keywords').value = csv(excludeRule.exclude_keywords||[]);
-	          document.getElementById('lane_mapping').value = mappingToText(laneRule.params||{});
-	          document.getElementById('platform_mapping').value = mappingToText(platformRule.params||{});
-	          document.getElementById('event_mapping').value = mappingToText(eventRule.params||{});
-	          document.getElementById('allowed_regions').value = csv(((currentConfig.defaults||{}).region_filter||{}).allowed_regions||[]);
-	          document.getElementById('tracks').value = csv((currentConfig.defaults||{}).coverage_tracks||[]);
-	          document.getElementById('min_confidence').value = Number(((currentConfig.overrides||{}).min_confidence ?? 0));
-		          document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
-	          document.getElementById('btnPublish').disabled = true;
-	          currentDraftId = null;
-	        }
-	        function buildConfig() {
-	          const cfg = JSON.parse(JSON.stringify(currentConfig||{}));
-	          if (!cfg.defaults) cfg.defaults = {};
-	          if (!cfg.defaults.time_window) cfg.defaults.time_window = {};
-	          if (!cfg.defaults.region_filter) cfg.defaults.region_filter = {};
-	          if (!cfg.overrides) cfg.overrides = {};
-	          cfg.defaults.time_window.primary_hours = Number(document.getElementById('primary_hours').value||24);
-	          cfg.defaults.time_window.fallback_days = Number(document.getElementById('fallback_days').value||7);
-	          cfg.defaults.region_filter.allowed_regions = arr(document.getElementById('allowed_regions').value);
-	          cfg.defaults.coverage_tracks = arr(document.getElementById('tracks').value);
-	          cfg.overrides.min_confidence = Number(document.getElementById('min_confidence').value||0);
-	          cfg.profile = document.getElementById('profile').value;
-	          cfg.ruleset = 'content_rules';
-	          const includeKeywords = arr(document.getElementById('include_keywords').value);
-	          const excludeKeywords = arr(document.getElementById('exclude_keywords').value);
-	          let includeRule = (cfg.rules||[]).find(r=>r.type==='include_filter');
-	          if (!includeRule) { includeRule = {id:'include-ui',enabled:true,priority:10,type:'include_filter',params:{}}; cfg.rules = (cfg.rules||[]).concat([includeRule]); }
-	          includeRule.params = includeRule.params || {};
-	          includeRule.params.include_keywords = includeKeywords;
-	          let excludeRule = (cfg.rules||[]).find(r=>r.type==='exclude_filter');
-	          if (!excludeRule) { excludeRule = {id:'exclude-ui',enabled:true,priority:20,type:'exclude_filter',params:{}}; cfg.rules = (cfg.rules||[]).concat([excludeRule]); }
-	          excludeRule.params = excludeRule.params || {};
-	          excludeRule.params.exclude_keywords = excludeKeywords;
+                let currentConfig = null;
+                let currentDraftId = null;
+                function csv(v){ return (v||[]).join(','); }
+                function arr(v){ return (v||'').split(',').map(s=>s.trim()).filter(Boolean); }
+                function esc(s){ return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+                function setChecks(name, values){
+                  const set = new Set((values||[]).map(String));
+                  for(const el of document.querySelectorAll(`input[name="${name}"]`)){
+                    el.checked = set.has(String(el.value));
+                  }
+                }
+                function getChecks(name){
+                  const out = [];
+                  for(const el of document.querySelectorAll(`input[name="${name}"]:checked`)){
+                    out.push(String(el.value));
+                  }
+                  return out;
+                }
+                function mappingToText(m){
+                  if(!m || typeof m !== 'object') return '';
+                  const lines = [];
+                  for(const k of Object.keys(m)){
+                const v = m[k];
+                if(Array.isArray(v)){
+                  const toks = v.map(x=>String(x||'').trim()).filter(Boolean);
+                  if(toks.length) lines.push(`${k}: ${toks.join(', ')}`);
+                }
+              }
+              return lines.join('\\n');
+            }
+            function parseMapping(text){
+              const t = String(text||'').trim();
+              if(!t) return {};
+              if(t.startsWith('{')){
+                try{
+                  const obj = JSON.parse(t);
+                  if(obj && typeof obj === 'object' && !Array.isArray(obj)) return obj;
+                }catch(e){}
+              }
+              const out = {};
+              for(const raw of t.split(/\\r?\\n/)){
+                const line = raw.trim();
+                if(!line) continue;
+                const idx = line.indexOf(':');
+                if(idx < 0) continue;
+                const label = line.slice(0, idx).trim();
+                const rhs = line.slice(idx+1).trim();
+                if(!label || !rhs) continue;
+                const parts = rhs.split(/[，,;；]/).map(s=>s.trim()).filter(Boolean);
+                if(parts.length) out[label] = parts;
+              }
+              return out;
+            }
+            function ensureRule(cfg, type, id, priority){
+              let r = (cfg.rules||[]).find(x=>x.type===type);
+              if(!r){
+                r = {id, enabled:true, priority, type, params:{}};
+                cfg.rules = (cfg.rules||[]).concat([r]);
+              }
+              if(!r.id) r.id = id;
+              if(r.priority == null) r.priority = priority;
+              if(r.enabled == null) r.enabled = true;
+              if(!r.params || typeof r.params !== 'object') r.params = {};
+              return r;
+            }
+                async function loadActive() {
+                  const profile = document.getElementById('profile').value;
+                  const j = await api(`/admin/api/content_rules/active?profile=${encodeURIComponent(profile)}`);
+                  if (!j || !j.ok) { document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
+                  currentConfig = j.config_json;
+                  document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
+                  const tw = (currentConfig.defaults||{}).time_window || {};
+                  document.getElementById('primary_hours').value = tw.primary_hours ?? 24;
+                  document.getElementById('fallback_days').value = tw.fallback_days ?? 7;
+                  const il = (currentConfig.defaults||{}).item_limit || {};
+                  document.getElementById('items_min').value = il.min ?? 10;
+                  document.getElementById('items_max').value = il.max ?? 15;
+                  document.getElementById('topup_if_24h_lt').value = il.topup_if_24h_lt ?? 10;
+                  const rf = (currentConfig.defaults||{}).region_filter || {};
+                  document.getElementById('apac_min_share').value = rf.apac_min_share ?? 0.4;
+                  document.getElementById('china_min_share').value = rf.china_min_share ?? 0.2;
+                  const ov = currentConfig.overrides||{};
+                  document.getElementById('keywords_pack').value = csv(ov.keywords_pack||[]);
+                  const cs = (currentConfig.defaults||{}).content_sources || {};
+                  document.getElementById('min_trust_tier').value = cs.min_trust_tier || 'C';
+                  const includeRule = ((currentConfig.rules||[]).find(r=>r.type==='include_filter')||{}).params||{};
+                  const excludeRule = ((currentConfig.rules||[]).find(r=>r.type==='exclude_filter')||{}).params||{};
+                  const laneRule = (currentConfig.rules||[]).find(r=>r.type==='lane_mapping') || {};
+                  const platformRule = (currentConfig.rules||[]).find(r=>r.type==='platform_mapping') || {};
+                  const eventRule = (currentConfig.rules||[]).find(r=>r.type==='event_mapping') || {};
+                  const dedupeRule = (currentConfig.rules||[]).find(r=>r.type==='dedupe' && (r.params||{}).title_similarity_threshold != null) || {};
+                  const dp = dedupeRule.params || {};
+                  document.getElementById('title_similarity_threshold').value = dp.title_similarity_threshold ?? 0.78;
+                  document.getElementById('daily_max_repeat_rate').value = dp.daily_max_repeat_rate ?? 0.25;
+                  document.getElementById('recent_7d_max_repeat_rate').value = dp.recent_7d_max_repeat_rate ?? 0.40;
+                  const dc = (currentConfig.defaults||{}).dedupe_cluster || {};
+                  document.getElementById('cluster_enabled').value = String(dc.enabled ?? false);
+                  document.getElementById('cluster_window_hours').value = dc.window_hours ?? 72;
+                  document.getElementById('cluster_max_other_sources').value = dc.max_other_sources ?? 5;
+                  setChecks('cluster_key', dc.key_strategies || ['canonical_url','normalized_url_host_path','title_fingerprint_v1']);
+                  setChecks('cluster_primary', dc.primary_select || ['source_priority','evidence_grade','published_at_earliest']);
+                  document.getElementById('include_keywords').value = csv(includeRule.include_keywords||[]);
+                  document.getElementById('exclude_keywords').value = csv(excludeRule.exclude_keywords||[]);
+                  document.getElementById('lane_mapping').value = mappingToText(laneRule.params||{});
+                  document.getElementById('platform_mapping').value = mappingToText(platformRule.params||{});
+                  document.getElementById('event_mapping').value = mappingToText(eventRule.params||{});
+                  document.getElementById('allowed_regions').value = csv((rf.allowed_regions||[]));
+                  document.getElementById('tracks').value = csv((currentConfig.defaults||{}).coverage_tracks||[]);
+                  document.getElementById('min_confidence').value = Number(((currentConfig.overrides||{}).min_confidence ?? 0));
+                  document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
+                  document.getElementById('btnPublish').disabled = true;
+                  currentDraftId = null;
+                }
+                function buildConfig() {
+                  const cfg = JSON.parse(JSON.stringify(currentConfig||{}));
+                  if (!cfg.defaults) cfg.defaults = {};
+                  if (!cfg.defaults.time_window) cfg.defaults.time_window = {};
+                  if (!cfg.defaults.item_limit) cfg.defaults.item_limit = {};
+                  if (!cfg.defaults.region_filter) cfg.defaults.region_filter = {};
+                  if (!cfg.defaults.dedupe_cluster) cfg.defaults.dedupe_cluster = {};
+                  if (!cfg.defaults.content_sources) cfg.defaults.content_sources = {};
+                  if (!cfg.defaults.region_filter) cfg.defaults.region_filter = {};
+                  if (!cfg.overrides) cfg.overrides = {};
+                  cfg.defaults.time_window.primary_hours = Number(document.getElementById('primary_hours').value||24);
+                  cfg.defaults.time_window.fallback_days = Number(document.getElementById('fallback_days').value||7);
+                  cfg.defaults.item_limit.min = Number(document.getElementById('items_min').value||10);
+                  cfg.defaults.item_limit.max = Number(document.getElementById('items_max').value||15);
+                  cfg.defaults.item_limit.topup_if_24h_lt = Number(document.getElementById('topup_if_24h_lt').value||10);
+                  cfg.defaults.region_filter.allowed_regions = arr(document.getElementById('allowed_regions').value);
+                  cfg.defaults.region_filter.apac_min_share = Number(document.getElementById('apac_min_share').value||0.4);
+                  cfg.defaults.region_filter.china_min_share = Number(document.getElementById('china_min_share').value||0.2);
+                  cfg.defaults.coverage_tracks = arr(document.getElementById('tracks').value);
+                  cfg.overrides.min_confidence = Number(document.getElementById('min_confidence').value||0);
+                  cfg.overrides.keywords_pack = arr(document.getElementById('keywords_pack').value);
+                  cfg.defaults.content_sources.min_trust_tier = document.getElementById('min_trust_tier').value || 'C';
+                  cfg.profile = document.getElementById('profile').value;
+                  cfg.ruleset = 'content_rules';
+              const includeKeywords = arr(document.getElementById('include_keywords').value);
+              const excludeKeywords = arr(document.getElementById('exclude_keywords').value);
+              let includeRule = (cfg.rules||[]).find(r=>r.type==='include_filter');
+              if (!includeRule) { includeRule = {id:'include-ui',enabled:true,priority:10,type:'include_filter',params:{}}; cfg.rules = (cfg.rules||[]).concat([includeRule]); }
+              includeRule.params = includeRule.params || {};
+              includeRule.params.include_keywords = includeKeywords;
+              let excludeRule = (cfg.rules||[]).find(r=>r.type==='exclude_filter');
+              if (!excludeRule) { excludeRule = {id:'exclude-ui',enabled:true,priority:20,type:'exclude_filter',params:{}}; cfg.rules = (cfg.rules||[]).concat([excludeRule]); }
+              excludeRule.params = excludeRule.params || {};
+              excludeRule.params.exclude_keywords = excludeKeywords;
 
-	          const laneMap = parseMapping(document.getElementById('lane_mapping').value);
-	          const platformMap = parseMapping(document.getElementById('platform_mapping').value);
-	          const eventMap = parseMapping(document.getElementById('event_mapping').value);
-	          const laneR = ensureRule(cfg, 'lane_mapping', 'lane-map-ui', 30);
-	          laneR.params = laneMap;
-	          laneR.enabled = Object.keys(laneMap||{}).length > 0;
-	          const platR = ensureRule(cfg, 'platform_mapping', 'platform-map-ui', 40);
-	          platR.params = platformMap;
-	          platR.enabled = Object.keys(platformMap||{}).length > 0;
-	          const eventR = ensureRule(cfg, 'event_mapping', 'event-map-ui', 50);
-	          eventR.params = eventMap;
-	          eventR.enabled = Object.keys(eventMap||{}).length > 0;
+              const laneMap = parseMapping(document.getElementById('lane_mapping').value);
+              const platformMap = parseMapping(document.getElementById('platform_mapping').value);
+                  const eventMap = parseMapping(document.getElementById('event_mapping').value);
+                  const laneR = ensureRule(cfg, 'lane_mapping', 'lane-map-ui', 30);
+                  laneR.params = laneMap;
+                  laneR.enabled = Object.keys(laneMap||{}).length > 0;
+                  const platR = ensureRule(cfg, 'platform_mapping', 'platform-map-ui', 40);
+                  platR.params = platformMap;
+                  platR.enabled = Object.keys(platformMap||{}).length > 0;
+                  const eventR = ensureRule(cfg, 'event_mapping', 'event-map-ui', 50);
+                  eventR.params = eventMap;
+                  eventR.enabled = Object.keys(eventMap||{}).length > 0;
 
-	          return cfg;
-	        }
-	        async function saveDraft() {
+                  // Dedupe thresholds (title repeat controls)
+                  const dedupeT = ensureRule(cfg, 'dedupe', 'dedupe-ui-thresholds', 70);
+                  dedupeT.params = dedupeT.params || {};
+                  dedupeT.params.title_similarity_threshold = Number(document.getElementById('title_similarity_threshold').value||0.78);
+                  dedupeT.params.daily_max_repeat_rate = Number(document.getElementById('daily_max_repeat_rate').value||0.25);
+                  dedupeT.params.recent_7d_max_repeat_rate = Number(document.getElementById('recent_7d_max_repeat_rate').value||0.40);
+
+                  // Story clustering config lives in defaults (and optionally mirrored into a dedupe rule).
+                  cfg.defaults.dedupe_cluster.enabled = document.getElementById('cluster_enabled').value === 'true';
+                  cfg.defaults.dedupe_cluster.window_hours = Number(document.getElementById('cluster_window_hours').value||72);
+                  cfg.defaults.dedupe_cluster.key_strategies = getChecks('cluster_key');
+                  cfg.defaults.dedupe_cluster.primary_select = getChecks('cluster_primary');
+                  cfg.defaults.dedupe_cluster.max_other_sources = Number(document.getElementById('cluster_max_other_sources').value||5);
+                  const dedupeC = (cfg.rules||[]).find(r=>r.type==='dedupe' && (r.params||{}).dedupe_cluster) || null;
+                  if(dedupeC){
+                    dedupeC.params = dedupeC.params || {};
+                    dedupeC.params.dedupe_cluster = JSON.parse(JSON.stringify(cfg.defaults.dedupe_cluster));
+                  }
+
+                  return cfg;
+                }
+            async function saveDraft() {
           const profile = document.getElementById('profile').value;
           const created_by = document.getElementById('created_by').value || 'rules-admin-ui';
           const j = await api('/admin/api/content_rules/draft','POST',{ profile, created_by, config_json: buildConfig() });
           if (!j) return;
           currentDraftId = j.draft?.id || null;
           const errs = j.draft?.validation_errors || [];
-	          if (j.ok) {
-	            document.getElementById('status').innerHTML = `<span class="ok">草稿校验通过（draft_id=${currentDraftId}）</span>`;
-	            document.getElementById('btnPublish').disabled = false;
-	            toast('ok','草稿校验通过',`draft_id=${currentDraftId}`);
-	          } else {
-	            document.getElementById('status').innerHTML = `<span class="err">草稿校验失败</span>\\n${JSON.stringify(errs,null,2)}`;
-	            document.getElementById('btnPublish').disabled = true;
-	            toast('err','草稿校验失败', `${errs.length} 处错误`);
-	          }
-	        }
+              if (j.ok) {
+                document.getElementById('status').innerHTML = `<span class="ok">草稿校验通过（draft_id=${currentDraftId}）</span>`;
+                document.getElementById('btnPublish').disabled = false;
+                toast('ok','草稿校验通过',`draft_id=${currentDraftId}`);
+              } else {
+                document.getElementById('status').innerHTML = `<span class="err">草稿校验失败</span>\\n${JSON.stringify(errs,null,2)}`;
+                document.getElementById('btnPublish').disabled = true;
+                toast('err','草稿校验失败', `${errs.length} 处错误`);
+              }
+            }
         async function publishDraft() {
           const profile = document.getElementById('profile').value;
           const created_by = document.getElementById('created_by').value || 'rules-admin-ui';
           const j = await api('/admin/api/content_rules/publish','POST',{ profile, draft_id: currentDraftId, created_by });
-	          if (j && j.ok) {
+              if (j && j.ok) {
             document.getElementById('status').innerHTML = `<span class="ok">已生效版本号：${j.version}</span>`;
             document.getElementById('btnPublish').disabled = true;
             toast('ok','发布成功', `version=${j.version}`);
             await loadActive();
-	          } else {
-	            document.getElementById('status').innerHTML = `<span class="err">发布失败</span>\\n${JSON.stringify(j,null,2)}`;
-	            toast('err','发布失败', JSON.stringify(j?.errors||j?.error||j));
-	          }
-	        }
+              } else {
+                document.getElementById('status').innerHTML = `<span class="err">发布失败</span>\\n${JSON.stringify(j,null,2)}`;
+                toast('err','发布失败', JSON.stringify(j?.errors||j?.error||j));
+              }
+            }
         async function preview() {
           const profile = document.getElementById('profile').value;
           const date = document.getElementById('dryrun_date').value.trim();
           const j = await api('/admin/api/content_rules/dryrun','POST',{ profile, date });
           if (!j || !j.ok) { document.getElementById('summary').textContent = JSON.stringify(j,null,2); return; }
-	          document.getElementById('summary').innerHTML = `
-	            <div class="kvs">
-	              <div>运行ID</div><b>${esc(j.run_id||'')}</b>
-	              <div>候选条数</div><b>${esc(j.items_before_count)}</b>
-	              <div>聚合后条数</div><b>${esc(j.items_after_count)}</b>
-	              <div>要点条数(A段)</div><b>${esc(j.items_count)}</b>
-	            </div>`;
+              document.getElementById('summary').innerHTML = `
+                <div class="kvs">
+                  <div>运行ID</div><b>${esc(j.run_id||'')}</b>
+                  <div>候选条数</div><b>${esc(j.items_before_count)}</b>
+                  <div>聚合后条数</div><b>${esc(j.items_after_count)}</b>
+                  <div>要点条数(A段)</div><b>${esc(j.items_count)}</b>
+                </div>`;
           const cards = (j.top_clusters||[]).map(c=>{
             const p = c.primary||{};
             const title = esc(p.title||'');
             const why = esc(c.dedupe_reason||c.key_strategy||'');
             const size = esc(c.cluster_size||0);
-	            const links = (c.other_sources||[]).map(o=>`<div class="small"><a href="${esc(o.url||'')}" target="_blank">${esc(o.source||'信源')}</a> ${esc(o.published_at||'')}</div>`).join('');
-	            return `<div class="clusterCard">
-	              <div class="row"><div class="clusterTitle grow">${title}</div><span class="pill">数量 ${size}</span></div>
-	              <div class="small">${why}</div>
-	              <div style="margin-top:6px">${links}</div>
-	            </div>`;
+                const links = (c.other_sources||[]).map(o=>`<div class="small"><a href="${esc(o.url||'')}" target="_blank">${esc(o.source||'信源')}</a> ${esc(o.published_at||'')}</div>`).join('');
+                return `<div class="clusterCard">
+                  <div class="row"><div class="clusterTitle grow">${title}</div><span class="pill">数量 ${size}</span></div>
+                  <div class="small">${why}</div>
+                  <div style="margin-top:6px">${links}</div>
+                </div>`;
           }).join('');
           document.getElementById('clusters').innerHTML = cards || '<div class="small">无可展示聚合簇</div>';
-	          toast('ok','试跑完成', `运行ID=${j.run_id}`);
+              toast('ok','试跑完成', `运行ID=${j.run_id}`);
         }
         document.getElementById('profile').addEventListener('change', loadActive);
         loadActive();
         """
         return _page_shell("采集规则", body, js)
 
-    @app.get("/admin/qc", response_class=HTMLResponse)
-    def page_qc(_: dict[str, str] = Depends(_auth_guard)) -> str:
-        body = """
-        <div class="layout">
-          <div class="card">
+        @app.get("/admin/qc", response_class=HTMLResponse)
+        def page_qc(_: dict[str, str] = Depends(_auth_guard)) -> str:
+            body = """
+            <div class="layout">
+              <div class="card">
             <label>规则 Profile</label>
             <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
             <label>启用开关</label><select id="enabled"><option value="true">true</option><option value="false">false</option></select>
@@ -1319,13 +1444,35 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             <label>传闻触发词（rumor_policy.trigger_terms，逗号分隔）</label><input id="rumor_terms" placeholder="rumor,unconfirmed,据传,传闻"/>
             <label>传闻标签（rumor_policy.label）</label><input id="rumor_label" placeholder="传闻（未确认）"/>
 
-            <label>QC fail 策略（fail_policy.mode）</label>
-            <select id="fail_mode">
-              <option value="only_warn">only_warn（仅提示）</option>
-              <option value="auto_topup">auto_topup（自动补齐）</option>
-              <option value="degrade_output_legacy">degrade_output_legacy（降级输出）</option>
-              <option value="require_manual_review">require_manual_review（标记人工复核）</option>
-            </select>
+                <label>QC fail 策略（fail_policy.mode）</label>
+                <select id="fail_mode">
+                  <option value="only_warn">only_warn（仅提示）</option>
+                  <option value="auto_topup">auto_topup（自动补齐）</option>
+                  <option value="degrade_output_legacy">degrade_output_legacy（降级输出）</option>
+                  <option value="require_manual_review">require_manual_review（标记人工复核）</option>
+                </select>
+                <label>回补偏好（fail_policy.topup_prefer，逗号分隔）</label>
+                <input id="topup_prefer" placeholder="regulatory_cn,regulatory_apac,procurement_cn"/>
+
+                <label>事件类型结构目标（可选：regulatory_vs_commercial_mix）</label>
+                <div class="row">
+                  <select id="mix_enabled" style="width:140px"><option value="false">false</option><option value="true">true</option></select>
+                  <input id="mix_reg_min" type="number" step="0.01" min="0" max="1" placeholder="监管占比下限 0.25"/>
+                  <input id="mix_com_min" type="number" step="0.01" min="0" max="1" placeholder="商业占比下限 0.35"/>
+                </div>
+
+                <label>条目字段齐全检查（completeness_policy）</label>
+                <div class="row">
+                  <select id="comp_enabled" style="width:140px"><option value="true">true</option><option value="false">false</option></select>
+                  <input id="comp_min_share" type="number" step="0.01" min="0" max="1" placeholder="最小合格占比 1.00"/>
+                </div>
+                <label>必填字段（逗号分隔）</label>
+                <input id="comp_fields" placeholder="title,summary,published,link,region,lane,platform,event_type"/>
+                <label>摘要句数要求（min/max）</label>
+                <div class="row">
+                  <input id="comp_sum_min" type="number" min="1" max="10"/>
+                  <input id="comp_sum_max" type="number" min="1" max="10"/>
+                </div>
 
             <label>操作人</label><input id="created_by" value="rules-admin-ui"/>
             <div>
@@ -1340,12 +1487,13 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 <ul>
                   <li><b>min_24h_items</b>：过去24小时有效条目不足时视为 QC 风险。</li>
                   <li><b>fallback_days / 7d_topup_limit</b>：回补窗口与回补上限（回补仅从本次候选池选择，不重新抓网）。</li>
-                  <li><b>required_sources_checklist</b>：必查信源命中审计项（G 段展示）。</li>
-                  <li><b>fail_policy.mode</b>：QC 未达标时的动作策略（仅 dry-run 生效，不影响线上定时）。</li>
-                </ul>
+                      <li><b>required_sources_checklist</b>：必查信源命中审计项（G 段展示）。</li>
+                      <li><b>fail_policy.mode</b>：QC 未达标时的动作策略（仅 dry-run 生效，不影响线上定时）。</li>
+                      <li><b>completeness_policy</b>：用于保证每条“标题/摘要/日期/链接/地区/赛道/平台/事件类型”等字段齐全，并校验摘要句数（建议 2-3 句）。</li>
+                    </ul>
+                  </div>
+                </details>
               </div>
-            </details>
-          </div>
           <div class="card">
             <label>试跑日期(可选, YYYY-MM-DD)</label><input id="dryrun_date" />
             <div class="row">
@@ -1364,14 +1512,14 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         let currentDraftId = null;
         function splitCsv(s){ return (s||'').split(',').map(x=>x.trim()).filter(Boolean); }
 
-        async function loadActive(){
-          const profile = document.getElementById('profile').value;
-          const j = await api(`/admin/api/qc_rules/active?profile=${encodeURIComponent(profile)}`);
-          if(!j||!j.ok){ document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
-          currentConfig = j.config_json;
-          document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
-          document.getElementById('enabled').value = String(!!(currentConfig.overrides||{}).enabled);
-          const d = currentConfig.defaults||{};
+            async function loadActive(){
+              const profile = document.getElementById('profile').value;
+              const j = await api(`/admin/api/qc_rules/active?profile=${encodeURIComponent(profile)}`);
+              if(!j||!j.ok){ document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
+              currentConfig = j.config_json;
+              document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
+              document.getElementById('enabled').value = String(!!(currentConfig.overrides||{}).enabled);
+              const d = currentConfig.defaults||{};
           document.getElementById('min_24h_items').value = d.min_24h_items ?? 10;
           document.getElementById('fallback_days').value = d.fallback_days ?? 7;
           document.getElementById('topup_limit').value = d['7d_topup_limit'] ?? 20;
@@ -1384,12 +1532,23 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('rumor_enabled').value = String(!!rp.enabled);
           document.getElementById('rumor_terms').value = (rp.trigger_terms||[]).join(',');
           document.getElementById('rumor_label').value = rp.label || '传闻（未确认）';
-          const fp = d.fail_policy||{};
-          document.getElementById('fail_mode').value = fp.mode || 'only_warn';
-          document.getElementById('btnPublish').disabled = true;
-          currentDraftId = null;
-          document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
-        }
+              const fp = d.fail_policy||{};
+              document.getElementById('fail_mode').value = fp.mode || 'only_warn';
+              document.getElementById('topup_prefer').value = (fp.topup_prefer||[]).join(',');
+              const mix = d.regulatory_vs_commercial_mix || {};
+              document.getElementById('mix_enabled').value = String(!!mix.enabled);
+              document.getElementById('mix_reg_min').value = mix.regulatory_min ?? 0.25;
+              document.getElementById('mix_com_min').value = mix.commercial_min ?? 0.35;
+              const cp = d.completeness_policy || {};
+              document.getElementById('comp_enabled').value = String(cp.enabled ?? true);
+              document.getElementById('comp_min_share').value = cp.min_complete_share ?? 1.0;
+              document.getElementById('comp_fields').value = (cp.required_fields||[]).join(',');
+              document.getElementById('comp_sum_min').value = cp.summary_sentences_min ?? 2;
+              document.getElementById('comp_sum_max').value = cp.summary_sentences_max ?? 3;
+              document.getElementById('btnPublish').disabled = true;
+              currentDraftId = null;
+              document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
+            }
 
         function buildConfig(){
           const cfg = JSON.parse(JSON.stringify(currentConfig||{}));
@@ -1407,16 +1566,31 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           cfg.defaults.daily_repeat_rate_max = Number(document.getElementById('daily_repeat_rate_max').value||0.25);
           cfg.defaults.recent_7d_repeat_rate_max = Number(document.getElementById('recent_7d_repeat_rate_max').value||0.4);
           cfg.defaults.required_sources_checklist = splitCsv(document.getElementById('required_sources').value);
-          cfg.defaults.rumor_policy = {
-            enabled: document.getElementById('rumor_enabled').value === 'true',
-            trigger_terms: splitCsv(document.getElementById('rumor_terms').value),
-            label: document.getElementById('rumor_label').value.trim() || '传闻（未确认）',
-          };
-          cfg.defaults.fail_policy = { mode: document.getElementById('fail_mode').value };
-          cfg.output = cfg.output || { format: 'json', panel_enabled: true };
-          cfg.rules = cfg.rules || [];
-          return cfg;
-        }
+              cfg.defaults.rumor_policy = {
+                enabled: document.getElementById('rumor_enabled').value === 'true',
+                trigger_terms: splitCsv(document.getElementById('rumor_terms').value),
+                label: document.getElementById('rumor_label').value.trim() || '传闻（未确认）',
+              };
+              cfg.defaults.fail_policy = {
+                mode: document.getElementById('fail_mode').value,
+                topup_prefer: splitCsv(document.getElementById('topup_prefer').value),
+              };
+              cfg.defaults.regulatory_vs_commercial_mix = {
+                enabled: document.getElementById('mix_enabled').value === 'true',
+                regulatory_min: Number(document.getElementById('mix_reg_min').value||0.25),
+                commercial_min: Number(document.getElementById('mix_com_min').value||0.35),
+              };
+              cfg.defaults.completeness_policy = {
+                enabled: document.getElementById('comp_enabled').value === 'true',
+                min_complete_share: Number(document.getElementById('comp_min_share').value||1.0),
+                required_fields: splitCsv(document.getElementById('comp_fields').value),
+                summary_sentences_min: Number(document.getElementById('comp_sum_min').value||2),
+                summary_sentences_max: Number(document.getElementById('comp_sum_max').value||3),
+              };
+              cfg.output = cfg.output || { format: 'json', panel_enabled: true };
+              cfg.rules = cfg.rules || [];
+              return cfg;
+            }
 
         async function saveDraft(){
           const profile = document.getElementById('profile').value;
@@ -1470,17 +1644,27 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         """
         return _page_shell("质控规则", body, js)
 
-    @app.get("/admin/output", response_class=HTMLResponse)
-    def page_output(_: dict[str, str] = Depends(_auth_guard)) -> str:
-        body = """
-        <div class="layout">
-          <div class="card">
+        @app.get("/admin/output", response_class=HTMLResponse)
+        def page_output(_: dict[str, str] = Depends(_auth_guard)) -> str:
+            body = """
+            <div class="layout">
+              <div class="card">
             <label>规则 Profile</label>
             <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
             <label>启用开关</label><select id="enabled"><option value="true">true</option><option value="false">false</option></select>
 
-            <label>栏目顺序（A..G，逗号分隔，G 必须最后）</label>
-            <input id="sections_order" placeholder="A,B,C,D,E,F,G"/>
+                <label>栏目顺序（A..G，逗号分隔，G 必须最后）</label>
+                <input id="sections_order" placeholder="A,B,C,D,E,F,G"/>
+                <label>栏目开关（sections.enabled）</label>
+                <div class="box">
+                  <label class="chk"><input type="checkbox" name="sec_enabled" value="A"/> A 今日要点</label>
+                  <label class="chk"><input type="checkbox" name="sec_enabled" value="B"/> B 分赛道速览</label>
+                  <label class="chk"><input type="checkbox" name="sec_enabled" value="C"/> C 技术平台雷达</label>
+                  <label class="chk"><input type="checkbox" name="sec_enabled" value="D"/> D 区域热力图</label>
+                  <label class="chk"><input type="checkbox" name="sec_enabled" value="E"/> E 趋势判断</label>
+                  <label class="chk"><input type="checkbox" name="sec_enabled" value="F"/> F 信息缺口</label>
+                  <label class="chk"><input type="checkbox" name="sec_enabled" value="G"/> G 质量指标</label>
+                </div>
             <label>A 段条数最小/最大</label>
             <div class="row"><input id="a_min" type="number" min="1" max="30"/><input id="a_max" type="number" min="1" max="30"/></div>
             <label>A 段摘要句数（min/max）</label>
@@ -1494,8 +1678,21 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             <label>趋势判断条数（trends_count）</label><input id="trends_count" type="number" min="1" max="10"/>
             <label>缺口清单条数（gaps_count min/max）</label>
             <div class="row"><input id="gaps_min" type="number" min="1" max="10"/><input id="gaps_max" type="number" min="1" max="10"/></div>
-            <label>热力图区域（heatmap_regions，逗号分隔）</label>
-            <input id="heatmap_regions" placeholder="北美,欧洲,亚太,中国"/>
+                <label>热力图区域（heatmap_regions，逗号分隔）</label>
+                <input id="heatmap_regions" placeholder="北美,欧洲,亚太,中国"/>
+
+                <label>风格（style）</label>
+                <div class="row">
+                  <select id="style_lang" style="width:140px">
+                    <option value="zh">中文(zh)</option>
+                    <option value="en">英文(en)</option>
+                  </select>
+                  <select id="style_tone" class="grow">
+                    <option value="concise_decision">简洁可决策</option>
+                    <option value="neutral">中性</option>
+                  </select>
+                  <select id="style_no_fluff" style="width:140px"><option value="true">不写空话</option><option value="false">允许更长</option></select>
+                </div>
 
             <label>操作人</label><input id="created_by" value="rules-admin-ui"/>
             <div>
@@ -1519,21 +1716,37 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         </div>
         """
         js = """
-        let currentConfig = null;
-        let currentDraftId = null;
-        function splitCsv(s){ return (s||'').split(',').map(x=>x.trim()).filter(Boolean); }
+            let currentConfig = null;
+            let currentDraftId = null;
+            function splitCsv(s){ return (s||'').split(',').map(x=>x.trim()).filter(Boolean); }
+            function setChecks(name, values){
+              const set = new Set((values||[]).map(String));
+              for(const el of document.querySelectorAll(`input[name="${name}"]`)){
+                el.checked = set.has(String(el.value));
+              }
+            }
+            function getChecks(name){
+              const out = [];
+              for(const el of document.querySelectorAll(`input[name="${name}"]:checked`)){
+                out.push(String(el.value));
+              }
+              return out;
+            }
 
-        async function loadActive(){
-          const profile = document.getElementById('profile').value;
-          const j = await api(`/admin/api/output_rules/active?profile=${encodeURIComponent(profile)}`);
-          if(!j||!j.ok){ document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
-          currentConfig = j.config_json;
-          document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
-          document.getElementById('enabled').value = String(!!(currentConfig.overrides||{}).enabled);
-          const d = currentConfig.defaults||{};
-          const order = (currentConfig.output && currentConfig.output.sections_order) ? currentConfig.output.sections_order : ['A','B','C','D','E','F','G'];
-          document.getElementById('sections_order').value = (order||[]).join(',');
-          const A = d.A||{};
+            async function loadActive(){
+              const profile = document.getElementById('profile').value;
+              const j = await api(`/admin/api/output_rules/active?profile=${encodeURIComponent(profile)}`);
+              if(!j||!j.ok){ document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
+              currentConfig = j.config_json;
+              document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
+              document.getElementById('enabled').value = String(!!(currentConfig.overrides||{}).enabled);
+              const d = currentConfig.defaults||{};
+              const order = (currentConfig.output && currentConfig.output.sections_order) ? currentConfig.output.sections_order : ['A','B','C','D','E','F','G'];
+              document.getElementById('sections_order').value = (order||[]).join(',');
+              const secs = (d.sections||[]).filter(x=>x && typeof x==='object');
+              const enabledSecs = secs.filter(s=>s.enabled).map(s=>String(s.id));
+              setChecks('sec_enabled', enabledSecs.length ? enabledSecs : ['A','B','C','D','E','F','G']);
+              const A = d.A||{};
           document.getElementById('a_min').value = (A.items_range||{}).min ?? 8;
           document.getElementById('a_max').value = (A.items_range||{}).max ?? 15;
           document.getElementById('sum_min').value = (A.summary_sentences||{}).min ?? 2;
@@ -1543,14 +1756,18 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('show_other_sources').value = String(!!A.show_other_sources);
           document.getElementById('show_source_link').value = String(!!A.show_source_link);
           document.getElementById('trends_count').value = (d.E||{}).trends_count ?? 3;
-          const gc = ((d.F||{}).gaps_count)||{};
-          document.getElementById('gaps_min').value = gc.min ?? 3;
-          document.getElementById('gaps_max').value = gc.max ?? 5;
-          document.getElementById('heatmap_regions').value = ((d.D||{}).heatmap_regions||['北美','欧洲','亚太','中国']).join(',');
-          document.getElementById('btnPublish').disabled = true;
-          currentDraftId = null;
-          document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
-        }
+              const gc = ((d.F||{}).gaps_count)||{};
+              document.getElementById('gaps_min').value = gc.min ?? 3;
+              document.getElementById('gaps_max').value = gc.max ?? 5;
+              document.getElementById('heatmap_regions').value = ((d.D||{}).heatmap_regions||['北美','欧洲','亚太','中国']).join(',');
+              const st = d.style || {};
+              document.getElementById('style_lang').value = st.language || 'zh';
+              document.getElementById('style_tone').value = st.tone || 'concise_decision';
+              document.getElementById('style_no_fluff').value = String(st.no_fluff ?? true);
+              document.getElementById('btnPublish').disabled = true;
+              currentDraftId = null;
+              document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
+            }
 
         function buildConfig(){
           const cfg = JSON.parse(JSON.stringify(currentConfig||{}));
@@ -1559,11 +1776,12 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           cfg.ruleset = 'output_rules';
           cfg.profile = document.getElementById('profile').value;
           cfg.overrides.enabled = document.getElementById('enabled').value === 'true';
-          cfg.defaults.format = cfg.defaults.format || 'plain_text';
-          cfg.output = cfg.output || {};
-          cfg.output.sections_order = splitCsv(document.getElementById('sections_order').value);
-          cfg.defaults.sections = (cfg.output.sections_order||[]).map(id=>({id, enabled:true}));
-          cfg.defaults.A = cfg.defaults.A || {};
+              cfg.defaults.format = cfg.defaults.format || 'plain_text';
+              cfg.output = cfg.output || {};
+              cfg.output.sections_order = splitCsv(document.getElementById('sections_order').value);
+              const enabledSet = new Set(getChecks('sec_enabled'));
+              cfg.defaults.sections = (cfg.output.sections_order||[]).map(id=>({id, enabled: enabledSet.has(String(id))}));
+              cfg.defaults.A = cfg.defaults.A || {};
           cfg.defaults.A.items_range = { min: Number(document.getElementById('a_min').value||8), max: Number(document.getElementById('a_max').value||15) };
           cfg.defaults.A.sort_by = 'importance';
           cfg.defaults.A.summary_sentences = { min: Number(document.getElementById('sum_min').value||2), max: Number(document.getElementById('sum_max').value||3) };
@@ -1573,11 +1791,16 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           cfg.defaults.A.show_source_link = document.getElementById('show_source_link').value === 'true';
           cfg.defaults.E = { trends_count: Number(document.getElementById('trends_count').value||3) };
           cfg.defaults.F = { gaps_count: { min: Number(document.getElementById('gaps_min').value||3), max: Number(document.getElementById('gaps_max').value||5) } };
-          cfg.defaults.D = { heatmap_regions: splitCsv(document.getElementById('heatmap_regions').value) };
-          cfg.defaults.constraints = { g_must_be_last: true, a_to_f_must_not_include_quality_metrics: true };
-          cfg.rules = cfg.rules || [];
-          return cfg;
-        }
+              cfg.defaults.D = { heatmap_regions: splitCsv(document.getElementById('heatmap_regions').value) };
+              cfg.defaults.style = {
+                language: document.getElementById('style_lang').value || 'zh',
+                tone: document.getElementById('style_tone').value || 'concise_decision',
+                no_fluff: document.getElementById('style_no_fluff').value === 'true',
+              };
+              cfg.defaults.constraints = { g_must_be_last: true, a_to_f_must_not_include_quality_metrics: true };
+              cfg.rules = cfg.rules || [];
+              return cfg;
+            }
 
         async function saveDraft(){
           const profile = document.getElementById('profile').value;
@@ -1726,7 +1949,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         function renderRow(s){
           const lastRaw = s.last_success_at || s.updated_at || '';
           const last = esc(fmtTime(lastRaw) || lastRaw || '-');
-	          const err = s.last_error ? `<span class="pill err" title="${esc(s.last_error)}">异常</span>` : '';
+              const err = s.last_error ? `<span class="pill err" title="${esc(s.last_error)}">异常</span>` : '';
           const hs = s.last_http_status ? `<span class="pill">${esc(s.last_http_status)}</span>` : '';
           const urlText = prettyUrl(s.url||'');
           const urlCell = s.url ? `<a class="url" href="${esc(s.url)}" target="_blank" title="${esc(s.url)}">${esc(urlText)}</a>` : '';
@@ -1750,7 +1973,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               </td>
             </tr>`;
         }
-	        async function loadSources() {
+            async function loadSources() {
           const j = await api('/admin/api/sources');
           if (!j || !j.ok) { document.getElementById('table').textContent = JSON.stringify(j,null,2); return; }
           const q = (document.getElementById('q').value||'').trim();

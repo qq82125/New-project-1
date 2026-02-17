@@ -38,6 +38,14 @@ defaults:
     - GenomeWeb
     - Reuters Healthcare
 
+  # Completeness: ensure required fields exist and summary meets sentence-count range.
+  completeness_policy:
+    enabled: true
+    min_complete_share: 1.0
+    required_fields: [title, summary, published, link, region, lane, platform, event_type]
+    summary_sentences_min: 2
+    summary_sentences_max: 3
+
   rumor_policy:
     enabled: true
     # If any of these terms appear, mark item as "rumor" (label only; not excluding by default).

@@ -22,6 +22,7 @@
         "D": { "$ref": "#/$defs/sectionD" },
         "E": { "$ref": "#/$defs/sectionE" },
         "F": { "$ref": "#/$defs/sectionF" },
+        "style": { "$ref": "#/$defs/style" },
         "constraints": { "$ref": "#/$defs/constraints" }
       },
       "additionalProperties": true
@@ -153,6 +154,16 @@
       "properties": {
         "g_must_be_last": { "type": "boolean", "const": true },
         "a_to_f_must_not_include_quality_metrics": { "type": "boolean", "const": true }
+      },
+      "additionalProperties": true
+    },
+    "style": {
+      "type": "object",
+      "required": ["language", "tone", "no_fluff"],
+      "properties": {
+        "language": { "type": "string", "enum": ["zh", "en"] },
+        "tone": { "type": "string", "enum": ["concise_decision", "neutral"] },
+        "no_fluff": { "type": "boolean" }
       },
       "additionalProperties": true
     }

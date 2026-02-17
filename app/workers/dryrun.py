@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import datetime as dt
 import os
 import re
 import subprocess
@@ -134,7 +135,147 @@ def _required_sources_hits(required: list[str], items: list[dict]) -> tuple[str,
     return display, missing
 
 
-def _calc_qc_panel(items: list[dict], qc_decision: dict) -> dict:
+def _norm_title_fp(title: str) -> str:
+    s = str(title or "").strip().lower()
+    s = re.sub(r"^(update|breaking|exclusive)\s*[:：]\s*", "", s)
+    s = re.sub(r"[\W_]+", " ", s, flags=re.U)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _summary_sentence_count(summary: str) -> int:
+    s = str(summary or "").strip()
+    if not s:
+        return 0
+    # Split on common sentence punctuation for CN/EN.
+    parts = re.split(r"[。！？!?]+|\\.(\\s+|$)", s)
+    toks = [p.strip() for p in parts if p and str(p).strip()]
+    return len(toks) if toks else (1 if s else 0)
+
+
+def _load_report_items(project_root: Path, date_str: str) -> list[dict]:
+    p = project_root / "reports" / f"ivd_morning_{date_str}.txt"
+    if not p.exists():
+        return []
+    try:
+        return _parse_items_from_report(p.read_text(encoding="utf-8", errors="ignore"))
+    except Exception:
+        return []
+
+
+def _calc_repeat_rates(project_root: Path, report_date: str | None, items: list[dict]) -> dict:
+    if not report_date:
+        return {
+            "repeat_rate_yesterday": 0.0,
+            "repeat_rate_7d_max": 0.0,
+            "repeat_yesterday_count": 0,
+            "repeat_7d_max_date": None,
+        }
+    try:
+        d0 = dt.date.fromisoformat(str(report_date))
+    except Exception:
+        return {
+            "repeat_rate_yesterday": 0.0,
+            "repeat_rate_7d_max": 0.0,
+            "repeat_yesterday_count": 0,
+            "repeat_7d_max_date": None,
+        }
+
+    today_keys = set()
+    for it in items:
+        link = str(it.get("link", "")).strip()
+        if link:
+            today_keys.add(link)
+        else:
+            fp = _norm_title_fp(str(it.get("title", "")))
+            if fp:
+                today_keys.add(fp)
+
+    denom = max(1, len(today_keys))
+
+    yday = d0 - dt.timedelta(days=1)
+    y_items = _load_report_items(project_root, yday.isoformat())
+    y_keys = set()
+    for it in y_items:
+        link = str(it.get("link", "")).strip()
+        if link:
+            y_keys.add(link)
+        else:
+            fp = _norm_title_fp(str(it.get("title", "")))
+            if fp:
+                y_keys.add(fp)
+    y_overlap = len(today_keys & y_keys) if y_keys else 0
+    y_rate = y_overlap / denom
+
+    max_rate = 0.0
+    max_date: str | None = None
+    for off in range(1, 8):
+        di = d0 - dt.timedelta(days=off)
+        di_items = _load_report_items(project_root, di.isoformat())
+        if not di_items:
+            continue
+        di_keys = set()
+        for it in di_items:
+            link = str(it.get("link", "")).strip()
+            if link:
+                di_keys.add(link)
+            else:
+                fp = _norm_title_fp(str(it.get("title", "")))
+                if fp:
+                    di_keys.add(fp)
+        if not di_keys:
+            continue
+        overlap = len(today_keys & di_keys)
+        rate = overlap / denom
+        if rate > max_rate:
+            max_rate = rate
+            max_date = di.isoformat()
+
+    return {
+        "repeat_rate_yesterday": y_rate,
+        "repeat_rate_7d_max": max_rate,
+        "repeat_yesterday_count": y_overlap,
+        "repeat_7d_max_date": max_date,
+    }
+
+
+def _calc_completeness(items: list[dict], policy: dict) -> dict:
+    required = policy.get("required_fields", []) if isinstance(policy.get("required_fields"), list) else []
+    required_fields = [str(x) for x in required if str(x).strip()]
+    min_sum = int(policy.get("summary_sentences_min") or 0)
+    max_sum = int(policy.get("summary_sentences_max") or 0)
+    missing_counts = {k: 0 for k in required_fields}
+    bad_summary = 0
+    complete = 0
+
+    for it in items:
+        ok = True
+        for f in required_fields:
+            v = it.get(f, None)
+            if v is None or (isinstance(v, str) and not v.strip()):
+                missing_counts[f] = missing_counts.get(f, 0) + 1
+                ok = False
+        sc = _summary_sentence_count(str(it.get("summary", "")))
+        if (min_sum and sc < min_sum) or (max_sum and sc > max_sum):
+            bad_summary += 1
+            ok = False
+        if ok:
+            complete += 1
+
+    share = (complete / len(items)) if items else 0.0
+    return {
+        "enabled": bool(policy.get("enabled", False)),
+        "required_fields": required_fields,
+        "complete_items": complete,
+        "total_items": len(items),
+        "complete_share": share,
+        "complete_share_pct": f"{share:.0%}",
+        "missing_field_counts": missing_counts,
+        "summary_sentence_violations": bad_summary,
+    }
+
+
+def _calc_qc_panel(project_root: Path, report_date: str | None, items: list[dict], qc_decision: dict) -> dict:
     n24 = len([i for i in items if i.get("window_tag") == "24小时内"])
     n7 = len([i for i in items if i.get("window_tag") == "7天补充"])
     apac = len([i for i in items if i.get("region") in ("中国", "亚太")])
@@ -144,6 +285,9 @@ def _calc_qc_panel(items: list[dict], qc_decision: dict) -> dict:
     required = qc_decision.get("required_sources_checklist", [])
     required_list = [str(x) for x in required] if isinstance(required, list) else []
     hits, missing = _required_sources_hits(required_list, items)
+    comp_policy = qc_decision.get("completeness_policy", {})
+    completeness = _calc_completeness(items, comp_policy if isinstance(comp_policy, dict) else {})
+    repeat = _calc_repeat_rates(project_root, report_date, items)
     return {
         "n24": n24,
         "n7": n7,
@@ -153,6 +297,8 @@ def _calc_qc_panel(items: list[dict], qc_decision: dict) -> dict:
         "commercial": commercial,
         "required_sources_hits": hits,
         "required_sources_missing": missing,
+        "repeat": repeat,
+        "completeness": completeness,
     }
 
 
@@ -203,6 +349,61 @@ def _render_section_g(panel: dict) -> str:
         f"商业与监管事件比：{panel.get('commercial', 0)}:{panel.get('regulatory', 0)} | "
         f"必查信源命中清单：{panel.get('required_sources_hits', '')}\n"
     )
+
+
+def _qc_fail_reasons(items: list[dict], qc_decision: dict, qc_panel: dict) -> list[str]:
+    fail_reasons: list[str] = []
+    min_24h = int(qc_decision.get("min_24h_items") or 0)
+    apac_min = float(qc_decision.get("apac_min_share") or 0.0)
+    china_min = float(qc_decision.get("china_min_share") or 0.0)
+    daily_max = float(qc_decision.get("daily_repeat_rate_max") or 0.0)
+    recent_max = float(qc_decision.get("recent_7d_repeat_rate_max") or 0.0)
+
+    if min_24h and qc_panel.get("n24", 0) < min_24h:
+        fail_reasons.append(f"24小时内条目数不足：{qc_panel.get('n24', 0)} < {min_24h}")
+    if apac_min and float(qc_panel.get("apac_share") or 0.0) < apac_min:
+        fail_reasons.append(f"亚太占比不足：{qc_panel.get('apac_share_pct', '0%')} < {apac_min:.0%}")
+    if china_min:
+        china_n = len([i for i in items if i.get("region") == "中国"])
+        china_share = (china_n / len(items)) if items else 0.0
+        if china_share < china_min:
+            fail_reasons.append(f"中国占比不足：{china_share:.0%} < {china_min:.0%}")
+
+    mix = qc_decision.get("regulatory_vs_commercial_mix", {})
+    if isinstance(mix, dict) and mix.get("enabled"):
+        reg_min = float(mix.get("regulatory_min") or 0.0)
+        com_min = float(mix.get("commercial_min") or 0.0)
+        total = max(1, int(qc_panel.get("regulatory", 0)) + int(qc_panel.get("commercial", 0)))
+        reg_share = int(qc_panel.get("regulatory", 0)) / total
+        com_share = int(qc_panel.get("commercial", 0)) / total
+        if reg_min and reg_share < reg_min:
+            fail_reasons.append(f"监管事件占比不足：{reg_share:.0%} < {reg_min:.0%}")
+        if com_min and com_share < com_min:
+            fail_reasons.append(f"商业事件占比不足：{com_share:.0%} < {com_min:.0%}")
+
+    rep = qc_panel.get("repeat", {}) if isinstance(qc_panel.get("repeat"), dict) else {}
+    y_rate = float(rep.get("repeat_rate_yesterday") or 0.0)
+    r7 = float(rep.get("repeat_rate_7d_max") or 0.0)
+    if daily_max and y_rate > daily_max:
+        fail_reasons.append(f"昨日报重复率过高：{y_rate:.0%} > {daily_max:.0%}")
+    if recent_max and r7 > recent_max:
+        fail_reasons.append(f"近7日峰值重复率过高：{r7:.0%} > {recent_max:.0%}")
+
+    comp = qc_panel.get("completeness", {}) if isinstance(qc_panel.get("completeness"), dict) else {}
+    cp = qc_decision.get("completeness_policy", {}) if isinstance(qc_decision.get("completeness_policy"), dict) else {}
+    if cp.get("enabled"):
+        min_share = float(cp.get("min_complete_share") or 0.0)
+        share = float(comp.get("complete_share") or 0.0)
+        if min_share and share < min_share:
+            fail_reasons.append(f"条目字段齐全占比不足：{share:.0%} < {min_share:.0%}")
+        if int(comp.get("summary_sentence_violations") or 0) > 0:
+            fail_reasons.append(f"摘要句数不合规：{int(comp.get('summary_sentence_violations') or 0)} 条")
+
+    missing = qc_panel.get("required_sources_missing", []) if isinstance(qc_panel.get("required_sources_missing"), list) else []
+    if missing:
+        fail_reasons.append(f"必查信源未命中：{','.join([str(x) for x in missing])}")
+
+    return fail_reasons
 
 
 def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
@@ -269,21 +470,8 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
     items_min = int(((a_cfg.get("items_range") or {}).get("min")) or 8)
     items_max = int(((a_cfg.get("items_range") or {}).get("max")) or 15)
 
-    qc_panel = _calc_qc_panel(items, qc_decision)
-    fail_reasons: list[str] = []
-    min_24h = int(qc_decision.get("min_24h_items") or 0)
-    apac_min = float(qc_decision.get("apac_min_share") or 0.0)
-    china_min = float(qc_decision.get("china_min_share") or 0.0)
-    if min_24h and qc_panel["n24"] < min_24h:
-        fail_reasons.append(f"24小时内条目数不足：{qc_panel['n24']} < {min_24h}")
-    if apac_min and qc_panel["apac_share"] < apac_min:
-        fail_reasons.append(f"亚太占比不足：{qc_panel['apac_share_pct']} < {apac_min:.0%}")
-    if china_min:
-        china_n = len([i for i in items if i.get("region") == "中国"])
-        china_share = (china_n / len(items)) if items else 0.0
-        if china_share < china_min:
-            fail_reasons.append(f"中国占比不足：{china_share:.0%} < {china_min:.0%}")
-
+    qc_panel = _calc_qc_panel(project_root, report_date, items, qc_decision)
+    fail_reasons = _qc_fail_reasons(items, qc_decision, qc_panel)
     passed = len(fail_reasons) == 0
     fail_policy = qc_decision.get("fail_policy", {}) if isinstance(qc_decision.get("fail_policy"), dict) else {}
     mode = str(fail_policy.get("mode", "only_warn"))
@@ -322,17 +510,8 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             added += 1
             if len(items) >= items_min:
                 break
-        qc_panel = _calc_qc_panel(items, qc_decision)
-        fail_reasons = []
-        if min_24h and qc_panel["n24"] < min_24h:
-            fail_reasons.append(f"24小时内条目数不足：{qc_panel['n24']} < {min_24h}")
-        if apac_min and qc_panel["apac_share"] < apac_min:
-            fail_reasons.append(f"亚太占比不足：{qc_panel['apac_share_pct']} < {apac_min:.0%}")
-        if china_min:
-            china_n = len([i for i in items if i.get("region") == "中国"])
-            china_share = (china_n / len(items)) if items else 0.0
-            if china_share < china_min:
-                fail_reasons.append(f"中国占比不足：{china_share:.0%} < {china_min:.0%}")
+        qc_panel = _calc_qc_panel(project_root, report_date, items, qc_decision)
+        fail_reasons = _qc_fail_reasons(items, qc_decision, qc_panel)
         passed = len(fail_reasons) == 0
     elif not passed:
         action_taken = mode

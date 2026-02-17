@@ -26,6 +26,7 @@
           "minItems": 0,
           "items": { "type": "string", "minLength": 2 }
         },
+        "completeness_policy": { "$ref": "#/$defs/completenessPolicy" },
         "rumor_policy": { "$ref": "#/$defs/rumorPolicy" },
         "fail_policy": { "$ref": "#/$defs/failPolicy" }
       },
@@ -107,6 +108,25 @@
           "type": "array",
           "items": { "type": "string", "minLength": 2 }
         }
+      },
+      "additionalProperties": true
+    },
+    "completenessPolicy": {
+      "type": "object",
+      "required": ["enabled", "required_fields", "min_complete_share", "summary_sentences_min", "summary_sentences_max"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "required_fields": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "type": "string",
+            "enum": ["title", "summary", "published", "link", "region", "lane", "platform", "event_type"]
+          }
+        },
+        "min_complete_share": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "summary_sentences_min": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "summary_sentences_max": { "type": "integer", "minimum": 1, "maximum": 10 }
       },
       "additionalProperties": true
     }

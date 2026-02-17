@@ -37,6 +37,12 @@ defaults:
     show_tags: true
     show_other_sources: true
 
+  # Style: language and tone guidance for renderer.
+  style:
+    language: zh
+    tone: concise_decision
+    no_fluff: true
+
   # E/F section sizes
   E:
     trends_count: 3

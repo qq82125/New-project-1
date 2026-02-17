@@ -5,6 +5,7 @@ profile: enhanced
 defaults:
   timezone: Asia/Shanghai
   content_sources:
+    min_trust_tier: B
     include_tags:
       - media
       - regulatory
