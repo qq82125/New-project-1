@@ -23,6 +23,12 @@ from zoneinfo import ZoneInfo
 
 import feedparser
 
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from app.adapters.rule_bridge import load_runtime_rules
+
 
 @dataclass(frozen=True)
 class Item:
@@ -36,6 +42,22 @@ class Item:
     event_type: str
     window_tag: str  # "24小时内" or "7天补充"
     summary_cn: str
+
+
+RUNTIME_CONTENT = {
+    "title_similarity_threshold": 0.78,
+    "apac_min_share": 0.40,
+    "min_items": 8,
+    "max_items": 15,
+    "topup_if_24h_lt": 10,
+    "daily_max_repeat_rate": 0.25,
+    "recent_7d_max_repeat_rate": 0.40,
+    "include_keywords": [],
+    "exclude_keywords": [],
+    "lane_mapping": {},
+    "platform_mapping": {},
+    "event_mapping": {},
+}
 
 
 def env(name: str, default: str = "") -> str:
@@ -73,8 +95,25 @@ def has_term(text_lc: str, term_lc: str) -> bool:
         return re.search(rf"\\b{re.escape(term_lc)}\\b", text_lc) is not None
     return term_lc in text_lc
 
+
+def _map_label_by_keywords(text_lc: str, mapping: dict) -> Optional[str]:
+    if not isinstance(mapping, dict):
+        return None
+    for label, kws in mapping.items():
+        if not isinstance(kws, list):
+            continue
+        for kw in kws:
+            k = str(kw).strip().lower()
+            if k and has_term(text_lc, k):
+                return str(label)
+    return None
+
+
 def cn_lane(text: str) -> str:
     t = text.lower()
+    dynamic_lane = _map_label_by_keywords(t, RUNTIME_CONTENT.get("lane_mapping", {}))
+    if dynamic_lane:
+        return dynamic_lane
     if any(k in t for k in ["肿瘤", "癌", "肿瘤标志物"]):
         return "肿瘤检测"
     if any(k in t for k in ["感染", "病原", "病毒", "流感", "新冠", "呼吸道"]):
@@ -92,6 +131,9 @@ def cn_lane(text: str) -> str:
 
 def cn_platform(text: str) -> str:
     t = text.lower()
+    dynamic_platform = _map_label_by_keywords(t, RUNTIME_CONTENT.get("platform_mapping", {}))
+    if dynamic_platform:
+        return dynamic_platform
     if any(k in t for k in ["体外诊断", "化学发光", "免疫诊断"]):
         return "免疫诊断（化学发光/ELISA/IHC等）"
     if any(k in t for k in ["核酸", "pcr", "聚合酶链式反应"]):
@@ -154,6 +196,9 @@ def cn_platform(text: str) -> str:
 
 def detect_event_type(text: str, source: str, link: str) -> str:
     t = (text + " " + source + " " + link).lower()
+    dynamic_event = _map_label_by_keywords(t, RUNTIME_CONTENT.get("event_mapping", {}))
+    if dynamic_event:
+        return dynamic_event
     if any(k in t for k in ["nmpa", "cmde", "fda", "pmda", "mfds", "hsa.gov.sg", "tga.gov.au", "guideline", "guidance", "recall", "safety alert", "field safety", "approved", "审批", "指导原则", "通告", "召回"]):
         return "监管审批与指南"
     if any(k in t for k in ["acquisition", "acquire", "merger", "ipo", "funding", "financing", "raise", "partnership", "collaboration", "deal"]):
@@ -286,6 +331,10 @@ def score_ivd(text: str) -> int:
 
 def is_ivd_relevant(text: str) -> bool:
     t = text.lower()
+    for x in RUNTIME_CONTENT.get("exclude_keywords", []):
+        kw = str(x).strip().lower()
+        if kw and has_term(t, kw):
+            return False
     # Require at least one anchor term to avoid pharma-only/business-only noise.
     anchors = [
         "diagnostic",
@@ -336,6 +385,9 @@ def is_ivd_relevant(text: str) -> bool:
         "bgi",
     ]
     has_anchor = any(has_term(t, a) for a in anchors)
+    dynamic_include = [str(x).strip().lower() for x in RUNTIME_CONTENT.get("include_keywords", [])]
+    if dynamic_include and any(has_term(t, a) for a in dynamic_include):
+        has_anchor = True
     has_company = any(c in t for c in ivd_companies)
     if not (has_anchor or has_company):
         return False
@@ -680,6 +732,7 @@ def dedupe_items(items: list[Item]) -> list[Item]:
     Keep the best source for the same event title.
     """
     best: dict[str, Item] = {}
+    sim_th = float(RUNTIME_CONTENT.get("title_similarity_threshold", 0.78))
     for it in items:
         key = normalize_title(it.title)
         if not key:
@@ -688,7 +741,7 @@ def dedupe_items(items: list[Item]) -> list[Item]:
         old = best.get(old_key)
         if not old:
             for k, v in best.items():
-                if title_similarity(it.title, v.title) >= 0.78:
+                if title_similarity(it.title, v.title) >= sim_th:
                     old_key = k
                     old = v
                     break
@@ -794,7 +847,7 @@ def choose_top_items(candidates: list[Item], yday_titles: set[str], recent_title
 def enforce_apac_share(top: list[Item], all_items: list[Item]) -> list[Item]:
     if not top:
         return top
-    apac_target = math.ceil(len(top) * 0.40)
+    apac_target = math.ceil(len(top) * float(RUNTIME_CONTENT.get("apac_min_share", 0.40)))
     apac_now = sum(1 for i in top if i.region in ("中国", "亚太"))
     if apac_now >= apac_target:
         return top
@@ -887,6 +940,32 @@ def main() -> int:
     root_dir = Path(__file__).resolve().parent.parent
     reports_dir = root_dir / "reports"
 
+    runtime_rules = load_runtime_rules(date_str=date_str)
+    if runtime_rules.get("enabled"):
+        content_cfg = runtime_rules.get("content", {})
+        RUNTIME_CONTENT["title_similarity_threshold"] = float(
+            content_cfg.get("title_similarity_threshold", RUNTIME_CONTENT["title_similarity_threshold"])
+        )
+        RUNTIME_CONTENT["apac_min_share"] = float(
+            content_cfg.get("apac_min_share", RUNTIME_CONTENT["apac_min_share"])
+        )
+        RUNTIME_CONTENT["min_items"] = int(content_cfg.get("min_items", RUNTIME_CONTENT["min_items"]))
+        RUNTIME_CONTENT["max_items"] = int(content_cfg.get("max_items", RUNTIME_CONTENT["max_items"]))
+        RUNTIME_CONTENT["topup_if_24h_lt"] = int(
+            content_cfg.get("topup_if_24h_lt", RUNTIME_CONTENT["topup_if_24h_lt"])
+        )
+        RUNTIME_CONTENT["daily_max_repeat_rate"] = float(
+            content_cfg.get("daily_max_repeat_rate", RUNTIME_CONTENT["daily_max_repeat_rate"])
+        )
+        RUNTIME_CONTENT["recent_7d_max_repeat_rate"] = float(
+            content_cfg.get("recent_7d_max_repeat_rate", RUNTIME_CONTENT["recent_7d_max_repeat_rate"])
+        )
+        RUNTIME_CONTENT["include_keywords"] = content_cfg.get("include_keywords", [])
+        RUNTIME_CONTENT["exclude_keywords"] = content_cfg.get("exclude_keywords", [])
+        RUNTIME_CONTENT["lane_mapping"] = content_cfg.get("lane_mapping", {})
+        RUNTIME_CONTENT["platform_mapping"] = content_cfg.get("platform_mapping", {})
+        RUNTIME_CONTENT["event_mapping"] = content_cfg.get("event_mapping", {})
+
     # Media + official feeds, with APAC/China reinforcement.
     sources = [
         ("Fierce Biotech", "https://www.fiercebiotech.com/rss/xml", "北美", "media"),
@@ -904,6 +983,10 @@ def main() -> int:
         ("TGA Product Recalls", "https://www.tga.gov.au/feeds/alert/product-recalls.xml", "亚太", "regulatory"),
         ("FDA MedWatch", "https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/medwatch/rss.xml", "北美", "regulatory"),
     ]
+    if runtime_rules.get("enabled"):
+        source_override = runtime_rules.get("content", {}).get("sources", [])
+        if source_override:
+            sources = source_override
 
     items: list[Item] = []
     seen_links: set[str] = set()
@@ -996,14 +1079,14 @@ def main() -> int:
     within_24h = [i for i in items if i.window_tag == "24小时内"]
     within_7d = [i for i in items if i.window_tag == "7天补充"]
     candidates = within_24h[:20]
-    if len(candidates) < 10:
+    if len(candidates) < int(RUNTIME_CONTENT.get("topup_if_24h_lt", 10)):
         candidates.extend(within_7d[:30])
     else:
-        candidates = candidates[:15]
+        candidates = candidates[: int(RUNTIME_CONTENT.get("max_items", 15))]
 
     yday_titles, recent_titles = load_history_titles(reports_dir, date_str)
     top = choose_top_items(candidates, yday_titles, recent_titles)
-    if len(top) < 8:
+    if len(top) < int(RUNTIME_CONTENT.get("min_items", 8)):
         seen = {i.link for i in top}
         used: dict[str, int] = {}
         for i in top:
@@ -1017,9 +1100,9 @@ def main() -> int:
             top.append(it)
             seen.add(it.link)
             used[it.source] = used.get(it.source, 0) + 1
-            if len(top) >= 8:
+            if len(top) >= int(RUNTIME_CONTENT.get("min_items", 8)):
                 break
-    top = top[:15]
+    top = top[: int(RUNTIME_CONTENT.get("max_items", 15))]
     top = enforce_apac_share(top, items)
     top = enforce_international_primary(top, items)
 
@@ -1116,7 +1199,8 @@ def main() -> int:
         f"亚太占比：{apac_share:.0%} | "
         f"商业与监管事件比：{commercial}:{regulatory} | "
         f"必查信源命中清单：{source_hits} | "
-        f"重复率(昨/7日峰值)：{yday_dup:.0%}/{max_7d_dup:.0%}"
+        f"重复率(昨/7日峰值)：{yday_dup:.0%}/{max_7d_dup:.0%} | "
+        f"rules_profile={runtime_rules.get('active_profile', 'legacy')}"
     )
 
     return 0

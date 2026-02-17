@@ -174,3 +174,27 @@ rules:
 - 新规则先在 `enhanced` 试跑，再灰度到正式任务。
 - 每次变更只改一个维度（来源/过滤/阈值）便于回溯。
 - 版本升级时同步记录变更说明与回退策略。
+
+## 旁路接入开关
+- 默认：`legacy`（与当前线上/本地行为一致）。
+- 仅当环境变量显式开启时启用增强规则：
+  - `ENHANCED_RULES_PROFILE=enhanced`
+- 若 `enhanced` 规则加载失败：自动回退 `legacy`，打印 `[RULES_WARN]` 告警，不中断任务。
+
+## Docker Compose 运行
+在 `docker-compose.yml` 的对应服务中添加环境变量：
+
+```yaml
+services:
+  ivd-worker:
+    environment:
+      REPORT_TZ: Asia/Shanghai
+      ENHANCED_RULES_PROFILE: enhanced   # 不设置或非 enhanced 即走 legacy
+```
+
+启动与验证：
+```bash
+docker compose up -d
+docker compose exec ivd-worker python -m app.workers.cli rules:validate --profile enhanced
+docker compose exec ivd-worker python -m app.workers.cli rules:dryrun --profile enhanced --date 2026-02-16
+```

@@ -11,8 +11,8 @@ TO_EMAIL="${TO_EMAIL:-qq82125@gmail.com}"
 TZ_NAME="${REPORT_TZ:-Asia/Shanghai}"
 DATE_STR="$(TZ="$TZ_NAME" date +%F)"
 RUN_ID="${RUN_ID:-run-$(date +%Y%m%d%H%M%S)}"
-RULES_EMAIL_PROFILE="${RULES_EMAIL_PROFILE:-default.v1}"
-RULES_CONTENT_PROFILE="${RULES_CONTENT_PROFILE:-default.v1}"
+RULES_EMAIL_PROFILE="${RULES_EMAIL_PROFILE:-legacy}"
+RULES_CONTENT_PROFILE="${RULES_CONTENT_PROFILE:-legacy}"
 
 REPORTS_DIR="${ROOT_DIR}/reports"
 mkdir -p "$REPORTS_DIR"
@@ -30,6 +30,31 @@ python3 scripts/generate_ivd_report.py >"$TMP_FILE"
 mv "$TMP_FILE" "$OUT_FILE"
 
 SUBJECT="全球IVD晨报 - ${DATE_STR}"
+set +e
+RULE_SUBJECT="$(
+  DATE_STR="$DATE_STR" python3 - <<'PY'
+import os
+from pathlib import Path
+import sys
+
+root = Path.cwd()
+if str(root) not in sys.path:
+    sys.path.insert(0, str(root))
+
+try:
+    from app.adapters.rule_bridge import load_runtime_rules
+    rt = load_runtime_rules(date_str=os.environ.get("DATE_STR", ""))
+    if rt.get("enabled"):
+        print(rt.get("email", {}).get("subject", ""))
+except Exception:
+    pass
+PY
+)"
+code=$?
+set -e
+if [ "$code" -eq 0 ] && [ -n "${RULE_SUBJECT}" ]; then
+  SUBJECT="$RULE_SUBJECT"
+fi
 
 # Simple de-dupe: if we've already logged a successful send for today's subject, skip.
 LOG_FILE="${ROOT_DIR}/logs/mail_send.log"

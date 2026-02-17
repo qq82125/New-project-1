@@ -9,6 +9,12 @@ from email.mime.text import MIMEText
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from app.adapters.rule_bridge import load_runtime_rules
+
 
 def env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
@@ -49,6 +55,9 @@ def main(argv: list[str]) -> int:
     prefix = env("REPORT_SUBJECT_PREFIX", "全球IVD晨报 - ")
     date_str = now_in_tz(tz_name).strftime("%Y-%m-%d")
     subject = f"{prefix}{date_str}"
+    runtime_rules = load_runtime_rules(date_str=date_str)
+    if runtime_rules.get("enabled"):
+        subject = runtime_rules.get("email", {}).get("subject", subject)
 
     missing = [k for k in ["SMTP_HOST", "SMTP_USER", "SMTP_PASS", "TO_EMAIL"] if not env(k)]
     if missing:
@@ -70,10 +79,12 @@ def main(argv: list[str]) -> int:
         server.login(smtp_user, smtp_pass)
         server.sendmail(smtp_from, [to_email], msg.as_string())
 
-    print(f"sent: {to_email} subject={subject} file={report_file}")
+    print(
+        f"sent: {to_email} subject={subject} file={report_file} "
+        f"rules_profile={runtime_rules.get('active_profile', 'legacy')}"
+    )
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
-
