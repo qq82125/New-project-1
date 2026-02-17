@@ -157,7 +157,7 @@ class RuleEngine:
         self.rules_store = RulesStore(self.project_root) if self.use_db else None
 
     def _rules_dir(self, ruleset: str) -> Path:
-        if ruleset not in ("email_rules", "content_rules", "qc_rules", "output_rules"):
+        if ruleset not in ("email_rules", "content_rules", "qc_rules", "output_rules", "scheduler_rules"):
             raise RuleEngineError(RULES_003_RULESET_MISMATCH, f"unsupported ruleset={ruleset}")
         return self.rules_root / ruleset
 
@@ -167,6 +167,7 @@ class RuleEngine:
             "content_rules": "content_rules.schema.json",
             "qc_rules": "qc_rules.schema.json",
             "output_rules": "output_rules.schema.json",
+            "scheduler_rules": "scheduler_rules.schema.json",
         }
         name = name_map.get(ruleset, "")
         if not name:
@@ -403,12 +404,19 @@ class RuleEngine:
             profile,
             fallback_on_missing=False,
         )
+        scheduler = self.select_profile(
+            "scheduler_rules",
+            profile,
+            fallback_on_missing=True,
+            fallback_profile="legacy",
+        )
 
         # Validate boundary constraints during validate to catch cross-coupling early.
         self._boundary_check(email)
         self._boundary_check(content)
         self._boundary_check(qc)
         self._boundary_check(output)
+        self._boundary_check(scheduler)
         return {
             "profile": profile,
             "validated": [
@@ -435,6 +443,12 @@ class RuleEngine:
                     "profile": output.profile,
                     "version": output.version,
                     "path": str(output.path),
+                },
+                {
+                    "ruleset": scheduler.ruleset,
+                    "profile": scheduler.profile,
+                    "version": scheduler.version,
+                    "path": str(scheduler.path),
                 },
             ],
         }

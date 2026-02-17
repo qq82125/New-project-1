@@ -39,7 +39,7 @@ def cmd_rules_validate(argv: list[str]) -> int:
         return 0
 
     validated: list[dict[str, str]] = []
-    for ruleset in ("email_rules", "content_rules", "qc_rules", "output_rules"):
+    for ruleset in ("email_rules", "content_rules", "qc_rules", "output_rules", "scheduler_rules"):
         # Validate both workspace-published rules and repo fallbacks.
         dirs = [engine.rules_root / ruleset, engine.project_root / "rules" / ruleset]
         seen: set[str] = set()

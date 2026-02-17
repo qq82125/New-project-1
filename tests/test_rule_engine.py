@@ -180,7 +180,7 @@ class RuleEngineTests(unittest.TestCase):
         engine = RuleEngine()
         out = engine.validate_profile_pair("legacy")
         self.assertEqual(out["profile"], "legacy")
-        self.assertEqual(len(out["validated"]), 4)
+        self.assertEqual(len(out["validated"]), 5)
 
     def test_build_decision_contains_unified_objects(self) -> None:
         engine = RuleEngine()
