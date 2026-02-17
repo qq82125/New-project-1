@@ -1080,8 +1080,15 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                           <input id="china_min_share" type="number" step="0.01" min="0" max="1"/>
                         </div>
 
-                        <label>关键词包（keywords_pack，逗号分隔）</label>
-                        <input id="keywords_pack" placeholder="ivd_core,oncology,infection,repro_genetics,policy_market"/>
+                        <label>关键词包（keywords_pack，多选）</label>
+                        <div class="box">
+                          <label class="chk"><input type="checkbox" name="keywords_pack" value="ivd_core"/> IVD核心（ivd_core）</label>
+                          <label class="chk"><input type="checkbox" name="keywords_pack" value="oncology"/> 肿瘤（oncology）</label>
+                          <label class="chk"><input type="checkbox" name="keywords_pack" value="infection"/> 感染（infection）</label>
+                          <label class="chk"><input type="checkbox" name="keywords_pack" value="repro_genetics"/> 生殖遗传（repro_genetics）</label>
+                          <label class="chk"><input type="checkbox" name="keywords_pack" value="policy_market"/> 政策市场（policy_market）</label>
+                          <div class="small" style="margin-top:6px">提示：关键词包用于“包含过滤器”的默认词库，避免漏抓；可与自定义包含/排除关键词叠加。</div>
+                        </div>
                         <label>最低信源可信等级（content_sources.min_trust_tier）</label>
                         <select id="min_trust_tier">
                           <option value="A">A（最严格）</option>
@@ -1256,7 +1263,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   document.getElementById('apac_min_share').value = rf.apac_min_share ?? 0.4;
                   document.getElementById('china_min_share').value = rf.china_min_share ?? 0.2;
                   const ov = currentConfig.overrides||{};
-                  document.getElementById('keywords_pack').value = csv(ov.keywords_pack||[]);
+                  setChecks('keywords_pack', ov.keywords_pack||[]);
                   const cs = (currentConfig.defaults||{}).content_sources || {};
                   document.getElementById('min_trust_tier').value = cs.min_trust_tier || 'C';
                   const includeRule = ((currentConfig.rules||[]).find(r=>r.type==='include_filter')||{}).params||{};
@@ -1307,7 +1314,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   cfg.defaults.region_filter.china_min_share = Number(document.getElementById('china_min_share').value||0.2);
                   cfg.defaults.coverage_tracks = arr(document.getElementById('tracks').value);
                   cfg.overrides.min_confidence = Number(document.getElementById('min_confidence').value||0);
-                  cfg.overrides.keywords_pack = arr(document.getElementById('keywords_pack').value);
+                  cfg.overrides.keywords_pack = getChecks('keywords_pack');
                   cfg.defaults.content_sources.min_trust_tier = document.getElementById('min_trust_tier').value || 'C';
                   cfg.profile = document.getElementById('profile').value;
                   cfg.ruleset = 'content_rules';
