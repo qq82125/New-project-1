@@ -175,6 +175,28 @@ rules:
 - 每次变更只改一个维度（来源/过滤/阈值）便于回溯。
 - 版本升级时同步记录变更说明与回退策略。
 
+## 防耦合边界
+- `content_rules` 只允许影响：来源选择、过滤、分类、去重、可信度分层、摘要素材。
+- `email_rules` 只允许影响：栏目结构、排序、阈值、标题模板、收件人、发信策略、内容裁剪。
+- 禁止跨界：
+  - `email_rules` 不能改变“哪些条目被采集/入选”。
+  - `content_rules` 不能改变“发给谁/何时发/模板结构”。
+- 代码层通过决策边界断言实现：跨界字段会触发 `RULES_BOUNDARY_VIOLATION`，并自动回退 `legacy`。
+
+## 常见改规则示例
+1. 新增一个栏目（只改 `email_rules`）
+   - 文件：`rules/email_rules/enhanced.yaml`
+   - 修改：`output.sections` 增加栏目；必要时在 `rules` 增加 `content_format` 排序策略。
+2. 新增一个来源（只改 `content_rules`）
+   - 文件：`rules/content_rules/enhanced.yaml`
+   - 修改：`defaults.sources.*` 新增 source；可在 `rules` 的 `source_priority` 调整优先级。
+3. 调整去重窗口（只改 `content_rules`）
+   - 文件：`rules/content_rules/enhanced.yaml`
+   - 修改：`rules` 中 `type=dedupe` 的窗口/重复率参数。
+4. 调整摘要长度与结论前置（只改 `email_rules`）
+   - 文件：`rules/email_rules/enhanced.yaml`
+   - 修改：`output.summary_max_chars` 与 `rules(type=content_format)` 的版式阈值参数。
+
 ## 旁路接入开关
 - 默认：`legacy`（与当前线上/本地行为一致）。
 - 仅当环境变量显式开启时启用增强规则：

@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.rules.decision_boundary import enforce_decision_boundary
 from app.rules.engine import RuleEngine
 from app.rules.errors import RuleEngineError
 
@@ -34,7 +35,7 @@ def _safe_get(d: dict[str, Any], path: list[str], default: Any) -> Any:
 
 
 def _adapt_content(decision: dict[str, Any]) -> dict[str, Any]:
-    content = decision.get("content_decision", {})
+    content, _ = enforce_decision_boundary(decision)
     allow_sources = content.get("allow_sources", []) if isinstance(content, dict) else []
     sources: list[tuple[str, str, str, str]] = []
     for it in allow_sources:
@@ -80,7 +81,7 @@ def _adapt_content(decision: dict[str, Any]) -> dict[str, Any]:
 
 
 def _adapt_email(decision: dict[str, Any], date_str: str) -> dict[str, Any]:
-    email = decision.get("email_decision", {})
+    _, email = enforce_decision_boundary(decision)
     template = str(email.get("subject_template", "全球IVD晨报 - {{date}}"))
     subject = template.replace("{{date}}", date_str)
     schedule = email.get("schedule", {}) if isinstance(email, dict) else {}
@@ -129,11 +130,42 @@ def load_runtime_rules(
                 "email": {},
             }
 
+    try:
+        content_cfg = _adapt_content(decision)
+        email_cfg = _adapt_email(decision, date_str=date_str)
+    except Exception as e:
+        _warn(f"profile={active_profile} boundary/adapt failed: {e}")
+        if active_profile != "legacy":
+            try:
+                decision = engine.build_decision(profile="legacy")
+                content_cfg = _adapt_content(decision)
+                email_cfg = _adapt_email(decision, date_str=date_str)
+                active_profile = "legacy"
+            except Exception as e2:
+                _warn(f"legacy boundary/adapt failed, skip rules sidecar. error={e2}")
+                return {
+                    "enabled": False,
+                    "requested_profile": profile_req,
+                    "active_profile": "legacy",
+                    "rules_version": {},
+                    "content": {},
+                    "email": {},
+                }
+        else:
+            return {
+                "enabled": False,
+                "requested_profile": profile_req,
+                "active_profile": "legacy",
+                "rules_version": {},
+                "content": {},
+                "email": {},
+            }
+
     return {
         "enabled": True,
         "requested_profile": profile_req,
         "active_profile": active_profile,
         "rules_version": decision.get("rules_version", {}),
-        "content": _adapt_content(decision),
-        "email": _adapt_email(decision, date_str=date_str),
+        "content": content_cfg,
+        "email": email_cfg,
     }
