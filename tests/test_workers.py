@@ -21,6 +21,8 @@ class WorkerTests(unittest.TestCase):
             mock_engine.build_decision.return_value = {
                 "rules_version": {"email": "2.0.0", "content": "2.0.0"},
                 "content_decision": {},
+                "qc_decision": {"min_24h_items": 1, "apac_min_share": 0.0, "china_min_share": 0.0, "required_sources_checklist": []},
+                "output_decision": {"A": {"items_range": {"min": 1, "max": 15}}},
                 "email_decision": {"schedule": {"timezone": "Asia/Shanghai"}},
                 "explain": {},
             }
@@ -47,6 +49,9 @@ class WorkerTests(unittest.TestCase):
             self.assertTrue((artifacts_dir / "run_id.json").exists())
             self.assertTrue((artifacts_dir / "newsletter_preview.md").exists())
             self.assertTrue((artifacts_dir / "items.json").exists())
+            self.assertTrue((artifacts_dir / "qc_report.json").exists())
+            self.assertTrue((artifacts_dir / "output_render.json").exists())
+            self.assertTrue((artifacts_dir / "run_meta.json").exists())
 
             items = json.loads((artifacts_dir / "items.json").read_text(encoding="utf-8"))
             self.assertEqual(len(items), 1)
@@ -54,6 +59,14 @@ class WorkerTests(unittest.TestCase):
             self.assertIn("items_before_count", result)
             self.assertIn("items_after_count", result)
             self.assertIn("top_clusters", result)
+
+            preview = (artifacts_dir / "newsletter_preview.md").read_text(encoding="utf-8")
+            # G must be at the end and A-F must not contain quality markers.
+            self.assertIn("G. 质量指标", preview)
+            self.assertIn("24H条目数 / 7D补充数：", preview)
+            a_to_f = preview.split("G. 质量指标", 1)[0]
+            self.assertNotIn("24H条目数", a_to_f)
+            self.assertNotIn("Quality Audit", a_to_f)
 
             cmd = mock_run.call_args[0][0]
             self.assertEqual(cmd, ["python3", "scripts/generate_ivd_report.py"])

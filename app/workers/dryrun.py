@@ -84,6 +84,127 @@ def _parse_items_from_report(text: str) -> list[dict]:
     return items
 
 
+def _split_sections(text: str) -> dict[str, str]:
+    lines = text.splitlines()
+    buckets: dict[str, list[str]] = {}
+    current: str | None = None
+    for raw in lines:
+        line = raw.rstrip("\n")
+        m = re.match(r"^([A-G])\.\s+", line.strip())
+        if m:
+            current = m.group(1)
+            buckets.setdefault(current, [])
+            buckets[current].append(line)
+            continue
+        if current:
+            buckets[current].append(line)
+    return {k: ("\n".join(v).rstrip() + "\n") for k, v in buckets.items()}
+
+
+def _required_sources_hits(required: list[str], items: list[dict]) -> tuple[str, list[str]]:
+    patterns = {
+        "NMPA": ["nmpa.gov.cn"],
+        "CMDE": ["cmde"],
+        "UDI数据库": ["udi.nmpa.gov.cn", "udi"],
+        "CCGP": ["ccgp.gov.cn", "ccgp"],
+        "TGA": ["tga.gov.au"],
+        "HSA": ["hsa.gov.sg"],
+        "PMDA/MHLW": ["pmda.go.jp", "mhlw.go.jp", "pmda"],
+        "MFDS": ["mfds.go.kr", "mfds"],
+        "GenomeWeb": ["genomeweb.com", "genomeweb"],
+        "Reuters Healthcare": ["reuters", "reutersagency.com"],
+    }
+    hit = {x: False for x in required}
+    for it in items:
+        s = (
+            str(it.get("source", ""))
+            + " "
+            + str(it.get("link", ""))
+            + " "
+            + str(it.get("url", ""))
+        ).lower()
+        for key in required:
+            if hit.get(key):
+                continue
+            pats = patterns.get(key, [str(key).lower()])
+            if any(p.lower() in s for p in pats):
+                hit[key] = True
+    missing = [k for k, v in hit.items() if not v]
+    display = "；".join([f"{k}:{'命中' if hit.get(k) else '未命中'}" for k in required])
+    return display, missing
+
+
+def _calc_qc_panel(items: list[dict], qc_decision: dict) -> dict:
+    n24 = len([i for i in items if i.get("window_tag") == "24小时内"])
+    n7 = len([i for i in items if i.get("window_tag") == "7天补充"])
+    apac = len([i for i in items if i.get("region") in ("中国", "亚太")])
+    apac_share = (apac / len(items)) if items else 0.0
+    regulatory = len([i for i in items if i.get("event_type") == "监管审批与指南"])
+    commercial = len(items) - regulatory
+    required = qc_decision.get("required_sources_checklist", [])
+    required_list = [str(x) for x in required] if isinstance(required, list) else []
+    hits, missing = _required_sources_hits(required_list, items)
+    return {
+        "n24": n24,
+        "n7": n7,
+        "apac_share": apac_share,
+        "apac_share_pct": f"{apac_share:.0%}",
+        "regulatory": regulatory,
+        "commercial": commercial,
+        "required_sources_hits": hits,
+        "required_sources_missing": missing,
+    }
+
+
+def _render_section_a(items: list[dict]) -> str:
+    lines: list[str] = ["A. 今日要点（8-15条，按重要性排序）"]
+    for idx, i in enumerate(items, 1):
+        lines.append(f"{idx}) [{i.get('window_tag', '')}] {i.get('title', '')}".rstrip())
+        if i.get("summary"):
+            lines.append(str(i.get("summary")))
+        if i.get("published"):
+            lines.append(f"发布日期：{i.get('published')}")
+        src = str(i.get("source", "")).strip()
+        link = str(i.get("link", "")).strip()
+        if src and link:
+            lines.append(f"来源：{src} | {link}")
+        elif src:
+            lines.append(f"来源：{src}")
+        if i.get("region"):
+            lines.append(f"地区：{i.get('region')}")
+        if i.get("lane"):
+            lines.append(f"赛道：{i.get('lane')}")
+        if i.get("event_type"):
+            lines.append(f"事件类型：{i.get('event_type')}")
+        if i.get("platform"):
+            lines.append(f"技术平台：{i.get('platform')}")
+        lines.append("")
+    if len(lines) == 1:
+        lines.extend(
+            [
+                "1) [7天补充] 今日未抓取到足够的可用条目（RSS源空/网络异常/关键词过滤过严）。",
+                "摘要：建议检查 GitHub Actions 日志与源站可访问性，并补充中国/亚太官方源抓取。",
+                "发布日期：（以当日抓取为准）",
+                "来源：自动生成",
+                "地区：全球",
+                "赛道：其他",
+                "事件类型：政策与市场动态",
+                "技术平台：跨平台/未标注",
+            ]
+        )
+    return "\n".join(lines).rstrip() + "\n\n"
+
+
+def _render_section_g(panel: dict) -> str:
+    return (
+        "G. 质量指标 (Quality Audit)\n"
+        f"24H条目数 / 7D补充数：{panel.get('n24', 0)} / {panel.get('n7', 0)} | "
+        f"亚太占比：{panel.get('apac_share_pct', '0%')} | "
+        f"商业与监管事件比：{panel.get('commercial', 0)}:{panel.get('regulatory', 0)} | "
+        f"必查信源命中清单：{panel.get('required_sources_hits', '')}\n"
+    )
+
+
 def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
     engine = RuleEngine()
     run_id = f"dryrun-{uuid.uuid4().hex[:10]}"
@@ -114,8 +235,9 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         capture_output=True,
         text=True,
     )
-    preview_text = proc.stdout
-    items = _parse_items_from_report(preview_text)
+    raw_preview_text = proc.stdout
+    sections = _split_sections(raw_preview_text)
+    items = _parse_items_from_report(raw_preview_text)
     cluster_explain_file = artifacts_dir / "cluster_explain.json"
     clustered_items_file = artifacts_dir / "clustered_items.json"
     source_stats_file = artifacts_dir / "source_stats.json"
@@ -132,6 +254,125 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         except Exception:
             source_payload = {}
 
+    clustered_items: list[dict] = []
+    if clustered_items_file.exists():
+        try:
+            clustered_items = json.loads(clustered_items_file.read_text(encoding="utf-8"))
+        except Exception:
+            clustered_items = []
+
+    qc_decision = decision.get("qc_decision", {}) if isinstance(decision.get("qc_decision"), dict) else {}
+    output_decision = decision.get("output_decision", {}) if isinstance(decision.get("output_decision"), dict) else {}
+    email_decision = decision.get("email_decision", {}) if isinstance(decision.get("email_decision"), dict) else {}
+
+    a_cfg = output_decision.get("A", {}) if isinstance(output_decision.get("A"), dict) else {}
+    items_min = int(((a_cfg.get("items_range") or {}).get("min")) or 8)
+    items_max = int(((a_cfg.get("items_range") or {}).get("max")) or 15)
+
+    qc_panel = _calc_qc_panel(items, qc_decision)
+    fail_reasons: list[str] = []
+    min_24h = int(qc_decision.get("min_24h_items") or 0)
+    apac_min = float(qc_decision.get("apac_min_share") or 0.0)
+    china_min = float(qc_decision.get("china_min_share") or 0.0)
+    if min_24h and qc_panel["n24"] < min_24h:
+        fail_reasons.append(f"24小时内条目数不足：{qc_panel['n24']} < {min_24h}")
+    if apac_min and qc_panel["apac_share"] < apac_min:
+        fail_reasons.append(f"亚太占比不足：{qc_panel['apac_share_pct']} < {apac_min:.0%}")
+    if china_min:
+        china_n = len([i for i in items if i.get("region") == "中国"])
+        china_share = (china_n / len(items)) if items else 0.0
+        if china_share < china_min:
+            fail_reasons.append(f"中国占比不足：{china_share:.0%} < {china_min:.0%}")
+
+    passed = len(fail_reasons) == 0
+    fail_policy = qc_decision.get("fail_policy", {}) if isinstance(qc_decision.get("fail_policy"), dict) else {}
+    mode = str(fail_policy.get("mode", "only_warn"))
+    action_taken = "none"
+
+    if (not passed) and mode == "auto_topup":
+        action_taken = "auto_topup"
+        pool_7d = [x for x in clustered_items if str(x.get("window_tag")) == "7天补充"]
+        seen = {str(i.get("link", "")).strip() for i in items}
+        topup_limit = int(qc_decision.get("7d_topup_limit") or 0)
+        added = 0
+        for x in pool_7d:
+            if len(items) >= items_max:
+                break
+            if topup_limit and added >= topup_limit:
+                break
+            url = str(x.get("url", "")).strip()
+            if not url or url in seen:
+                continue
+            items.append(
+                {
+                    "index": len(items) + 1,
+                    "window_tag": str(x.get("window_tag", "7天补充")),
+                    "title": str(x.get("title", "")),
+                    "summary": str(x.get("summary_cn", "")),
+                    "published": str(x.get("published_at", "")),
+                    "source": str(x.get("source", "")),
+                    "link": url,
+                    "region": str(x.get("region", "")),
+                    "lane": str(x.get("lane", "")),
+                    "event_type": str(x.get("event_type", "")),
+                    "platform": str(x.get("platform", "")),
+                }
+            )
+            seen.add(url)
+            added += 1
+            if len(items) >= items_min:
+                break
+        qc_panel = _calc_qc_panel(items, qc_decision)
+        fail_reasons = []
+        if min_24h and qc_panel["n24"] < min_24h:
+            fail_reasons.append(f"24小时内条目数不足：{qc_panel['n24']} < {min_24h}")
+        if apac_min and qc_panel["apac_share"] < apac_min:
+            fail_reasons.append(f"亚太占比不足：{qc_panel['apac_share_pct']} < {apac_min:.0%}")
+        if china_min:
+            china_n = len([i for i in items if i.get("region") == "中国"])
+            china_share = (china_n / len(items)) if items else 0.0
+            if china_share < china_min:
+                fail_reasons.append(f"中国占比不足：{china_share:.0%} < {china_min:.0%}")
+        passed = len(fail_reasons) == 0
+    elif not passed:
+        action_taken = mode
+
+    qc_report = {
+        "ok": True,
+        "ruleset": "qc_rules",
+        "profile": profile,
+        "pass": passed,
+        "fail_reasons": fail_reasons,
+        "fail_policy": {"mode": mode, "action_taken": action_taken},
+        "panel": qc_panel,
+    }
+
+    rendered_sections = {
+        "A": _render_section_a(items[:items_max]),
+        "B": sections.get("B", ""),
+        "C": sections.get("C", ""),
+        "D": sections.get("D", ""),
+        "E": sections.get("E", ""),
+        "F": sections.get("F", ""),
+        "G": _render_section_g(qc_panel),
+    }
+    quality_markers = ["质量指标", "Quality Audit", "24H条目数", "7D补充数", "亚太占比", "必查信源"]
+    for sec in ["A", "B", "C", "D", "E", "F"]:
+        txt = rendered_sections.get(sec, "")
+        if any(m in txt for m in quality_markers):
+            cleaned = [ln for ln in txt.splitlines() if not any(m in ln for m in quality_markers)]
+            rendered_sections[sec] = ("\n".join(cleaned).rstrip() + "\n\n") if cleaned else ""
+
+    title_line = raw_preview_text.splitlines()[0] if raw_preview_text.strip() else "全球IVD晨报"
+    preview_text = f"{title_line}\n\n"
+    for sec in ["A", "B", "C", "D", "E", "F", "G"]:
+        block = rendered_sections.get(sec, "")
+        if not block:
+            continue
+        preview_text += block
+        if not preview_text.endswith("\n"):
+            preview_text += "\n"
+
     explain_payload = {
         "run_id": run_id,
         "mode": "dryrun",
@@ -141,6 +382,14 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         "rules_version": decision.get("rules_version", {}),
         "notes": ["Dry-run only: no DB write, no email send."],
     }
+    run_meta = {
+        "run_id": run_id,
+        "mode": "dryrun",
+        "profile": profile,
+        "date": report_date,
+        "rules_version": decision.get("rules_version", {}),
+        "rulesets": (decision.get("explain", {}) or {}).get("rulesets", []),
+    }
 
     (artifacts_dir / "run_id.json").write_text(
         json.dumps(explain_payload, ensure_ascii=False, indent=2),
@@ -149,6 +398,28 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
     (artifacts_dir / "newsletter_preview.md").write_text(preview_text, encoding="utf-8")
     (artifacts_dir / "items.json").write_text(
         json.dumps(items, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (artifacts_dir / "qc_report.json").write_text(
+        json.dumps(qc_report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (artifacts_dir / "output_render.json").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "run_id": run_id,
+                "profile": profile,
+                "sections_order": ["A", "B", "C", "D", "E", "F", "G"],
+                "sections": rendered_sections,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (artifacts_dir / "run_meta.json").write_text(
+        json.dumps(run_meta, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -165,6 +436,9 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             "clustered_items": str(clustered_items_file),
             "cluster_explain": str(cluster_explain_file),
             "source_stats": str(source_stats_file),
+            "qc_report": str(artifacts_dir / "qc_report.json"),
+            "output_render": str(artifacts_dir / "output_render.json"),
+            "run_meta": str(artifacts_dir / "run_meta.json"),
         },
         "items_count": len(items),
         "items_before_count": int(cluster_payload.get("items_before_count", len(items))),
@@ -172,8 +446,18 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         "top_clusters": cluster_payload.get("top_clusters", []),
         "source_stats": source_payload.get("sources", []),
         "sent": False,
+        "qc": qc_report,
+        "email_preview": {
+            "subject_template": str(email_decision.get("subject_template", "")),
+            "subject": str(email_decision.get("subject", "")),
+            "recipients": email_decision.get("recipients", []),
+            "preview_text": preview_text,
+            "preview_html": f"<pre>{preview_text}</pre>",
+        },
         "decision": {
             "content_decision": decision.get("content_decision", {}),
+            "qc_decision": qc_decision,
+            "output_decision": output_decision,
             "email_decision": decision.get("email_decision", {}),
         },
     }
