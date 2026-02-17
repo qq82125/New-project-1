@@ -115,7 +115,7 @@ docker compose up -d --build
 - `scheduler-worker`：每分钟写入 `/app/logs/scheduler_worker_heartbeat.json`（compose healthcheck 会检查更新时间）
 
 访问：
-- Docker 模式默认映射到 `http://127.0.0.1:8790/admin`（容器内是 8789；避免与本机 launchd 8789 冲突）
+- Docker 模式默认映射到 `http://127.0.0.1:8090/admin`（容器内是 8789；避免与本机 launchd 8789 冲突）
 
 说明：
 - 常驻模式启用后，GitHub Actions 仍保留作为兜底/可选停用（不删除）。

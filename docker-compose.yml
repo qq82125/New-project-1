@@ -3,17 +3,13 @@ services:
     build: .
     container_name: ivd-admin-api
     command: ["python3", "-m", "app.admin_server"]
+    env_file:
+      - .docker.env
     environment:
       ADMIN_API_HOST: "0.0.0.0"
       ADMIN_API_PORT: "8789"
-      # Set auth explicitly in your environment or .env:
-      # ADMIN_USER: "admin"
-      # ADMIN_PASS: "change-me"
-      # Or use bearer:
-      # ADMIN_TOKEN: "..."
     ports:
-      # Host 8789 is commonly used by local launchd mode; use 8790 to avoid conflicts.
-      - "8790:8789"
+      - "8090:8789"
     volumes:
       - ./data:/app/data
       - ./artifacts:/app/artifacts
@@ -29,12 +25,11 @@ services:
     build: .
     container_name: ivd-scheduler-worker
     command: ["python3", "-m", "app.workers.scheduler_worker"]
+    env_file:
+      - .docker.env
     environment:
       SCHEDULER_PROFILE: "enhanced"
       SCHEDULER_REFRESH_SECONDS: "60"
-      # If you want digest runs to actually send mail in container,
-      # provide TO_EMAIL and mount/provide SMTP env variables used by send_mail_icloud.sh.
-      # TO_EMAIL: "you@example.com"
     volumes:
       - ./data:/app/data
       - ./artifacts:/app/artifacts

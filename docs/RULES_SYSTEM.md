@@ -355,7 +355,7 @@ docker compose exec admin-api python3 -m app.workers.cli rules:dryrun --profile 
 ```
 
 注意：
-- Docker 模式默认将控制台映射到宿主机 `8790` 端口（避免与本机 launchd 模式的 `8789` 冲突）。
+- Docker 模式默认将控制台映射到宿主机 `8090` 端口（避免与本机 launchd 模式的 `8789` 冲突）。
 - 常驻模式启用后，GitHub Actions 仍可保留作为兜底补发（可按需停用定时触发）。
 - `scheduler-worker` 默认会按 `scheduler_rules(enhanced)` 注册任务；若容器内要实际发信，需要提供 `TO_EMAIL` 与 SMTP 环境（参见 `send_mail_icloud.sh` 读取的 `.mail.env` 变量）。
 
