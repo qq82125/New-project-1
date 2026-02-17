@@ -1,0 +1,40 @@
+ruleset: scheduler_rules
+version: "2.0.0"
+profile: enhanced
+
+defaults:
+  enabled: true
+  timezone: "Asia/Singapore"
+  schedules:
+    # digest：按固定时间生成日报（示例：每天 09:00，新加坡时区）
+    - id: "digest_daily_0900"
+      type: "cron"
+      cron: "0 9 * * *"
+      purpose: "digest"
+      profile: "enhanced"
+      jitter_seconds: 30
+    # collect：定时抓取/预热（示例：每 60 分钟）
+    - id: "collect_interval_60m"
+      type: "interval"
+      interval_minutes: 60
+      purpose: "collect"
+      profile: "enhanced"
+      jitter_seconds: 10
+  concurrency:
+    max_instances: 1
+    coalesce: true
+    misfire_grace_seconds: 600
+  run_policies:
+    allow_manual_trigger: true
+    pause_switch: true
+  artifacts:
+    retain_days: 14
+
+overrides:
+  enabled: true
+
+rules: []
+
+output:
+  format: "none"
+

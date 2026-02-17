@@ -47,6 +47,33 @@ def _output_cfg(profile: str, version: str) -> dict:
         "output": {"sections": ["A", "G"]},
     }
 
+def _scheduler_cfg(profile: str, version: str) -> dict:
+    return {
+        "ruleset": "scheduler_rules",
+        "profile": profile,
+        "version": version,
+        "defaults": {
+            "enabled": True,
+            "timezone": "Asia/Singapore",
+            "schedules": [
+                {
+                    "id": "digest_daily_0900",
+                    "type": "cron",
+                    "cron": "0 9 * * *",
+                    "purpose": "digest",
+                    "profile": profile,
+                    "jitter_seconds": 0,
+                }
+            ],
+            "concurrency": {"max_instances": 1, "coalesce": True, "misfire_grace_seconds": 600},
+            "run_policies": {"allow_manual_trigger": True, "pause_switch": True},
+            "artifacts": {"retain_days": 14},
+        },
+        "overrides": {"enabled": True},
+        "rules": [],
+        "output": {},
+    }
+
 
 class RulesStoreTests(unittest.TestCase):
     def test_create_activate_rollback(self) -> None:
@@ -152,6 +179,45 @@ class RulesStoreTests(unittest.TestCase):
             active_out2 = store.get_active_rules("output_rules", "enhanced")
             self.assertIsNotNone(active_out2)
             self.assertEqual(active_out2["_store_meta"]["version"], opub1["version"])
+
+    def test_scheduler_rules_draft_publish_active_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = RulesStore(root)
+
+            d1 = store.create_draft(
+                "scheduler_rules",
+                "enhanced",
+                _scheduler_cfg("enhanced", "2.0.0"),
+                validation_errors=[],
+                created_by="tester",
+            )
+            pub1 = store.publish_draft("scheduler_rules", d1["id"], "enhanced", created_by="tester")
+            self.assertTrue(pub1["ok"])
+            active1 = store.get_active_rules("scheduler_rules", "enhanced")
+            self.assertIsNotNone(active1)
+            self.assertEqual(active1.get("ruleset"), "scheduler_rules")
+            self.assertEqual(active1.get("profile"), "enhanced")
+            self.assertEqual(active1["_store_meta"]["version"], pub1["version"])
+
+            d2 = store.create_draft(
+                "scheduler_rules",
+                "enhanced",
+                _scheduler_cfg("enhanced", "2.0.1"),
+                validation_errors=[],
+                created_by="tester",
+            )
+            pub2 = store.publish_draft("scheduler_rules", d2["id"], "enhanced", created_by="tester")
+            self.assertTrue(pub2["ok"])
+            active2 = store.get_active_rules("scheduler_rules", "enhanced")
+            self.assertIsNotNone(active2)
+            self.assertEqual(active2["_store_meta"]["version"], pub2["version"])
+
+            rb = store.rollback("scheduler_rules", profile="enhanced")
+            self.assertTrue(rb["ok"])
+            active3 = store.get_active_rules("scheduler_rules", "enhanced")
+            self.assertIsNotNone(active3)
+            self.assertEqual(active3["_store_meta"]["version"], pub1["version"])
 
     def test_sources_upsert(self) -> None:
         with tempfile.TemporaryDirectory() as td:

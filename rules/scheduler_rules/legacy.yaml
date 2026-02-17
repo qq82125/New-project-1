@@ -1,0 +1,33 @@
+ruleset: scheduler_rules
+version: "1.0.0"
+profile: legacy
+
+defaults:
+  enabled: false
+  timezone: "Asia/Singapore"
+  schedules:
+    # legacy: 默认不启用常驻调度；保留示例但关闭总开关即可不生效
+    - id: "digest_daily_0900"
+      type: "cron"
+      cron: "0 9 * * *"
+      purpose: "digest"
+      profile: "legacy"
+      jitter_seconds: 0
+  concurrency:
+    max_instances: 1
+    coalesce: true
+    misfire_grace_seconds: 600
+  run_policies:
+    allow_manual_trigger: true
+    pause_switch: true
+  artifacts:
+    retain_days: 14
+
+overrides:
+  # 预留：用于 UI 草稿/发布覆盖 defaults
+  enabled: false
+
+rules: []
+
+output:
+  format: "none"

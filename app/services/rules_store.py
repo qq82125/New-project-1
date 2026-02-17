@@ -84,6 +84,20 @@ class RulesStore:
                 CREATE INDEX IF NOT EXISTS idx_output_rules_profile_active
                     ON output_rules_versions(profile, is_active, id);
 
+                CREATE TABLE IF NOT EXISTS scheduler_rules_versions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    profile TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    config_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    created_by TEXT NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_scheduler_rules_profile_version
+                    ON scheduler_rules_versions(profile, version);
+                CREATE INDEX IF NOT EXISTS idx_scheduler_rules_profile_active
+                    ON scheduler_rules_versions(profile, is_active, id);
+
                 CREATE TABLE IF NOT EXISTS sources (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -135,6 +149,8 @@ class RulesStore:
             return "qc_rules_versions"
         if ruleset == "output_rules":
             return "output_rules_versions"
+        if ruleset == "scheduler_rules":
+            return "scheduler_rules_versions"
         raise ValueError(f"unsupported ruleset={ruleset}")
 
     def _decode_config(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
