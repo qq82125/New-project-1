@@ -1534,8 +1534,13 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('china_min_share').value = d.china_min_share ?? 0.2;
           document.getElementById('daily_repeat_rate_max').value = d.daily_repeat_rate_max ?? 0.25;
           document.getElementById('recent_7d_repeat_rate_max').value = d.recent_7d_repeat_rate_max ?? 0.4;
-          document.getElementById('required_sources').value = (d.required_sources_checklist||[]).join(',');
-          const rp = d.rumor_policy||{};
+                  document.getElementById('required_sources').value = (d.required_sources_checklist||[]).join(',');
+                  const qp = d.quality_policy || {};
+                  // Back-compat: prefer new quality_policy.required_sources_checklist if present.
+                  if(Array.isArray(qp.required_sources_checklist) && qp.required_sources_checklist.length){
+                    document.getElementById('required_sources').value = (qp.required_sources_checklist||[]).join(',');
+                  }
+                  const rp = d.rumor_policy||{};
           document.getElementById('rumor_enabled').value = String(!!rp.enabled);
           document.getElementById('rumor_terms').value = (rp.trigger_terms||[]).join(',');
           document.getElementById('rumor_label').value = rp.label || '传闻（未确认）';
@@ -1572,12 +1577,16 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           cfg.defaults.china_min_share = Number(document.getElementById('china_min_share').value||0.2);
           cfg.defaults.daily_repeat_rate_max = Number(document.getElementById('daily_repeat_rate_max').value||0.25);
           cfg.defaults.recent_7d_repeat_rate_max = Number(document.getElementById('recent_7d_repeat_rate_max').value||0.4);
-          cfg.defaults.required_sources_checklist = splitCsv(document.getElementById('required_sources').value);
-              cfg.defaults.rumor_policy = {
-                enabled: document.getElementById('rumor_enabled').value === 'true',
-                trigger_terms: splitCsv(document.getElementById('rumor_terms').value),
-                label: document.getElementById('rumor_label').value.trim() || '传闻（未确认）',
-              };
+                  const reqList = splitCsv(document.getElementById('required_sources').value);
+                  cfg.defaults.required_sources_checklist = reqList;
+                  // v2 structured field (prompt7)
+                  cfg.defaults.quality_policy = cfg.defaults.quality_policy || {};
+                  cfg.defaults.quality_policy.required_sources_checklist = reqList;
+                  cfg.defaults.rumor_policy = {
+                    enabled: document.getElementById('rumor_enabled').value === 'true',
+                    trigger_terms: splitCsv(document.getElementById('rumor_terms').value),
+                    label: document.getElementById('rumor_label').value.trim() || '传闻（未确认）',
+                  };
               cfg.defaults.fail_policy = {
                 mode: document.getElementById('fail_mode').value,
                 topup_prefer: splitCsv(document.getElementById('topup_prefer').value),

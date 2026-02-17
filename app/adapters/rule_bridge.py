@@ -179,5 +179,7 @@ def load_runtime_rules(
         "run_id": str(decision.get("run_id", run_id or "")),
         "rules_version": decision.get("rules_version", {}),
         "content": content_cfg,
+        # Pass-through: used for QC metrics / explainability in offline generators.
+        "qc": decision.get("qc_decision", {}) if isinstance(decision.get("qc_decision"), dict) else {},
         "email": email_cfg,
     }

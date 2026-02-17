@@ -26,6 +26,7 @@
           "minItems": 0,
           "items": { "type": "string", "minLength": 2 }
         },
+        "quality_policy": { "$ref": "#/$defs/qualityPolicy" },
         "completeness_policy": { "$ref": "#/$defs/completenessPolicy" },
         "rumor_policy": { "$ref": "#/$defs/rumorPolicy" },
         "fail_policy": { "$ref": "#/$defs/failPolicy" }
@@ -127,6 +128,35 @@
         "min_complete_share": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
         "summary_sentences_min": { "type": "integer", "minimum": 1, "maximum": 10 },
         "summary_sentences_max": { "type": "integer", "minimum": 1, "maximum": 10 }
+      },
+      "additionalProperties": true
+    },
+    "qualityPolicy": {
+      "type": "object",
+      "required": ["required_sources_checklist"],
+      "properties": {
+        "required_sources_checklist": {
+          "type": "array",
+          "minItems": 0,
+          "items": { "type": "string", "minLength": 2 }
+        },
+        "event_type_keywords": {
+          "type": "object",
+          "propertyNames": { "type": "string", "minLength": 2 },
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        },
+        "event_groups": {
+          "type": "object",
+          "required": ["regulatory", "commercial"],
+          "properties": {
+            "regulatory": { "type": "array", "items": { "type": "string", "minLength": 2 } },
+            "commercial": { "type": "array", "items": { "type": "string", "minLength": 2 } }
+          },
+          "additionalProperties": true
+        }
       },
       "additionalProperties": true
     }

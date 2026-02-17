@@ -103,33 +103,42 @@ def _split_sections(text: str) -> dict[str, str]:
 
 
 def _required_sources_hits(required: list[str], items: list[dict]) -> tuple[str, list[str]]:
+    # Explainable v1: match checklist entries against source_id/source_group primarily,
+    # with a small legacy fallback on source/link text for robustness.
     patterns = {
-        "NMPA": ["nmpa.gov.cn"],
+        "NMPA": ["nmpa", "nmpa.gov.cn"],
         "CMDE": ["cmde"],
-        "UDI数据库": ["udi.nmpa.gov.cn", "udi"],
-        "CCGP": ["ccgp.gov.cn", "ccgp"],
-        "TGA": ["tga.gov.au"],
-        "HSA": ["hsa.gov.sg"],
-        "PMDA/MHLW": ["pmda.go.jp", "mhlw.go.jp", "pmda"],
-        "MFDS": ["mfds.go.kr", "mfds"],
-        "GenomeWeb": ["genomeweb.com", "genomeweb"],
+        "UDI数据库": ["udi", "udi.nmpa.gov.cn"],
+        "CCGP": ["ccgp", "ccgp.gov.cn"],
+        "中国招采网": ["chinabidding", "zhaocai", "招采"],
+        "TGA": ["tga", "tga.gov.au"],
+        "HSA": ["hsa", "hsa.gov.sg"],
+        "PMDA/MHLW": ["pmda", "pmda.go.jp", "mhlw.go.jp"],
+        "MFDS": ["mfds", "mfds.go.kr"],
+        "GenomeWeb": ["genomeweb", "genomeweb.com"],
         "Reuters Healthcare": ["reuters", "reutersagency.com"],
     }
-    hit = {x: False for x in required}
+
+    hit = {str(x): False for x in required}
     for it in items:
-        s = (
-            str(it.get("source", ""))
-            + " "
-            + str(it.get("link", ""))
-            + " "
-            + str(it.get("url", ""))
-        ).lower()
+        tokens = []
+        for k in ("source_id", "source_group", "source"):
+            v = str(it.get(k, "")).strip().lower()
+            if v:
+                tokens.append(v)
+        # Keep legacy matching on URL text too.
+        tokens.append(str(it.get("link", "")).strip().lower())
+        tokens.append(str(it.get("url", "")).strip().lower())
+        hay = " ".join([t for t in tokens if t])
+
         for key in required:
-            if hit.get(key):
+            key_s = str(key)
+            if hit.get(key_s):
                 continue
-            pats = patterns.get(key, [str(key).lower()])
-            if any(p.lower() in s for p in pats):
-                hit[key] = True
+            pats = patterns.get(key_s, [key_s.lower()])
+            if any(p.lower() in hay for p in pats):
+                hit[key_s] = True
+
     missing = [k for k, v in hit.items() if not v]
     display = "；".join([f"{k}:{'命中' if hit.get(k) else '未命中'}" for k in required])
     return display, missing
@@ -280,9 +289,32 @@ def _calc_qc_panel(project_root: Path, report_date: str | None, items: list[dict
     n7 = len([i for i in items if i.get("window_tag") == "7天补充"])
     apac = len([i for i in items if i.get("region") in ("中国", "亚太")])
     apac_share = (apac / len(items)) if items else 0.0
-    regulatory = len([i for i in items if i.get("event_type") == "监管审批与指南"])
+    # Event mix
+    by_event: dict[str, int] = {}
+    for it in items:
+        et = str(it.get("event_type", "")).strip() or "未标注"
+        by_event[et] = by_event.get(et, 0) + 1
+    qp = qc_decision.get("quality_policy", {}) if isinstance(qc_decision.get("quality_policy"), dict) else {}
+    event_groups = qp.get("event_groups", {}) if isinstance(qp.get("event_groups"), dict) else {}
+    reg_types = set(str(x) for x in (event_groups.get("regulatory", []) if isinstance(event_groups.get("regulatory"), list) else []) if str(x).strip())
+    if not reg_types:
+        reg_types = {"监管审批与指南"}
+    regulatory = sum(v for k, v in by_event.items() if k in reg_types)
     commercial = len(items) - regulatory
-    required = qc_decision.get("required_sources_checklist", [])
+    event_mix = {
+        "by_event_type": dict(sorted(by_event.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "regulatory": regulatory,
+        "commercial": commercial,
+        "regulatory_share": (regulatory / len(items)) if items else 0.0,
+        "commercial_share": (commercial / len(items)) if items else 0.0,
+    }
+
+    required = []
+    # v2 preferred field
+    if isinstance(qp.get("required_sources_checklist"), list):
+        required = qp.get("required_sources_checklist", [])
+    if not required:
+        required = qc_decision.get("required_sources_checklist", [])
     required_list = [str(x) for x in required] if isinstance(required, list) else []
     hits, missing = _required_sources_hits(required_list, items)
     comp_policy = qc_decision.get("completeness_policy", {})
@@ -293,8 +325,7 @@ def _calc_qc_panel(project_root: Path, report_date: str | None, items: list[dict
         "n7": n7,
         "apac_share": apac_share,
         "apac_share_pct": f"{apac_share:.0%}",
-        "regulatory": regulatory,
-        "commercial": commercial,
+        "event_mix": event_mix,
         "required_sources_hits": hits,
         "required_sources_missing": missing,
         "repeat": repeat,
@@ -342,11 +373,14 @@ def _render_section_a(items: list[dict]) -> str:
 
 
 def _render_section_g(panel: dict) -> str:
+    mix = panel.get("event_mix", {}) if isinstance(panel.get("event_mix"), dict) else {}
+    reg = int(mix.get("regulatory", panel.get("regulatory", 0)) or 0)
+    com = int(mix.get("commercial", panel.get("commercial", 0)) or 0)
     return (
         "G. 质量指标 (Quality Audit)\n"
         f"24H条目数 / 7D补充数：{panel.get('n24', 0)} / {panel.get('n7', 0)} | "
         f"亚太占比：{panel.get('apac_share_pct', '0%')} | "
-        f"商业与监管事件比：{panel.get('commercial', 0)}:{panel.get('regulatory', 0)} | "
+        f"商业与监管事件比：{com}:{reg} | "
         f"必查信源命中清单：{panel.get('required_sources_hits', '')}\n"
     )
 
@@ -442,6 +476,7 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
     cluster_explain_file = artifacts_dir / "cluster_explain.json"
     clustered_items_file = artifacts_dir / "clustered_items.json"
     source_stats_file = artifacts_dir / "source_stats.json"
+    event_explain_file = artifacts_dir / "event_type_explain.json"
     cluster_payload = {}
     if cluster_explain_file.exists():
         try:
@@ -454,6 +489,12 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             source_payload = json.loads(source_stats_file.read_text(encoding="utf-8"))
         except Exception:
             source_payload = {}
+    event_explain_payload = {}
+    if event_explain_file.exists():
+        try:
+            event_explain_payload = json.loads(event_explain_file.read_text(encoding="utf-8"))
+        except Exception:
+            event_explain_payload = {}
 
     clustered_items: list[dict] = []
     if clustered_items_file.exists():
@@ -461,6 +502,24 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             clustered_items = json.loads(clustered_items_file.read_text(encoding="utf-8"))
         except Exception:
             clustered_items = []
+    # Enrich parsed items with source_id/source_group when possible (for explainable checklist).
+    url2meta: dict[str, dict] = {}
+    for it in clustered_items:
+        if not isinstance(it, dict):
+            continue
+        u = str(it.get("url", "")).strip()
+        if not u:
+            continue
+        url2meta[u] = {
+            "source_id": it.get("source_id", ""),
+            "source_group": it.get("source_group", ""),
+            "source": it.get("source", ""),
+        }
+    for it in items:
+        u = str(it.get("link", "")).strip()
+        if u and u in url2meta:
+            it.setdefault("source_id", url2meta[u].get("source_id", ""))
+            it.setdefault("source_group", url2meta[u].get("source_group", ""))
 
     qc_decision = decision.get("qc_decision", {}) if isinstance(decision.get("qc_decision"), dict) else {}
     output_decision = decision.get("output_decision", {}) if isinstance(decision.get("output_decision"), dict) else {}
@@ -559,6 +618,11 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         "date": report_date,
         "decision_explain": decision.get("explain", {}),
         "rules_version": decision.get("rules_version", {}),
+        "event_type_classifier": {
+            "artifact": "event_type_explain.json" if event_explain_payload else None,
+            "mapping_source": (event_explain_payload.get("mapping_source") if isinstance(event_explain_payload, dict) else None),
+            "items_count": (len(event_explain_payload.get("items", [])) if isinstance(event_explain_payload, dict) and isinstance(event_explain_payload.get("items"), list) else 0),
+        },
         "notes": ["Dry-run only: no DB write, no email send."],
     }
     run_meta = {

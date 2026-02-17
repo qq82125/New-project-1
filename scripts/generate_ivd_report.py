@@ -48,12 +48,14 @@ class Item:
     window_tag: str  # "24小时内" or "7天补充"
     summary_cn: str
     source_id: str = ""
+    source_group: str = ""
     source_priority: int = 0
     story_id: str = ""
     is_primary: bool = True
     other_sources: list = field(default_factory=list)
     cluster_size: int = 1
     dedupe_reason: str = ""
+    event_type_explain: dict = field(default_factory=dict)
 
 
 RUNTIME_CONTENT = {
@@ -94,12 +96,14 @@ def item_to_dict(it: Item) -> dict:
         "window_tag": it.window_tag,
         "summary_cn": it.summary_cn,
         "source_id": it.source_id,
+        "source_group": it.source_group,
         "source_priority": it.source_priority,
         "story_id": it.story_id,
         "is_primary": it.is_primary,
         "other_sources": list(it.other_sources),
         "cluster_size": it.cluster_size,
         "dedupe_reason": it.dedupe_reason,
+        "event_type_explain": dict(it.event_type_explain or {}),
     }
 
 
@@ -116,12 +120,14 @@ def dict_to_item(d: dict) -> Item:
         window_tag=str(d.get("window_tag", "7天补充")),
         summary_cn=str(d.get("summary_cn", "")),
         source_id=str(d.get("source_id", "")),
+        source_group=str(d.get("source_group", "")),
         source_priority=int(d.get("source_priority", 0)),
         story_id=str(d.get("story_id", "")),
         is_primary=bool(d.get("is_primary", True)),
         other_sources=list(d.get("other_sources", [])),
         cluster_size=int(d.get("cluster_size", 1)),
         dedupe_reason=str(d.get("dedupe_reason", "")),
+        event_type_explain=d.get("event_type_explain", {}) if isinstance(d.get("event_type_explain"), dict) else {},
     )
 
 
@@ -275,6 +281,100 @@ def detect_event_type(text: str, source: str, link: str) -> str:
     if any(k in t for k in ["tender", "procurement", "reimbursement", "payment", "bid", "ccgp", "招标", "采购"]):
         return "支付与招采"
     return "政策与市场动态"
+
+
+def infer_source_group(src: dict) -> str:
+    tags = set(
+        str(x).strip().lower()
+        for x in (src.get("tags", []) if isinstance(src.get("tags"), list) else [])
+    )
+    if "procurement" in tags and "cn" in tags:
+        return "procurement_cn"
+    if "regulatory" in tags and "cn" in tags:
+        return "regulatory_cn"
+    if "regulatory" in tags and (
+        "apac" in tags or "jp" in tags or "kr" in tags or "sg" in tags or "au" in tags
+    ):
+        return "regulatory_apac"
+    if "regulatory" in tags:
+        return "regulatory_global"
+    return "media_global"
+
+
+class EventTypeClassifier:
+    def __init__(self, mapping: dict | None = None) -> None:
+        self.mapping = mapping or {}
+
+    def classify(
+        self,
+        title: str,
+        summary: str,
+        source_group: str,
+        url: str,
+    ) -> tuple[str, dict]:
+        fields = {
+            "title": str(title or ""),
+            "summary": str(summary or ""),
+            "source_group": str(source_group or ""),
+            "url": str(url or ""),
+        }
+        combined = (
+            fields["title"]
+            + " "
+            + fields["summary"]
+            + " "
+            + fields["source_group"]
+            + " "
+            + fields["url"]
+        ).lower()
+
+        if isinstance(self.mapping, dict) and self.mapping:
+            for label, kws in self.mapping.items():
+                if not isinstance(kws, list):
+                    continue
+                for kw in kws:
+                    k = str(kw).strip().lower()
+                    if not k:
+                        continue
+                    if has_term(combined, k):
+                        matched_field = None
+                        for fn in ("title", "summary", "source_group", "url"):
+                            if has_term(fields[fn].lower(), k):
+                                matched_field = fn
+                                break
+                        return str(label), {
+                            "matched": True,
+                            "matched_label": str(label),
+                            "matched_keyword": str(kw),
+                            "matched_field": matched_field,
+                        }
+
+        # Fallback: legacy heuristic for robustness.
+        et = detect_event_type(fields["title"] + " " + fields["summary"], fields["source_group"], fields["url"])
+        return str(et), {
+            "matched": False,
+            "matched_label": str(et),
+            "matched_keyword": "fallback_heuristic",
+            "matched_field": "combined",
+        }
+
+
+def build_event_classifier(runtime_rules: dict) -> EventTypeClassifier:
+    content_cfg = (
+        (runtime_rules or {}).get("content", {})
+        if isinstance((runtime_rules or {}).get("content"), dict)
+        else {}
+    )
+    qc_cfg = (
+        (runtime_rules or {}).get("qc", {})
+        if isinstance((runtime_rules or {}).get("qc"), dict)
+        else {}
+    )
+    mapping = content_cfg.get("event_mapping", {}) if isinstance(content_cfg.get("event_mapping"), dict) else {}
+    if not mapping:
+        qp = qc_cfg.get("quality_policy", {}) if isinstance(qc_cfg.get("quality_policy"), dict) else {}
+        mapping = qp.get("event_type_keywords", {}) if isinstance(qp.get("event_type_keywords"), dict) else {}
+    return EventTypeClassifier(mapping=mapping if isinstance(mapping, dict) else {})
 
 
 def cn_region(source: str, link: str) -> str:
@@ -1016,6 +1116,31 @@ def must_source_hits(items: list[Item]) -> str:
     return "；".join([f"{k}:{'命中' if v else '未命中'}" for k, v in checks.items()])
 
 
+def required_sources_checklist_hit(
+    required: list[str],
+    items: list[Item],
+) -> tuple[str, list[str]]:
+    hit = {str(x): False for x in required}
+    for it in items:
+        hay = " ".join(
+            [
+                str(it.source_id or "").lower(),
+                str(it.source_group or "").lower(),
+                str(it.source or "").lower(),
+                str(it.link or "").lower(),
+            ]
+        )
+        for k in required:
+            ks = str(k)
+            if hit.get(ks):
+                continue
+            if ks.lower() in hay:
+                hit[ks] = True
+    missing = [k for k, v in hit.items() if not v]
+    display = "；".join([f"{k}:{'命中' if hit.get(k) else '未命中'}" for k in required])
+    return display, missing
+
+
 def main() -> int:
     tz_name = env("REPORT_TZ", "Asia/Shanghai")
     forced_date = env("REPORT_DATE", "")
@@ -1033,6 +1158,17 @@ def main() -> int:
 
     run_id = env("REPORT_RUN_ID", "") or f"run-{uuid.uuid4().hex[:10]}"
     runtime_rules = load_runtime_rules(date_str=date_str, run_id=run_id)
+    event_classifier = build_event_classifier(runtime_rules)
+    event_mapping_source = "content_rules"
+    try:
+        cc = runtime_rules.get("content", {}) if isinstance(runtime_rules.get("content"), dict) else {}
+        if not (isinstance(cc.get("event_mapping"), dict) and cc.get("event_mapping")):
+            qc = runtime_rules.get("qc", {}) if isinstance(runtime_rules.get("qc"), dict) else {}
+            qp = qc.get("quality_policy", {}) if isinstance(qc.get("quality_policy"), dict) else {}
+            if isinstance(qp.get("event_type_keywords"), dict) and qp.get("event_type_keywords"):
+                event_mapping_source = "qc_rules"
+    except Exception:
+        event_mapping_source = "content_rules"
     # Keep stdout stable (newsletter text). Operational logs go to stderr.
     try:
         rv = runtime_rules.get("rules_version", {})
@@ -1107,7 +1243,8 @@ def main() -> int:
                 tags = [str(x) for x in s.get("tags", [])]
                 kind = "regulatory" if "regulatory" in tags else "media"
                 pri = int(s.get("priority", 0))
-                converted.append((sid, conn, name, url, region, kind, pri))
+                sg = infer_source_group(s)
+                converted.append((sid, conn, name, url, region, kind, pri, sg))
             sources = converted
         else:
             # Compatibility fallback: use old inline sources in enhanced when registry is empty.
@@ -1119,7 +1256,10 @@ def main() -> int:
                         continue
                     name, url, region, kind = x[0], x[1], x[2], x[3]
                     sid = f"fallback-inline-{idx}"
-                    converted.append((sid, "rss", name, url, region, kind, 50))
+                    sg = "regulatory_cn" if (kind == "regulatory" and region == "中国") else (
+                        "regulatory_apac" if (kind == "regulatory" and region == "亚太") else "media_global"
+                    )
+                    converted.append((sid, "rss", name, url, region, kind, 50, sg))
                 if converted:
                     sources = converted
 
@@ -1131,7 +1271,21 @@ def main() -> int:
     items.extend(collect_nmpa_site_updates(now_utc, tz_name))
     items.extend(collect_pmda_updates(now_utc, tz_name))
 
-    for source_id, connector, src_name, url, default_region, kind, source_priority in sources:
+    # Normalize legacy tuples (7 fields) into new form (8 fields).
+    norm_sources = []
+    for t in sources:
+        if isinstance(t, tuple) and len(t) == 7:
+            sid, conn, name, url, region, kind, pri = t
+            sg = "regulatory_cn" if (kind == "regulatory" and region == "中国") else (
+                "regulatory_apac" if (kind == "regulatory" and region == "亚太") else "media_global"
+            )
+            norm_sources.append((sid, conn, name, url, region, kind, pri, sg))
+        else:
+            norm_sources.append(t)
+
+    event_explain_rows: list[dict] = []
+
+    for source_id, connector, src_name, url, default_region, kind, source_priority, source_group in norm_sources:
         stat = source_stats.setdefault(
             source_id,
             {
@@ -1219,8 +1373,8 @@ def main() -> int:
             region = cn_region(src_name, link) or default_region
             lane = cn_lane(combined)
             platform = cn_platform(combined)
-            event_type = detect_event_type(combined, src_name, link)
             summary = cn_summary(row["entry"]) if row["entry"] is not None else "摘要：该条来自网页源抓取。"
+            event_type, et_explain = event_classifier.classify(title, summary, source_group, link)
 
             it = Item(
                 title=title,
@@ -1228,6 +1382,7 @@ def main() -> int:
                 published=pub,
                 source=src_name,
                 source_id=source_id,
+                source_group=str(source_group or ""),
                 source_priority=source_priority,
                 region=region,
                 lane=lane,
@@ -1235,6 +1390,18 @@ def main() -> int:
                 event_type=event_type,
                 window_tag=wt,
                 summary_cn=summary,
+                event_type_explain=et_explain,
+            )
+            event_explain_rows.append(
+                {
+                    "title": title,
+                    "url": link,
+                    "source_id": source_id,
+                    "source_group": str(source_group or ""),
+                    "event_type": event_type,
+                    "explain": et_explain,
+                    "mapping_source": event_mapping_source,
+                }
             )
             if kind != "regulatory" and fallback_ok:
                 relaxed_pool.append(it)
@@ -1320,7 +1487,13 @@ def main() -> int:
     max_7d_dup = 0.0
     for s in recent_titles.values():
         max_7d_dup = max(max_7d_dup, calc_dup_rate(top, s))
-    source_hits = must_source_hits(top)
+    qc_cfg = runtime_rules.get("qc", {}) if isinstance(runtime_rules.get("qc"), dict) else {}
+    qp = qc_cfg.get("quality_policy", {}) if isinstance(qc_cfg.get("quality_policy"), dict) else {}
+    required = qp.get("required_sources_checklist", [])
+    if not isinstance(required, list) or not required:
+        required = qc_cfg.get("required_sources_checklist", [])
+    required_list = [str(x) for x in required] if isinstance(required, list) else []
+    source_hits, _missing = required_sources_checklist_hit(required_list, top)
 
     # Lane split
     lanes = {"肿瘤检测": [], "感染检测": [], "生殖与遗传检测": [], "其他": []}
@@ -1437,6 +1610,19 @@ def main() -> int:
         )
         (p / "source_stats.json").write_text(
             json.dumps({"sources": list(source_stats.values())}, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        # Explainability: per-item event_type classification evidence.
+        (p / "event_type_explain.json").write_text(
+            json.dumps(
+                {
+                    "mapping_source": event_mapping_source,
+                    "items": event_explain_rows,
+                },
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            ),
             encoding="utf-8",
         )
 

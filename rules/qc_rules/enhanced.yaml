@@ -38,6 +38,33 @@ defaults:
     - GenomeWeb
     - Reuters Healthcare
 
+  # Quality policy (v2): structured checklist + optional event keyword mapping for explainable classification.
+  quality_policy:
+    required_sources_checklist:
+      - NMPA
+      - CMDE
+      - UDI数据库
+      - CCGP
+      - 中国招采网
+      - TGA
+      - HSA
+      - PMDA/MHLW
+      - MFDS
+      - GenomeWeb
+      - Reuters Healthcare
+    # Optional: if content_rules.event_mapping is empty, classifier will fallback to this mapping.
+    event_type_keywords:
+      监管审批与指南: [NMPA, CMDE, FDA, PMDA, MFDS, guideline, approval, recall, 通告, 指导原则, 召回]
+      并购融资/IPO与合作: [acquisition, merger, financing, IPO, partnership, collaboration, 投资, 融资, 并购, 合作]
+      注册上市: [registration, launch, clearance, CE mark, 上市, 注册]
+      产品发布: [product, assay, kit, launch, 发布]
+      临床与科研证据: [clinical, study, trial, evidence, 研究, 临床]
+      支付与招采: [tender, procurement, reimbursement, 招采, 采购, 招标, CCGP]
+      政策与市场动态: [policy, market, reimbursement, 政策, 市场]
+    event_groups:
+      regulatory: [监管审批与指南]
+      commercial: [并购融资/IPO与合作, 注册上市, 产品发布, 临床与科研证据, 支付与招采, 政策与市场动态]
+
   # Completeness: ensure required fields exist and summary meets sentence-count range.
   completeness_policy:
     enabled: true
