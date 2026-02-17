@@ -20,5 +20,8 @@ class ExplainRecord:
     email_version: str
     content_profile: str
     content_version: str
+    qc_profile: str
+    qc_version: str
+    output_profile: str
+    output_version: str
     notes: list[str]
-

@@ -186,10 +186,102 @@ class RuleEngineTests(unittest.TestCase):
         engine = RuleEngine()
         out = engine.build_decision("enhanced")
         self.assertIn("content_decision", out)
+        self.assertIn("qc_decision", out)
+        self.assertIn("output_decision", out)
         self.assertIn("email_decision", out)
         self.assertIn("explain", out)
         self.assertIn("allow_sources", out["content_decision"])
         self.assertIn("subject_template", out["email_decision"])
+
+    def test_boundary_violation_falls_back_per_ruleset(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "rules" / "email_rules").mkdir(parents=True, exist_ok=True)
+            (root / "rules" / "content_rules").mkdir(parents=True, exist_ok=True)
+            (root / "rules" / "qc_rules").mkdir(parents=True, exist_ok=True)
+            (root / "rules" / "output_rules").mkdir(parents=True, exist_ok=True)
+            (root / "rules" / "schemas").mkdir(parents=True, exist_ok=True)
+
+            repo_root = Path(__file__).resolve().parents[1]
+            for name in [
+                "email_rules.schema.json",
+                "content_rules.schema.json",
+                "qc_rules.schema.json",
+                "output_rules.schema.json",
+            ]:
+                shutil.copy(repo_root / "rules" / "schemas" / name, root / "rules" / "schemas" / name)
+
+            # email/content enhanced are valid
+            (root / "rules" / "email_rules" / "enhanced.json").write_text(
+                json.dumps(_minimal_email(profile="enhanced")),
+                encoding="utf-8",
+            )
+            (root / "rules" / "content_rules" / "enhanced.json").write_text(
+                json.dumps(_minimal_content(profile="enhanced")),
+                encoding="utf-8",
+            )
+
+            # qc enhanced contains an email-only key (recipient) => boundary violation => fallback to qc legacy
+            qc_legacy = {
+                "ruleset": "qc_rules",
+                "version": "1.0.0",
+                "profile": "legacy",
+                "defaults": {"timezone": "Asia/Shanghai"},
+                "overrides": {"enabled": False},
+                "rules": [],
+                "output": {"format": "json"},
+            }
+            qc_bad = {
+                "ruleset": "qc_rules",
+                "version": "2.0.0",
+                "profile": "enhanced",
+                "defaults": {"timezone": "Asia/Shanghai", "recipient": "x@example.com"},
+                "overrides": {"enabled": True},
+                "rules": [],
+                "output": {"format": "json"},
+            }
+            (root / "rules" / "qc_rules" / "legacy.json").write_text(json.dumps(qc_legacy), encoding="utf-8")
+            (root / "rules" / "qc_rules" / "enhanced.json").write_text(json.dumps(qc_bad), encoding="utf-8")
+
+            # output enhanced contains content-only key (sources) => boundary violation => fallback to output legacy
+            out_legacy = {
+                "ruleset": "output_rules",
+                "version": "1.0.0",
+                "profile": "legacy",
+                "defaults": {"format": "plain_text", "sections": [{"id": "A", "enabled": True}, {"id": "G", "enabled": True}]},
+                "overrides": {"enabled": False},
+                "rules": [],
+                "output": {"sections_order": ["A", "G"]},
+            }
+            out_bad = {
+                "ruleset": "output_rules",
+                "version": "2.0.0",
+                "profile": "enhanced",
+                "defaults": {
+                    "format": "plain_text",
+                    "sections": [{"id": "A", "enabled": True}, {"id": "G", "enabled": True}],
+                    "sources": {"x": []},
+                },
+                "overrides": {"enabled": True},
+                "rules": [],
+                "output": {"sections_order": ["A", "G"]},
+            }
+            (root / "rules" / "output_rules" / "legacy.json").write_text(json.dumps(out_legacy), encoding="utf-8")
+            (root / "rules" / "output_rules" / "enhanced.json").write_text(json.dumps(out_bad), encoding="utf-8")
+
+            engine = RuleEngine(project_root=root)
+            decision = engine.build_decision("enhanced")
+
+            # Only qc/output should fallback; email/content should remain enhanced profile.
+            self.assertEqual(decision["rules_version"]["qc"], "1.0.0")
+            self.assertEqual(decision["rules_version"]["output"], "1.0.0")
+
+            # Explain should record fallback reasons.
+            rs = {r["ruleset"]: r for r in decision["explain"].get("rulesets", [])}
+            self.assertIn("qc_rules", rs)
+            self.assertIn("output_rules", rs)
+            self.assertTrue("RULES_BOUNDARY_VIOLATION" in rs["qc_rules"].get("fallback_reason", ""))
+            self.assertTrue("RULES_BOUNDARY_VIOLATION" in rs["output_rules"].get("fallback_reason", ""))
 
     def test_conflict_merge_and_explain(self) -> None:
         with tempfile.TemporaryDirectory() as td:

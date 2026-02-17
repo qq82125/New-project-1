@@ -15,6 +15,7 @@ from .errors import (
     RULES_003_RULESET_MISMATCH,
     RULES_004_PARSE_FAILED,
     RULES_005_SCHEMA_NOT_FOUND,
+    RULES_BOUNDARY_VIOLATION,
     RuleEngineError,
 )
 from .models import ExplainRecord, RuleSelection
@@ -156,24 +157,111 @@ class RuleEngine:
         self.rules_store = RulesStore(self.project_root) if self.use_db else None
 
     def _rules_dir(self, ruleset: str) -> Path:
-        if ruleset not in ("email_rules", "content_rules"):
+        if ruleset not in ("email_rules", "content_rules", "qc_rules", "output_rules"):
             raise RuleEngineError(RULES_003_RULESET_MISMATCH, f"unsupported ruleset={ruleset}")
         return self.rules_root / ruleset
 
     def _schema_path(self, ruleset: str) -> Path:
-        name = "email_rules.schema.json" if ruleset == "email_rules" else "content_rules.schema.json"
+        name_map = {
+            "email_rules": "email_rules.schema.json",
+            "content_rules": "content_rules.schema.json",
+            "qc_rules": "qc_rules.schema.json",
+            "output_rules": "output_rules.schema.json",
+        }
+        name = name_map.get(ruleset, "")
+        if not name:
+            raise RuleEngineError(RULES_005_SCHEMA_NOT_FOUND, f"unsupported ruleset={ruleset}")
+        # Prefer workspace (console published) schema, then fallback to repo schema.
         p = self.schemas_root / name
-        if not p.exists():
-            raise RuleEngineError(RULES_005_SCHEMA_NOT_FOUND, str(p))
-        return p
+        if p.exists():
+            return p
+        fallback = self.project_root / "rules" / "schemas" / name
+        if fallback.exists():
+            return fallback
+        raise RuleEngineError(RULES_005_SCHEMA_NOT_FOUND, str(p))
 
     def _profile_path(self, ruleset: str, profile: str) -> Path:
-        d = self._rules_dir(ruleset)
-        candidates = [d / f"{profile}.yaml", d / f"{profile}.yml", d / f"{profile}.json"]
+        # Prefer workspace (console published) rules, then fallback to repo rules.
+        candidates: list[Path] = []
+        for base in (self.rules_root, self.project_root / "rules"):
+            d = base / ruleset
+            candidates.extend([d / f"{profile}.yaml", d / f"{profile}.yml", d / f"{profile}.json"])
         for p in candidates:
             if p.exists():
                 return p
         raise RuleEngineError(RULES_002_PROFILE_NOT_FOUND, f"{ruleset}:{profile}")
+
+    def _find_forbidden_keys(self, obj: Any, forbidden: set[str], path: str = "$") -> list[str]:
+        out: list[str] = []
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                kk = str(k)
+                if kk in forbidden:
+                    out.append(f"{path}.{kk}")
+                out.extend(self._find_forbidden_keys(v, forbidden, f"{path}.{kk}"))
+        elif isinstance(obj, list):
+            for idx, it in enumerate(obj):
+                out.extend(self._find_forbidden_keys(it, forbidden, f"{path}[{idx}]"))
+        return out
+
+    def _boundary_check(self, selection: RuleSelection) -> None:
+        """
+        Boundary assertion for a ruleset config (preflight).
+        If violated, raise RULES_BOUNDARY_VIOLATION.
+        """
+        qc_forbid = {
+            # email-ish keys (config or decision)
+            "subject_template",
+            "subject_prefix",
+            "recipient",
+            "recipients",
+            "send_window",
+            "schedule",
+            "retry",
+            "backup",
+            "sender_env",
+            "delivery_strategy",
+            "content_trim",
+            "sections",
+        }
+        content_forbid = {
+            # content-ish keys (sources/filters/candidates)
+            "sources",
+            "allow_sources",
+            "deny_sources",
+            "keyword_sets",
+            "include_keywords",
+            "exclude_keywords",
+            "categories_map",
+            "lane_mapping",
+            "platform_mapping",
+            "event_mapping",
+            "dedupe_window",
+            "item_limit",
+            "region_filter",
+            "confidence",
+            "source_priority",
+            "dedupe_cluster",
+            "content_sources",
+        }
+
+        ruleset = selection.ruleset
+        if ruleset == "qc_rules":
+            bad = self._find_forbidden_keys(selection.data, qc_forbid)
+        elif ruleset == "output_rules":
+            bad = self._find_forbidden_keys(selection.data, content_forbid)
+        elif ruleset == "email_rules":
+            bad = self._find_forbidden_keys(selection.data, content_forbid)
+        elif ruleset == "content_rules":
+            bad = self._find_forbidden_keys(selection.data, qc_forbid)
+        else:
+            bad = []
+
+        if bad:
+            raise RuleEngineError(
+                RULES_BOUNDARY_VIOLATION,
+                f"{ruleset}:{selection.profile} forbidden_keys={bad[:8]}",
+            )
 
     def _load_file(self, path: Path) -> dict[str, Any]:
         try:
@@ -197,11 +285,7 @@ class RuleEngine:
     def load(self, ruleset: str, profile: str | None = None) -> RuleSelection:
         profile = profile or "default.v1"
         if self.use_db and self.rules_store is not None:
-            db_data = None
-            if ruleset == "email_rules":
-                db_data = self.rules_store.get_active_email_rules(profile)
-            elif ruleset == "content_rules":
-                db_data = self.rules_store.get_active_content_rules(profile)
+            db_data = self.rules_store.get_active_rules(ruleset, profile)
             if isinstance(db_data, dict):
                 if db_data.get("ruleset") != ruleset:
                     raise RuleEngineError(
@@ -278,10 +362,14 @@ class RuleEngine:
         self,
         email: RuleSelection,
         content: RuleSelection,
+        qc: RuleSelection | None = None,
+        output: RuleSelection | None = None,
         mode: str = "normal",
         run_id: str | None = None,
         notes: list[str] | None = None,
     ) -> ExplainRecord:
+        qc = qc or RuleSelection("qc_rules", "legacy", "", Path(""), {})
+        output = output or RuleSelection("output_rules", "legacy", "", Path(""), {})
         return ExplainRecord(
             run_id=run_id or uuid.uuid4().hex[:12],
             mode=mode,
@@ -289,6 +377,10 @@ class RuleEngine:
             email_version=email.version,
             content_profile=content.profile,
             content_version=content.version,
+            qc_profile=qc.profile,
+            qc_version=qc.version,
+            output_profile=output.profile,
+            output_version=output.version,
             notes=notes or [],
         )
 
@@ -410,6 +502,18 @@ class RuleEngine:
             },
         }
 
+    def _base_qc_decision(self, qc: RuleSelection) -> dict[str, Any]:
+        defaults = qc.data.get("defaults", {}) if isinstance(qc.data.get("defaults"), dict) else {}
+        return deepcopy(defaults)
+
+    def _base_output_decision(self, output: RuleSelection) -> dict[str, Any]:
+        defaults = output.data.get("defaults", {}) if isinstance(output.data.get("defaults"), dict) else {}
+        out = output.data.get("output", {}) if isinstance(output.data.get("output"), dict) else {}
+        base = deepcopy(defaults)
+        if "sections_order" in out:
+            base["sections_order"] = deepcopy(out.get("sections_order"))
+        return base
+
     def _effect_paths(
         self,
         ruleset: str,
@@ -472,6 +576,46 @@ class RuleEngine:
                 if "chart_types" in params:
                     out.append(("charts.types", _as_list(params.get("chart_types"))))
                 return out
+
+        if ruleset == "qc_rules":
+            if rule_type == "qc_thresholds":
+                return [
+                    ("min_24h_items", params.get("min_24h_items")),
+                    ("fallback_days", params.get("fallback_days")),
+                    ("7d_topup_limit", params.get("7d_topup_limit")),
+                    ("apac_min_share", params.get("apac_min_share")),
+                    ("china_min_share", params.get("china_min_share")),
+                    ("daily_repeat_rate_max", params.get("daily_repeat_rate_max")),
+                    ("recent_7d_repeat_rate_max", params.get("recent_7d_repeat_rate_max")),
+                ]
+            if rule_type == "required_sources":
+                return [("required_sources_checklist", params.get("required_sources_checklist", []))]
+            if rule_type == "rumor_policy":
+                return [("rumor_policy", params)]
+            if rule_type == "fail_policy":
+                return [("fail_policy", params)]
+            if rule_type == "mix_targets":
+                return [("regulatory_vs_commercial_mix", params)]
+
+        if ruleset == "output_rules":
+            if rule_type == "sections":
+                out = []
+                if "order" in params:
+                    out.append(("sections_order", _as_list(params.get("order"))))
+                if "enabled" in params:
+                    out.append(("sections_enabled_map", deepcopy(params.get("enabled"))))
+                return out
+            if rule_type == "section_a":
+                return [("A", params)]
+            if rule_type == "section_sizes":
+                return [
+                    ("E", {"trends_count": params.get("trends_count")}),
+                    ("F", {"gaps_count": {"min": params.get("gaps_min"), "max": params.get("gaps_max")}}),
+                ]
+            if rule_type == "heatmap":
+                return [("D", {"heatmap_regions": _as_list(params.get("regions"))})]
+            if rule_type == "constraints":
+                return [("constraints", params)]
 
         return []
 
@@ -613,6 +757,46 @@ class RuleEngine:
             content_profile=profile,
             fallback_on_missing=False,
         )
+        try:
+            self._boundary_check(email)
+        except RuleEngineError as e:
+            # Email rules must never influence candidate selection; if violated, fallback email only.
+            if e.err.code != RULES_BOUNDARY_VIOLATION.code or profile == "legacy":
+                raise
+            email = self.load("email_rules", "legacy")
+            self._boundary_check(email)
+
+        def _load_with_boundary_fallback(ruleset: str) -> tuple[RuleSelection, str]:
+            try:
+                sel = self.load(ruleset, profile)
+            except RuleEngineError as e:
+                # Backward-compatible: qc/output are optional until fully wired everywhere.
+                if e.err.code == RULES_002_PROFILE_NOT_FOUND.code:
+                    noop = {
+                        "ruleset": ruleset,
+                        "version": "",
+                        "profile": "legacy",
+                        "defaults": {},
+                        "overrides": {"enabled": False},
+                        "rules": [],
+                        "output": {},
+                    }
+                    return RuleSelection(ruleset, "legacy", "", Path(f"noop://{ruleset}"), noop), str(e)
+                raise
+            try:
+                self._boundary_check(sel)
+                return sel, ""
+            except RuleEngineError as e:
+                if e.err.code != RULES_BOUNDARY_VIOLATION.code:
+                    raise
+                if profile == "legacy":
+                    raise
+                legacy_sel = self.load(ruleset, "legacy")
+                self._boundary_check(legacy_sel)
+                return legacy_sel, str(e)
+
+        qc, qc_fallback_reason = _load_with_boundary_fallback("qc_rules")
+        output, output_fallback_reason = _load_with_boundary_fallback("output_rules")
 
         default_merge = "last_match"
         if conflict_strategy == "priority_append":
@@ -621,6 +805,8 @@ class RuleEngine:
             default_merge = "merge"
 
         content_decision = self._base_content_decision(content)
+        qc_decision = self._base_qc_decision(qc)
+        output_decision = self._base_output_decision(output)
         email_decision = self._base_email_decision(email)
 
         explain_obj: dict[str, Any] = {
@@ -630,6 +816,12 @@ class RuleEngine:
             "applied_rules": [],
             "skipped_rules": [],
             "conflicts": [],
+            "rulesets": [
+                {"ruleset": "content_rules", "profile": content.profile, "version": content.version, "path": str(content.path)},
+                {"ruleset": "qc_rules", "profile": qc.profile, "version": qc.version, "path": str(qc.path), "fallback_reason": qc_fallback_reason},
+                {"ruleset": "output_rules", "profile": output.profile, "version": output.version, "path": str(output.path), "fallback_reason": output_fallback_reason},
+                {"ruleset": "email_rules", "profile": email.profile, "version": email.version, "path": str(email.path)},
+            ],
         }
 
         provenance: dict[str, dict[str, Any]] = {}
@@ -640,6 +832,23 @@ class RuleEngine:
             explain=explain_obj,
             provenance=provenance,
         )
+        provenance = {}
+        self._resolve_rules(
+            qc,
+            qc_decision,
+            default_merge=default_merge,
+            explain=explain_obj,
+            provenance=provenance,
+        )
+        provenance = {}
+        self._resolve_rules(
+            output,
+            output_decision,
+            default_merge=default_merge,
+            explain=explain_obj,
+            provenance=provenance,
+        )
+        provenance = {}
         self._resolve_rules(
             email,
             email_decision,
@@ -668,9 +877,13 @@ class RuleEngine:
             "rules_version": {
                 "email": email.version,
                 "content": content.version,
+                "qc": qc.version,
+                "output": output.version,
             },
             "conflict_strategy": conflict_strategy,
             "content_decision": content_decision,
+            "qc_decision": qc_decision,
+            "output_decision": output_decision,
             "email_decision": email_decision,
             "explain": explain_obj,
         }

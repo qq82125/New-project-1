@@ -27,6 +27,10 @@ RULES_005_SCHEMA_NOT_FOUND = RuleEngineErrorCode(
     "RULES_005_SCHEMA_NOT_FOUND",
     "Schema file was not found.",
 )
+RULES_BOUNDARY_VIOLATION = RuleEngineErrorCode(
+    "RULES_BOUNDARY_VIOLATION",
+    "Rules decision boundary was violated.",
+)
 
 
 class RuleEngineError(RuntimeError):
@@ -35,4 +39,3 @@ class RuleEngineError(RuntimeError):
         super().__init__(f"{err.code}: {err.message}{suffix}")
         self.err = err
         self.detail = detail
-
