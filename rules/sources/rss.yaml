@@ -132,3 +132,102 @@ sources:
       - regulatory
       - us
       - en
+
+  - id: prnewswire-press-rss
+    enabled: true
+    connector: rss
+    url: https://www.prnewswire.com/rss/news-releases-list.rss
+    name: PR Newswire Press Releases
+    region: 全球
+    trust_tier: B
+    priority: 78
+    tags:
+      - media
+      - pressrelease
+      - global
+      - en
+
+  - id: globenewswire-press-rss
+    enabled: true
+    connector: rss
+    url: https://www.globenewswire.com/RssFeed/subjectcode/72-Press%20Releases/feedTitle/GlobeNewswire%20-%20Press%20Releases
+    name: GlobeNewswire Press Releases
+    region: 全球
+    trust_tier: B
+    priority: 77
+    tags:
+      - media
+      - pressrelease
+      - global
+      - en
+
+  - id: science-stm-etoc-rss
+    enabled: true
+    connector: rss
+    url: https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=stm
+    name: Science Translational Medicine (eTOC)
+    region: 全球
+    trust_tier: A
+    priority: 90
+    tags:
+      - media
+      - journal
+      - global
+      - en
+      - translational
+
+  - id: nejm-etoc-rss
+    enabled: true
+    connector: rss
+    url: https://www.nejm.org/action/showFeed?jc=nejm&type=etoc&feed=rss
+    name: NEJM (eTOC)
+    region: 全球
+    trust_tier: A
+    priority: 92
+    tags:
+      - media
+      - journal
+      - global
+      - en
+
+  - id: lancet-current-rss
+    enabled: true
+    connector: rss
+    url: https://www.thelancet.com/rssfeed/lancet_current.xml
+    name: The Lancet (Current Issue)
+    region: 全球
+    trust_tier: A
+    priority: 91
+    tags:
+      - media
+      - journal
+      - global
+      - en
+
+  - id: biorxiv-genomics-atom
+    enabled: true
+    connector: rss
+    url: https://connect.biorxiv.org/biorxiv_xml.php?subject=genomics+bioinformatics
+    name: bioRxiv (Genomics/Bioinformatics)
+    region: 全球
+    trust_tier: B
+    priority: 72
+    tags:
+      - media
+      - preprint
+      - global
+      - en
+
+  - id: medrxiv-infectious-atom
+    enabled: true
+    connector: rss
+    url: https://connect.medrxiv.org/medrxiv_xml.php?subject=infectious+diseases
+    name: medRxiv (Infectious Diseases)
+    region: 全球
+    trust_tier: B
+    priority: 72
+    tags:
+      - media
+      - preprint
+      - global
+      - en

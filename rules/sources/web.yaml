@@ -25,3 +25,72 @@ sources:
       - regulatory
       - apac
       - en
+
+  # Below are placeholders for sources that currently do not have stable public RSS/Atom feeds
+  # in this project, or are not supported well by the current `web` connector.
+  # Keep them disabled to avoid polluting candidates until a proper connector/parser is added.
+
+  - id: clarivate-press-web
+    enabled: false
+    connector: web
+    url: https://ir.clarivate.com/press-releases
+    name: Clarivate Press Releases
+    region: 全球
+    trust_tier: B
+    priority: 60
+    tags:
+      - pressrelease
+      - global
+      - en
+
+  - id: chict-home-web
+    enabled: false
+    connector: web
+    url: https://www.chictr.org.cn/
+    name: ChiCTR (中国临床试验注册中心)
+    region: 中国
+    trust_tier: A
+    priority: 70
+    tags:
+      - registry
+      - cn
+      - zh
+
+  - id: pubmed-home-web
+    enabled: false
+    connector: web
+    url: https://pubmed.ncbi.nlm.nih.gov/
+    name: PubMed
+    region: 全球
+    trust_tier: A
+    priority: 75
+    tags:
+      - literature
+      - global
+      - en
+
+  - id: europepmc-home-web
+    enabled: false
+    connector: web
+    url: https://europepmc.org/
+    name: Europe PMC
+    region: 欧洲
+    trust_tier: A
+    priority: 73
+    tags:
+      - literature
+      - eu
+      - en
+
+  - id: google-scholar-home-web
+    enabled: false
+    connector: web
+    url: https://scholar.google.com/
+    name: Google Scholar
+    region: 全球
+    trust_tier: B
+    priority: 50
+    tags:
+      - literature
+      - global
+      - en

@@ -102,7 +102,8 @@ def _bootstrap_rules_db(project_root: Path, rules_root: Path) -> None:
                 activate=True,
             )
     sources = _load_sources_registry_docs(rules_root)
-    if sources:
+    # Seed sources only when DB is empty; otherwise preserve operational changes made via Rules Console/DB.
+    if sources and not store.list_sources():
         store.upsert_sources(sources, replace=True)
 
 
