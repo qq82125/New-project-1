@@ -1,6 +1,6 @@
 ruleset: content_rules
 version: "1.0.0"
-profile: default.v1
+profile: legacy
 
 defaults:
   timezone: Asia/Shanghai
@@ -17,14 +17,22 @@ defaults:
         url: https://www.fiercebiotech.com/rss/xml
         region: 北美
         trust_tier: B
+      - name: MedTech Dive
+        url: https://www.medtechdive.com/feeds/news/
+        region: 北美
+        trust_tier: B
     regulatory_cn:
       - name: NMPA
         url: https://www.nmpa.gov.cn/
         region: 中国
         trust_tier: A
     regulatory_apac:
-      - name: TGA
+      - name: TGA Safety Alerts
         url: https://www.tga.gov.au/feeds/alert/safety-alerts.xml
+        region: 亚太
+        trust_tier: A
+      - name: PMDA
+        url: https://www.pmda.go.jp/
         region: 亚太
         trust_tier: A
   coverage_tracks: ["肿瘤检测", "感染检测", "生殖与遗传检测", "其他"]
@@ -40,22 +48,47 @@ overrides:
   min_confidence: 0.00
 
 rules:
-  - id: default-include
+  - id: source-priority-legacy
     enabled: true
     priority: 90
-    type: include_filter
-    description: 默认IVD相关性过滤
+    type: source_priority
+    description: 保留现有全球媒体+亚太监管补充优先级
     params:
-      include_keywords: ["diagnostic", "assay", "ivd", "test", "pcr", "ngs"]
+      groups: ["media_global", "regulatory_cn", "regulatory_apac"]
 
-  - id: default-dedupe
+  - id: include-legacy
+    enabled: true
+    priority: 88
+    type: include_filter
+    description: 保留现有IVD锚点相关性过滤
+    params:
+      include_keywords: ["diagnostic", "assay", "test", "ivd", "pcr", "ngs", "poct", "laboratory"]
+
+  - id: mapping-legacy-lane
     enabled: true
     priority: 80
-    type: dedupe
-    description: 默认去重阈值
+    type: lane_mapping
+    description: 保留现有赛道映射
     params:
+      lanes: ["肿瘤检测", "感染检测", "生殖与遗传检测", "其他"]
+
+  - id: dedupe-legacy
+    enabled: true
+    priority: 78
+    type: dedupe
+    description: 保留现有标题去重与近7日重复控制
+    params:
+      title_similarity_threshold: 0.78
       daily_max_repeat_rate: 0.25
       recent_7d_max_repeat_rate: 0.40
+
+  - id: region-filter-legacy
+    enabled: true
+    priority: 74
+    type: region_filter
+    description: 保留现有亚太占比约束
+    params:
+      apac_min_share: 0.40
 
 output:
   format: plain_text

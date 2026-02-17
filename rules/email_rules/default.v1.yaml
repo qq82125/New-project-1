@@ -1,39 +1,38 @@
 ruleset: email_rules
 version: "1.0.0"
 profile: default.v1
-description: "默认发信规则，兼容当前线上/本地行为。"
 
-feature_flags:
-  enable_new_email_rules: false
-  enable_explain: true
-
-compatibility:
-  backward_compatible: true
-  fallback_to_legacy_on_error: true
-
-delivery:
-  transport: icloud_smtp
-  date_tz: Asia/Shanghai
+defaults:
+  timezone: Asia/Shanghai
   subject_template: "全球IVD晨报 - {{date}}"
-  from_name: "全球IVD晨报"
-  from_env: SMTP_FROM
-  to_env: TO_EMAIL
+  recipient: "${TO_EMAIL:-qq82125@gmail.com}"
+  sender_env: SMTP_FROM
+  send_window:
+    hour: 8
+    minute: 30
+  retry:
+    max_retries: 5
+    connect_timeout_sec: 10
+    max_time_sec: 60
 
-retry:
-  connect_timeout_sec: 10
-  max_time_sec: 60
-  max_retries: 5
-  backoff_initial_sec: 2
-  backoff_max_sec: 60
+overrides:
+  enabled: false
+  on_weekend: same
+  subject_prefix: ""
+  dedupe_window_hours: 24
 
-fallback:
-  cloud_backup_enabled: true
-  cloud_backup_check_sent_mail: true
-  cloud_backup_mailbox_env: IMAP_SENT_MAILBOX
+rules:
+  - id: default-subject
+    enabled: true
+    priority: 100
+    type: subject_template
+    description: 默认主题模板
+    params:
+      template: "全球IVD晨报 - {{date}}"
 
-logging:
-  required_fields:
-    - run_id
-    - profile
-    - rules_version
-    - mode
+output:
+  format: plain_text
+  sections: ["A", "B", "C", "D", "E", "F", "G"]
+  summary_max_chars: 220
+  charts_enabled: false
+  chart_types: []

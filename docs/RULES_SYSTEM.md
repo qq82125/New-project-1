@@ -1,23 +1,23 @@
-# Rules System（规则系统）设计与使用说明
+# RULES_SYSTEM
 
-## 1. 目标与边界
+## 概念
+本项目规则系统分为两套互不影响的配置：
+- `email_rules`：定义发信行为（主题、收件人、重试、栏目输出偏好等）。
+- `content_rules`：定义采集与内容行为（来源、关键词、过滤、分类、阈值、输出结构等）。
 
-本规则系统将现有逻辑拆分为两套互不影响的规则：
+当前阶段仅交付规则文件、Schema、文档草案。默认执行链路保持原样，不自动切换新规则。
 
-- `email_rules`：发信规则（发给谁、主题、重试、兜底等）
-- `content_rules`：采集与内容规则（时间窗、来源、去重、排序、质量约束等）
-
-当前阶段仅新增规则资产与校验契约，不改变默认执行路径。  
-即：**不显式启用新 profile 时，行为保持与旧逻辑一致**。
-
-## 2. 目录结构
-
+## 目录结构
 ```text
 rules/
   email_rules/
+    legacy.yaml
+    enhanced.yaml
     default.v1.yaml
     strict.v2.yaml
   content_rules/
+    legacy.yaml
+    enhanced.yaml
     default.v1.yaml
     strict.v2.yaml
   schemas/
@@ -25,92 +25,119 @@ rules/
     content_rules.schema.json
 ```
 
-## 3. 配置模型
+## Profile 与版本
+- `profile=legacy`：显式表达现有行为（默认建议）。
+- `profile=enhanced`：增强示例，用于后续灰度。
+- `version`：规则文件版本（建议语义化）。
 
-每份规则文件都包含：
+建议约定：
+- `legacy` 只做“行为显式化”，避免引入新策略。
+- `enhanced` 可引入新阈值、新过滤、新来源分层，但必须可回退。
 
-- `ruleset`：`email_rules` 或 `content_rules`
-- `version`：规则版本（可版本化）
-- `profile`：profile 名称（可灰度）
-- `feature_flags`：特性开关
-- `compatibility`：兼容策略
-- 规则主体字段（`delivery` / `collection` / `quality_gates` 等）
-
-## 4. Profile 策略（灰度）
-
-推荐通过环境变量选择 profile（后续由 RuleEngine 实现）：
-
-- `RULES_EMAIL_PROFILE=default.v1`
-- `RULES_CONTENT_PROFILE=default.v1`
-
-当 profile 未指定时，默认使用 `default.v1`，保持旧行为。
-
-## 5. 校验策略（Schema）
-
-规则文件使用 JSON Schema 校验：
-
-- `rules/schemas/email_rules.schema.json`
-- `rules/schemas/content_rules.schema.json`
-
-校验要求：
-
-- 字段类型正确
-- 必填字段完整
-- 枚举值合法
-- 阈值范围合法（如比例在 0~1）
-
-## 6. 运行模式（已提供 CLI）
-
-当前已提供：
-
-- `python -m app.workers.cli rules:validate`
-- `python -m app.workers.cli rules:dryrun`
-- `python -m app.workers.cli rules:replay`
-
-语义：
-
-- `validate`：仅校验规则与配置
-- `dryrun`：输出“会采集什么/会发什么”，不落库不发信
-- `replay`：按 `date` 或 `run_id` 重放，默认不发信
-
-示例：
-
-```bash
-python -m app.workers.cli rules:validate
-python -m app.workers.cli rules:dryrun
-python -m app.workers.cli rules:replay --date 2026-02-16
-python -m app.workers.cli rules:replay --date 2026-02-16 --send
-```
-
-## 7. 向后兼容契约
-
-- `default.v1` 对齐当前线上/本地默认逻辑
-- 新 profile（如 `strict.v2`）需显式启用才生效
-- 校验失败时允许按 `compatibility.fallback_to_legacy_on_error` 回退到旧逻辑
-
-## 8. 最小可观测字段（后续接入）
-
-统一输出字段（日志/产物）：
-
-- `run_id`
+## 统一规则文件结构
+每个规则文件均包含以下顶层字段：
+- `version`
 - `profile`
-- `rules_version`
-- `mode`（normal/dryrun/replay）
+- `defaults`
+- `overrides`
+- `rules`（数组）
+- `output`
 
-## 9. 示例
+同时保留 `ruleset`（`email_rules` / `content_rules`）用于校验与路由。
 
-### 9.1 使用默认 profile（兼容模式）
-
+## 如何验证
 ```bash
-export RULES_EMAIL_PROFILE=default.v1
-export RULES_CONTENT_PROFILE=default.v1
+python3 -m app.workers.cli rules:validate
+```
+说明：该命令会读取 `rules/email_rules/*.yaml` 与 `rules/content_rules/*.yaml`，并按 `rules/schemas/*.json` 校验。
+
+## 如何 dry-run
+```bash
+python3 -m app.workers.cli rules:dryrun
+python3 -m app.workers.cli rules:dryrun --email-profile legacy --content-profile legacy
+python3 -m app.workers.cli rules:dryrun --email-profile enhanced --content-profile enhanced
+```
+说明：dry-run 只输出“将如何采集/如何发信”，不发信、不落库。
+
+## 示例
+
+### 示例1：新增一个赛道栏目
+目标：在内容输出中增加“慢病管理检测”赛道。
+
+1. 修改 `rules/content_rules/enhanced.yaml`
+2. 在 `defaults.coverage_tracks` 追加 `慢病管理检测`
+3. 在 `rules` 里新增 `lane_mapping` 规则，将关键词映射到该赛道
+4. 在 `output.sections` 确认赛道速览模块仍启用
+
+示例片段：
+```yaml
+defaults:
+  coverage_tracks:
+    - 肿瘤检测
+    - 感染检测
+    - 生殖与遗传检测
+    - 其他
+    - 慢病管理检测
+
+rules:
+  - id: lane-map-chronic
+    enabled: true
+    priority: 70
+    type: lane_mapping
+    description: 将慢病关键词映射为新赛道
+    params:
+      lane: 慢病管理检测
+      include_keywords: ["糖化血红蛋白", "心血管风险", "代谢综合征", "chronic"]
 ```
 
-### 9.2 灰度 strict profile
+### 示例2：新增一个数据源
+目标：新增亚太监管源。
 
-```bash
-export RULES_EMAIL_PROFILE=strict.v2
-export RULES_CONTENT_PROFILE=strict.v2
+1. 修改 `rules/content_rules/enhanced.yaml`
+2. 在 `defaults.sources.regulatory_apac` 新增源对象
+3. 如需更高权重，在 `rules` 中配置 `source_priority`
+
+示例片段：
+```yaml
+defaults:
+  sources:
+    regulatory_apac:
+      - name: HSA News
+        url: https://www.hsa.gov.sg/announcements
+        region: 亚太
+        trust_tier: A
+
+rules:
+  - id: source-priority-reg-apac
+    enabled: true
+    priority: 85
+    type: source_priority
+    description: 亚太监管优先
+    params:
+      groups: ["regulatory_cn", "regulatory_apac"]
 ```
 
-> 说明：在 RuleEngine 完成接入前，以上环境变量仅作为约定，不改变当前脚本执行行为。
+### 示例3：新增一个过滤条件
+目标：排除“纯财报/纯裁员”噪音。
+
+1. 修改 `rules/content_rules/enhanced.yaml`
+2. 在 `rules` 增加 `exclude_filter` 规则
+3. 设置黑名单词，同时保留诊断锚点白名单
+
+示例片段：
+```yaml
+rules:
+  - id: exclude-business-noise
+    enabled: true
+    priority: 95
+    type: exclude_filter
+    description: 排除非IVD业务噪音
+    params:
+      exclude_keywords: ["earnings", "quarterly revenue", "layoff"]
+      keep_if_has_keywords: ["diagnostic", "assay", "ivd", "pcr", "ngs"]
+```
+
+## 最佳实践
+- 新规则先在 `enhanced` 试跑，再灰度到正式任务。
+- 每次变更只改一个维度（来源/过滤/阈值）便于回溯。
+- 版本升级时同步记录变更说明与回退策略。

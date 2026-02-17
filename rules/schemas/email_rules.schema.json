@@ -3,120 +3,95 @@
   "$id": "https://example.local/schemas/email_rules.schema.json",
   "title": "Email Rules Schema",
   "type": "object",
-  "required": [
-    "ruleset",
-    "version",
-    "profile",
-    "feature_flags",
-    "compatibility",
-    "delivery",
-    "retry",
-    "fallback",
-    "logging"
-  ],
+  "required": ["ruleset", "version", "profile", "defaults", "overrides", "rules", "output"],
   "properties": {
-    "ruleset": {
-      "type": "string",
-      "const": "email_rules"
-    },
-    "version": {
-      "type": "string",
-      "minLength": 1
-    },
-    "profile": {
-      "type": "string",
-      "minLength": 1
-    },
-    "description": {
-      "type": "string"
-    },
-    "feature_flags": {
+    "ruleset": { "type": "string", "const": "email_rules" },
+    "version": { "type": "string", "minLength": 3 },
+    "profile": { "type": "string", "enum": ["legacy", "enhanced", "default.v1", "strict.v2"] },
+    "defaults": {
       "type": "object",
-      "required": [
-        "enable_new_email_rules"
-      ],
+      "required": ["timezone", "subject_template", "recipient", "send_window", "retry"],
       "properties": {
-        "enable_new_email_rules": { "type": "boolean" },
-        "enable_explain": { "type": "boolean" },
-        "require_sent_mail_guard": { "type": "boolean" }
-      },
-      "additionalProperties": true
-    },
-    "compatibility": {
-      "type": "object",
-      "required": [
-        "backward_compatible",
-        "fallback_to_legacy_on_error"
-      ],
-      "properties": {
-        "backward_compatible": { "type": "boolean" },
-        "fallback_to_legacy_on_error": { "type": "boolean" }
-      },
-      "additionalProperties": true
-    },
-    "delivery": {
-      "type": "object",
-      "required": [
-        "transport",
-        "date_tz",
-        "subject_template",
-        "from_env",
-        "to_env"
-      ],
-      "properties": {
-        "transport": {
-          "type": "string",
-          "enum": ["icloud_smtp", "smtp"]
+        "timezone": { "type": "string", "minLength": 3 },
+        "subject_template": { "type": "string", "minLength": 5 },
+        "recipient": { "type": "string", "minLength": 5 },
+        "sender_env": { "type": "string", "minLength": 3 },
+        "send_window": {
+          "type": "object",
+          "required": ["hour", "minute"],
+          "properties": {
+            "hour": { "type": "integer", "minimum": 0, "maximum": 23 },
+            "minute": { "type": "integer", "minimum": 0, "maximum": 59 }
+          },
+          "additionalProperties": true
         },
-        "date_tz": { "type": "string", "minLength": 1 },
-        "subject_template": { "type": "string", "minLength": 1 },
-        "from_name": { "type": "string" },
-        "from_env": { "type": "string", "minLength": 1 },
-        "to_env": { "type": "string", "minLength": 1 },
-        "dedupe_key_template": { "type": "string" }
+        "retry": {
+          "type": "object",
+          "required": ["max_retries", "connect_timeout_sec", "max_time_sec"],
+          "properties": {
+            "max_retries": { "type": "integer", "minimum": 0, "maximum": 10 },
+            "connect_timeout_sec": { "type": "integer", "minimum": 1, "maximum": 120 },
+            "max_time_sec": { "type": "integer", "minimum": 5, "maximum": 300 }
+          },
+          "additionalProperties": true
+        }
       },
       "additionalProperties": true
     },
-    "retry": {
+    "overrides": {
       "type": "object",
-      "required": [
-        "connect_timeout_sec",
-        "max_time_sec",
-        "max_retries",
-        "backoff_initial_sec",
-        "backoff_max_sec"
-      ],
+      "required": ["enabled"],
       "properties": {
-        "connect_timeout_sec": { "type": "integer", "minimum": 1 },
-        "max_time_sec": { "type": "integer", "minimum": 1 },
-        "max_retries": { "type": "integer", "minimum": 1 },
-        "backoff_initial_sec": { "type": "integer", "minimum": 1 },
-        "backoff_max_sec": { "type": "integer", "minimum": 1 }
+        "enabled": { "type": "boolean" },
+        "on_weekend": { "type": "string", "enum": ["same", "skip", "delay"] },
+        "subject_prefix": { "type": "string", "minLength": 0 },
+        "dedupe_window_hours": { "type": "integer", "minimum": 0, "maximum": 168 }
       },
       "additionalProperties": true
     },
-    "fallback": {
-      "type": "object",
-      "required": [
-        "cloud_backup_enabled",
-        "cloud_backup_check_sent_mail"
-      ],
-      "properties": {
-        "cloud_backup_enabled": { "type": "boolean" },
-        "cloud_backup_check_sent_mail": { "type": "boolean" },
-        "cloud_backup_mailbox_env": { "type": "string" },
-        "allow_resend_in_replay": { "type": "boolean" }
-      },
-      "additionalProperties": true
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "enabled", "priority", "type", "params"],
+        "properties": {
+          "id": { "type": "string", "minLength": 3 },
+          "enabled": { "type": "boolean" },
+          "priority": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "type": {
+            "type": "string",
+            "enum": [
+              "subject_template",
+              "recipient_policy",
+              "dedupe",
+              "retry_policy",
+              "backup_policy",
+              "content_format",
+              "charts_toggle"
+            ]
+          },
+          "description": { "type": "string", "minLength": 0 },
+          "params": { "type": "object" }
+        },
+        "additionalProperties": true
+      }
     },
-    "logging": {
+    "output": {
       "type": "object",
-      "required": ["required_fields"],
+      "required": ["format", "sections", "summary_max_chars", "charts_enabled"],
       "properties": {
-        "required_fields": {
+        "format": { "type": "string", "enum": ["plain_text", "markdown", "html"] },
+        "sections": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string" }
+          "items": { "type": "string", "enum": ["A", "B", "C", "D", "E", "F", "G"] }
+        },
+        "summary_max_chars": { "type": "integer", "minimum": 60, "maximum": 500 },
+        "charts_enabled": { "type": "boolean" },
+        "chart_types": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["region_heatmap", "platform_radar", "event_mix"] }
         }
       },
       "additionalProperties": true
