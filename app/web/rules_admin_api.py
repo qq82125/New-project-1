@@ -266,6 +266,16 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     engine = RuleEngine(project_root=root)
     app = FastAPI(title="Rules Admin API", version="1.0.0")
 
+    @app.get("/healthz")
+    def healthz() -> dict[str, Any]:
+        # No auth: used by container healthchecks.
+        return {
+            "ok": True,
+            "service": "admin-api",
+            "db_path": str(store.db_path),
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+
     @app.exception_handler(HTTPException)
     async def _http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:  # type: ignore[override]
         payload = {"ok": False, "error": {"code": f"HTTP_{exc.status_code}", "message": str(exc.detail)}}

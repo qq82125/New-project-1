@@ -96,6 +96,7 @@ class SchedulerWorker:
         self.profile = os.environ.get("SCHEDULER_PROFILE", "enhanced").strip() or "enhanced"
         self.refresh_seconds = int(os.environ.get("SCHEDULER_REFRESH_SECONDS", "60") or "60")
         self.lock_path = self.project_root / "data" / "ivd_digest.lock"
+        self.heartbeat_path = self.project_root / "logs" / "scheduler_worker_heartbeat.json"
         self._active_version = ""
         self._enabled = False
 
@@ -120,6 +121,17 @@ class SchedulerWorker:
                 # misfire_grace_time is set per job from rules.
             }
         )
+
+    def _write_heartbeat(self) -> None:
+        self.heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "ts": time.time(),
+            "profile": self.profile,
+            "active_version": self._active_version,
+            "enabled": self._enabled,
+            "jobs": len(self.scheduler.get_jobs()) if self.scheduler else 0,
+        }
+        self.heartbeat_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _run_job(self, *, schedule_id: str, purpose: str, profile: str, jitter: int, misfire_grace: int) -> None:
         if jitter:
@@ -186,15 +198,19 @@ class SchedulerWorker:
     def refresh(self) -> None:
         cfg, source, version = _active_scheduler_cfg(self.store, self.project_root, self.profile)
         if version == self._active_version:
+            # Still update heartbeat to prove liveness.
+            self._write_heartbeat()
             return
         self._active_version = version
         _log(f"config_change source={source} profile={self.profile} version={version}")
         self._apply_config(cfg)
+        self._write_heartbeat()
 
     def run_forever(self) -> None:
         _log(f"start profile={self.profile} refresh_seconds={self.refresh_seconds}")
         self.refresh()
         self.scheduler.start()
+        self._write_heartbeat()
         try:
             while True:
                 time.sleep(max(5, self.refresh_seconds))
@@ -215,4 +231,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -339,22 +339,25 @@ defaults:
 - 若 `enhanced` 规则加载失败：自动回退 `legacy`，打印 `[RULES_WARN]` 告警，不中断任务。
 
 ## Docker Compose 运行
-在 `docker-compose.yml` 的对应服务中添加环境变量：
+本项目提供最小 `docker-compose.yml`（两服务）：
+- `admin-api`：规则控制台（FastAPI）
+- `scheduler-worker`：常驻调度（APScheduler，读取 `scheduler_rules`）
 
-```yaml
-services:
-  ivd-worker:
-    environment:
-      REPORT_TZ: Asia/Shanghai
-      ENHANCED_RULES_PROFILE: enhanced   # 不设置或非 enhanced 即走 legacy
-```
-
-启动与验证：
+启动：
 ```bash
-docker compose up -d
-docker compose exec ivd-worker python -m app.workers.cli rules:validate --profile enhanced
-docker compose exec ivd-worker python -m app.workers.cli rules:dryrun --profile enhanced --date 2026-02-16
+docker compose up -d --build
 ```
+
+验证（容器内执行 CLI）：
+```bash
+docker compose exec admin-api python3 -m app.workers.cli rules:validate --profile enhanced
+docker compose exec admin-api python3 -m app.workers.cli rules:dryrun --profile enhanced --date 2026-02-16
+```
+
+注意：
+- Docker 模式默认将控制台映射到宿主机 `8790` 端口（避免与本机 launchd 模式的 `8789` 冲突）。
+- 常驻模式启用后，GitHub Actions 仍可保留作为兜底补发（可按需停用定时触发）。
+- `scheduler-worker` 默认会按 `scheduler_rules(enhanced)` 注册任务；若容器内要实际发信，需要提供 `TO_EMAIL` 与 SMTP 环境（参见 `send_mail_icloud.sh` 读取的 `.mail.env` 变量）。
 
 ## 信源管理（可运营化）
 信源与采集规则解耦，统一放在：

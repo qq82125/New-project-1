@@ -98,6 +98,29 @@ ADMIN_USER=admin ADMIN_PASS=change-me python -m app.admin_server
 
 - `http://127.0.0.1:8789/admin`（会跳转到 `/admin/email`）
 
+### Docker Compose（常驻模式）
+
+本项目提供 `docker-compose.yml`（两服务）：
+- `admin-api`：规则控制台（FastAPI）
+- `scheduler-worker`：常驻调度（读取 `scheduler_rules`）
+
+启动：
+
+```bash
+docker compose up -d --build
+```
+
+健康检查：
+- `admin-api`：`GET /healthz`
+- `scheduler-worker`：每分钟写入 `/app/logs/scheduler_worker_heartbeat.json`（compose healthcheck 会检查更新时间）
+
+访问：
+- Docker 模式默认映射到 `http://127.0.0.1:8790/admin`（容器内是 8789；避免与本机 launchd 8789 冲突）
+
+说明：
+- 常驻模式启用后，GitHub Actions 仍保留作为兜底/可选停用（不删除）。
+- 若要让容器内 digest 任务实际发信，需要提供 `TO_EMAIL` 与 SMTP 环境变量（`send_mail_icloud.sh` 所需）。
+
 ### 2) 在浏览器配置规则（Draft -> Publish）
 
 通用流程（邮件规则/采集规则一致）：

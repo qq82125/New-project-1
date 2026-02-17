@@ -1,0 +1,51 @@
+services:
+  admin-api:
+    build: .
+    container_name: ivd-admin-api
+    command: ["python3", "-m", "app.admin_server"]
+    environment:
+      ADMIN_API_HOST: "0.0.0.0"
+      ADMIN_API_PORT: "8789"
+      # Set auth explicitly in your environment or .env:
+      # ADMIN_USER: "admin"
+      # ADMIN_PASS: "change-me"
+      # Or use bearer:
+      # ADMIN_TOKEN: "..."
+    ports:
+      # Host 8789 is commonly used by local launchd mode; use 8790 to avoid conflicts.
+      - "8790:8789"
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8789/healthz >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 10
+
+  scheduler-worker:
+    build: .
+    container_name: ivd-scheduler-worker
+    command: ["python3", "-m", "app.workers.scheduler_worker"]
+    environment:
+      SCHEDULER_PROFILE: "enhanced"
+      SCHEDULER_REFRESH_SECONDS: "60"
+      # If you want digest runs to actually send mail in container,
+      # provide TO_EMAIL and mount/provide SMTP env variables used by send_mail_icloud.sh.
+      # TO_EMAIL: "you@example.com"
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python3 -c \"import json,time,pathlib; p=pathlib.Path('/app/logs/scheduler_worker_heartbeat.json'); j=json.loads(p.read_text()); assert time.time()-float(j.get('ts',0))<120\""
+        ]
+      interval: 30s
+      timeout: 3s
+      retries: 10
