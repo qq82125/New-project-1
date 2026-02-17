@@ -8,6 +8,7 @@ from pathlib import Path
 
 from app.rules.engine import RuleEngine
 from app.rules.errors import RuleEngineError
+from app.services.rules_store import RulesStore
 
 
 def _minimal_email(profile: str = "legacy", rules: list[dict] | None = None) -> dict:
@@ -252,6 +253,80 @@ class RuleEngineTests(unittest.TestCase):
             self.assertIn("pcr", out["content_decision"]["keyword_sets"]["include_keywords"])
             self.assertGreaterEqual(out["explain"]["summary"]["conflict_count"], 1)
             self.assertIn("exclude-1", out["explain"]["summary"]["why_excluded"])
+
+    def test_db_active_rules_preferred_over_files(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "rules" / "email_rules").mkdir(parents=True, exist_ok=True)
+            (root / "rules" / "content_rules").mkdir(parents=True, exist_ok=True)
+            (root / "rules" / "schemas").mkdir(parents=True, exist_ok=True)
+
+            repo_root = Path(__file__).resolve().parents[1]
+            shutil.copy(
+                repo_root / "rules" / "schemas" / "email_rules.schema.json",
+                root / "rules" / "schemas" / "email_rules.schema.json",
+            )
+            shutil.copy(
+                repo_root / "rules" / "schemas" / "content_rules.schema.json",
+                root / "rules" / "schemas" / "content_rules.schema.json",
+            )
+
+            # Write a file profile that should not be selected when DB active exists.
+            file_email = _minimal_email(profile="legacy")
+            file_email["version"] = "file-1.0.0"
+            (root / "rules" / "email_rules" / "legacy.json").write_text(
+                json.dumps(file_email),
+                encoding="utf-8",
+            )
+
+            store = RulesStore(root)
+            db_email = _minimal_email(profile="legacy")
+            db_email["version"] = "db-1.0.0"
+            store.create_version(
+                "email_rules",
+                profile="legacy",
+                version="v0100",
+                config=db_email,
+                created_by="tester",
+                activate=True,
+            )
+
+            # content must still be loadable from file fallback for this test.
+            content = _minimal_content(profile="legacy")
+            (root / "rules" / "content_rules" / "legacy.json").write_text(
+                json.dumps(content),
+                encoding="utf-8",
+            )
+
+            engine = RuleEngine(project_root=root)
+            email = engine.load("email_rules", "legacy")
+            self.assertEqual(email.version, "v0100")
+            self.assertEqual(email.data.get("version"), "db-1.0.0")
+
+    def test_file_fallback_when_db_missing_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "rules" / "email_rules").mkdir(parents=True, exist_ok=True)
+            (root / "rules" / "content_rules").mkdir(parents=True, exist_ok=True)
+            (root / "rules" / "schemas").mkdir(parents=True, exist_ok=True)
+
+            repo_root = Path(__file__).resolve().parents[1]
+            shutil.copy(
+                repo_root / "rules" / "schemas" / "email_rules.schema.json",
+                root / "rules" / "schemas" / "email_rules.schema.json",
+            )
+            shutil.copy(
+                repo_root / "rules" / "schemas" / "content_rules.schema.json",
+                root / "rules" / "schemas" / "content_rules.schema.json",
+            )
+
+            email = _minimal_email(profile="legacy")
+            email["version"] = "file-only"
+            (root / "rules" / "email_rules" / "legacy.json").write_text(json.dumps(email), encoding="utf-8")
+
+            engine = RuleEngine(project_root=root)
+            out = engine.load("email_rules", "legacy")
+            self.assertEqual(out.version, "file-only")
 
 
 if __name__ == "__main__":

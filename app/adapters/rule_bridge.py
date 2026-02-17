@@ -77,6 +77,9 @@ def _adapt_content(decision: dict[str, Any]) -> dict[str, Any]:
         "lane_mapping": deepcopy(categories.get("lane_mapping", {})),
         "platform_mapping": deepcopy(categories.get("platform_mapping", {})),
         "event_mapping": deepcopy(categories.get("event_mapping", {})),
+        "source_priority": deepcopy(content.get("source_priority", {})),
+        "dedupe_cluster": deepcopy(content.get("dedupe_cluster", {})),
+        "content_sources": deepcopy(content.get("content_sources", {})),
     }
 
 
@@ -102,6 +105,7 @@ def _adapt_email(decision: dict[str, Any], date_str: str) -> dict[str, Any]:
 def load_runtime_rules(
     date_str: str | None = None,
     env: dict[str, str] | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     env = env or os.environ
     profile_req = requested_profile(env)
@@ -111,13 +115,17 @@ def load_runtime_rules(
         tz = ZoneInfo("Asia/Shanghai")
         date_str = datetime.now(tz).strftime("%Y-%m-%d")
 
+    build_kwargs: dict[str, Any] = {}
+    if run_id:
+        build_kwargs["run_id"] = run_id
+
     try:
-        decision = engine.build_decision(profile=profile_req)
+        decision = engine.build_decision(profile=profile_req, **build_kwargs)
         active_profile = profile_req
     except (RuleEngineError, Exception) as e:
         _warn(f"profile={profile_req} load failed, fallback to legacy. error={e}")
         try:
-            decision = engine.build_decision(profile="legacy")
+            decision = engine.build_decision(profile="legacy", **build_kwargs)
             active_profile = "legacy"
         except (RuleEngineError, Exception) as e2:
             _warn(f"legacy load failed, skip rules sidecar. error={e2}")
@@ -125,6 +133,7 @@ def load_runtime_rules(
                 "enabled": False,
                 "requested_profile": profile_req,
                 "active_profile": "legacy",
+                "run_id": run_id or "",
                 "rules_version": {},
                 "content": {},
                 "email": {},
@@ -147,6 +156,7 @@ def load_runtime_rules(
                     "enabled": False,
                     "requested_profile": profile_req,
                     "active_profile": "legacy",
+                    "run_id": run_id or "",
                     "rules_version": {},
                     "content": {},
                     "email": {},
@@ -156,6 +166,7 @@ def load_runtime_rules(
                 "enabled": False,
                 "requested_profile": profile_req,
                 "active_profile": "legacy",
+                "run_id": run_id or "",
                 "rules_version": {},
                 "content": {},
                 "email": {},
@@ -165,6 +176,7 @@ def load_runtime_rules(
         "enabled": True,
         "requested_profile": profile_req,
         "active_profile": active_profile,
+        "run_id": str(decision.get("run_id", run_id or "")),
         "rules_version": decision.get("rules_version", {}),
         "content": content_cfg,
         "email": email_cfg,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from copy import deepcopy
+import os
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,8 @@ from .errors import (
     RuleEngineError,
 )
 from .models import ExplainRecord, RuleSelection
+from app.services.rules_store import RulesStore
+from app.services.rules_versioning import get_workspace_rules_root
 
 
 def _type_ok(expected: str, value: Any) -> bool:
@@ -143,8 +146,14 @@ def _get_path(obj: dict[str, Any], path: str) -> tuple[bool, Any]:
 class RuleEngine:
     def __init__(self, project_root: Path | None = None) -> None:
         self.project_root = project_root or Path(__file__).resolve().parents[2]
-        self.rules_root = self.project_root / "rules"
+        env_workspace = os.environ.get("RULES_WORKSPACE_DIR", "").strip()
+        self.use_db = not bool(env_workspace)
+        if env_workspace:
+            self.rules_root = Path(env_workspace)
+        else:
+            self.rules_root = get_workspace_rules_root(self.project_root)
         self.schemas_root = self.rules_root / "schemas"
+        self.rules_store = RulesStore(self.project_root) if self.use_db else None
 
     def _rules_dir(self, ruleset: str) -> Path:
         if ruleset not in ("email_rules", "content_rules"):
@@ -187,6 +196,28 @@ class RuleEngine:
 
     def load(self, ruleset: str, profile: str | None = None) -> RuleSelection:
         profile = profile or "default.v1"
+        if self.use_db and self.rules_store is not None:
+            db_data = None
+            if ruleset == "email_rules":
+                db_data = self.rules_store.get_active_email_rules(profile)
+            elif ruleset == "content_rules":
+                db_data = self.rules_store.get_active_content_rules(profile)
+            if isinstance(db_data, dict):
+                if db_data.get("ruleset") != ruleset:
+                    raise RuleEngineError(
+                        RULES_003_RULESET_MISMATCH,
+                        f"db ruleset={db_data.get('ruleset')} expected={ruleset}",
+                    )
+                self.validate(ruleset, db_data)
+                store_meta = db_data.get("_store_meta", {}) if isinstance(db_data.get("_store_meta"), dict) else {}
+                return RuleSelection(
+                    ruleset=ruleset,
+                    profile=str(db_data.get("profile", profile)),
+                    version=str(store_meta.get("version", db_data.get("version", ""))),
+                    path=Path(f"db://{ruleset}/{profile}"),
+                    data=db_data,
+                )
+
         path = self._profile_path(ruleset, profile)
         data = self._load_file(path)
         if data.get("ruleset") != ruleset:
@@ -326,6 +357,28 @@ class RuleEngine:
                 "min_confidence": float(overrides.get("min_confidence", 0.0) or 0.0),
                 "ranking": {},
             },
+            "source_priority": deepcopy(defaults.get("source_priority", {})),
+            "dedupe_cluster": deepcopy(
+                defaults.get(
+                    "dedupe_cluster",
+                    {
+                        "enabled": False,
+                        "window_hours": 72,
+                        "key_strategies": [
+                            "canonical_url",
+                            "normalized_url_host_path",
+                            "title_fingerprint_v1",
+                        ],
+                        "primary_select": [
+                            "source_priority",
+                            "evidence_grade",
+                            "published_at_earliest",
+                        ],
+                        "max_other_sources": 5,
+                    },
+                )
+            ),
+            "content_sources": deepcopy(defaults.get("content_sources", {})),
         }
 
     def _base_email_decision(self, email: RuleSelection) -> dict[str, Any]:
@@ -380,7 +433,10 @@ class RuleEngine:
             if rule_type == "event_mapping":
                 return [("categories_map.event_mapping", params)]
             if rule_type == "dedupe":
-                return [("dedupe_window", params)]
+                out = [("dedupe_window", params)]
+                if "dedupe_cluster" in params:
+                    out.append(("dedupe_cluster", params.get("dedupe_cluster")))
+                return out
             if rule_type == "confidence_ranking":
                 return [("confidence.ranking", params)]
             if rule_type == "region_filter":

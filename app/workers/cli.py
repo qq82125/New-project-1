@@ -6,6 +6,15 @@ from subprocess import CalledProcessError
 
 from app.rules.errors import RuleEngineError
 from app.rules.engine import RuleEngine
+from app.services.source_registry import (
+    SourceRegistryError,
+    diff_sources_for_profiles,
+    list_sources_for_profile,
+    load_sources_registry,
+    retire_source,
+    test_source,
+    validate_sources_registry,
+)
 from app.workers.dryrun import main as dryrun_main
 from app.workers.replay import main as replay_main
 
@@ -21,10 +30,11 @@ def _get_opt(argv: list[str], key: str) -> str | None:
 
 def cmd_rules_validate(argv: list[str]) -> int:
     engine = RuleEngine()
+    source_validate = validate_sources_registry(engine.project_root, rules_root=engine.rules_root)
     profile = _get_opt(argv, "--profile")
     if profile:
         result = engine.validate_profile_pair(profile)
-        print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
+        print(json.dumps({"ok": True, **result, "sources_registry": source_validate}, ensure_ascii=False, indent=2))
         return 0
 
     validated: list[dict[str, str]] = []
@@ -40,7 +50,13 @@ def cmd_rules_validate(argv: list[str]) -> int:
                     "path": str(path),
                 }
             )
-    print(json.dumps({"ok": True, "validated": validated}, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {"ok": True, "validated": validated, "sources_registry": source_validate},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -81,12 +97,73 @@ def cmd_rules_replay(argv: list[str]) -> int:
     return replay_main(run_id=run_id, send=send_value, profile=profile)
 
 
+def cmd_sources_list(argv: list[str]) -> int:
+    profile = _get_opt(argv, "--profile") or "enhanced"
+    engine = RuleEngine()
+    sources = list_sources_for_profile(engine.project_root, profile)
+    print(
+        json.dumps(
+            {"ok": True, "profile": profile, "count": len(sources), "sources": sources},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
+def cmd_sources_validate(argv: list[str]) -> int:
+    _ = argv
+    engine = RuleEngine()
+    out = validate_sources_registry(engine.project_root)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_sources_test(argv: list[str]) -> int:
+    source_id = _get_opt(argv, "--source-id")
+    if not source_id:
+        print("--source-id is required", file=sys.stderr)
+        return 2
+    limit = int(_get_opt(argv, "--limit") or "3")
+    engine = RuleEngine()
+    sources = load_sources_registry(engine.project_root)
+    source = next((s for s in sources if str(s.get("id", "")) == source_id), None)
+    if source is None:
+        print(json.dumps({"ok": False, "error": f"source not found: {source_id}"}, ensure_ascii=False))
+        return 3
+    out = test_source(source, limit=limit)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0 if out.get("ok") else 4
+
+
+def cmd_sources_diff(argv: list[str]) -> int:
+    from_profile = _get_opt(argv, "--from") or "legacy"
+    to_profile = _get_opt(argv, "--to") or "enhanced"
+    engine = RuleEngine()
+    out = diff_sources_for_profiles(engine.project_root, from_profile, to_profile)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_sources_retire(argv: list[str]) -> int:
+    source_id = _get_opt(argv, "--source-id")
+    reason = _get_opt(argv, "--reason") or "retired via CLI"
+    if not source_id:
+        print("--source-id is required", file=sys.stderr)
+        return 2
+    engine = RuleEngine()
+    out = retire_source(engine.project_root, source_id=source_id, reason=reason)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main() -> int:
     argv = sys.argv[1:]
     if not argv:
         print(
             "Usage: python -m app.workers.cli "
-            "rules:validate|rules:print|rules:dryrun|rules:replay [options]",
+            "rules:validate|rules:print|rules:dryrun|rules:replay|"
+            "sources:list|sources:validate|sources:test|sources:diff|sources:retire [options]",
             file=sys.stderr,
         )
         return 2
@@ -102,6 +179,16 @@ def main() -> int:
             return cmd_rules_dryrun(tail)
         if cmd == "rules:replay":
             return cmd_rules_replay(tail)
+        if cmd == "sources:list":
+            return cmd_sources_list(tail)
+        if cmd == "sources:validate":
+            return cmd_sources_validate(tail)
+        if cmd == "sources:test":
+            return cmd_sources_test(tail)
+        if cmd == "sources:diff":
+            return cmd_sources_diff(tail)
+        if cmd == "sources:retire":
+            return cmd_sources_retire(tail)
         print(f"Unknown command: {cmd}", file=sys.stderr)
         return 2
     except RuleEngineError as e:
@@ -116,6 +203,14 @@ def main() -> int:
         )
         return 11
     except Exception as e:  # pragma: no cover - defensive
+        if isinstance(e, SourceRegistryError):
+            print(
+                json.dumps(
+                    {"ok": False, "error_code": "RULES_910_SOURCES_REGISTRY", "error": str(e)},
+                    ensure_ascii=False,
+                )
+            )
+            return 13
         print(
             json.dumps(
                 {"ok": False, "error_code": "RULES_999_UNEXPECTED", "error": str(e)},

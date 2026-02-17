@@ -4,5 +4,9 @@
 logs/
 *.pyc
 .mail.env
+.rules_console.env
+.admin_api.env
+data/*.db
+artifacts/
 ivd_morning_*.txt
 reports/

@@ -13,6 +13,9 @@ CONTENT_ALLOWED_KEYS = {
     "region_filter",
     "confidence",
     "summary_materials",
+    "source_priority",
+    "dedupe_cluster",
+    "content_sources",
 }
 
 EMAIL_ALLOWED_KEYS = {

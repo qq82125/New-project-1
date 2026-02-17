@@ -197,6 +197,53 @@ rules:
    - 文件：`rules/email_rules/enhanced.yaml`
    - 修改：`output.summary_max_chars` 与 `rules(type=content_format)` 的版式阈值参数。
 
+## Story-level Dedupe / Clustering
+在 `profile=enhanced` 下，内容侧可启用“故事级去重聚合”：
+- 同一新闻多源转载时，仅保留一个 primary item 进入日报候选。
+- 其余来源保存在 primary 的 `other_sources[]`。
+- 解释对象提供聚合键、窗口判定、primary 选择依据。
+
+可配置项（`content_rules`）：
+- `dedupe_cluster.enabled`
+- `dedupe_cluster.window_hours`
+- `dedupe_cluster.key_strategies`
+  - `canonical_url`：最精准，但依赖源提供 canonical。
+  - `normalized_url_host_path`：对同站重复有效，跨站转载效果有限。
+  - `title_fingerprint_v1`：跨站聚合能力强，但有过度合并风险。
+- `dedupe_cluster.primary_select`
+  - 常用：`source_priority -> evidence_grade -> published_at_earliest`
+- `dedupe_cluster.max_other_sources`
+
+风险与适用性：
+- `canonical_url`：低误合并、低召回（部分站点无 canonical）。
+- `normalized_url_host_path`：低误合并，适合同站去重。
+- `title_fingerprint_v1`：高召回，需配合 `window_hours` 控制误合并。
+
+enhanced 示例片段：
+```yaml
+defaults:
+  source_priority:
+    reuters: 100
+    bloomberg: 95
+    nature: 90
+    statnews: 85
+    endpoints: 80
+    fiercebiotech: 75
+    generic_rss: 50
+  dedupe_cluster:
+    enabled: true
+    window_hours: 72
+    key_strategies:
+      - canonical_url
+      - normalized_url_host_path
+      - title_fingerprint_v1
+    primary_select:
+      - source_priority
+      - evidence_grade
+      - published_at_earliest
+    max_other_sources: 5
+```
+
 ## 旁路接入开关
 - 默认：`legacy`（与当前线上/本地行为一致）。
 - 仅当环境变量显式开启时启用增强规则：
@@ -220,3 +267,62 @@ docker compose up -d
 docker compose exec ivd-worker python -m app.workers.cli rules:validate --profile enhanced
 docker compose exec ivd-worker python -m app.workers.cli rules:dryrun --profile enhanced --date 2026-02-16
 ```
+
+## 信源管理（可运营化）
+信源与采集规则解耦，统一放在：
+- `rules/sources/rss.yaml`
+- `rules/sources/web.yaml`
+- `rules/sources/api.yaml`
+
+新增信源流程：
+1. 只修改 `rules/sources/rss.yaml`（或 `web.yaml/api.yaml`）新增 source。
+2. 运行 `python -m app.workers.cli sources:validate`。
+3. 运行 `python -m app.workers.cli sources:test --source-id <id> --limit 3`。
+4. 运行 `python -m app.workers.cli rules:dryrun --profile enhanced --date 2026-02-16` 观察入选与统计。
+
+下线信源流程：
+- 推荐保留记录并下线，不硬删：`python -m app.workers.cli sources:retire --source-id <id> --reason \"xxx\"`
+- 这样可减少 replay 漂移风险。
+
+可用命令：
+```bash
+python -m app.workers.cli sources:list --profile enhanced
+python -m app.workers.cli sources:validate
+python -m app.workers.cli sources:test --source-id reuters-health-rss --limit 3
+python -m app.workers.cli sources:diff --from legacy --to enhanced
+python -m app.workers.cli sources:retire --source-id reuters-health-rss --reason "duplicate feed"
+```
+
+## Rules Console（网页规则控制台）
+控制台功能：编辑/校验/预览/发布/回滚；运行侧只读取“已发布版本”。
+
+版本目录：
+- `rules/console/versions/<version>/rules/...`
+- `rules/console/versions/<version>/meta.json`
+- `rules/console/published.json`（active_version/previous_version/history）
+
+运行契约：
+- 默认首次启动会 bootstrap 当前规则为 `v0001` 发布版本。
+- 之后 RuleEngine 读取 `published` 对应版本。
+- 控制台未发布前，运行侧不会读取草稿。
+
+启动控制台（Basic Auth）：
+```bash
+export RULES_CONSOLE_USER=admin
+export RULES_CONSOLE_PASS=change-me
+python -m app.web.rules_console
+```
+
+或 Token：
+```bash
+export RULES_CONSOLE_TOKEN=your_token
+python -m app.web.rules_console
+```
+
+主要接口：
+- `GET /api/rules/current`
+- `POST /api/rules/validate`
+- `POST /api/rules/preview`（dry-run，不发信）
+- `POST /api/rules/publish`
+- `POST /api/rules/rollback`
+- `GET /api/rules/versions`

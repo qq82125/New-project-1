@@ -8,11 +8,13 @@ Notes:
 """
 
 import datetime as dt
+import json
 import math
 import os
 import re
 import sys
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from http.client import RemoteDisconnected
 from pathlib import Path
 from socket import timeout as SocketTimeout
@@ -28,6 +30,9 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from app.adapters.rule_bridge import load_runtime_rules
+from app.services.story_clusterer import StoryClusterer
+from app.services.source_registry import load_sources_registry, select_sources
+from app.services.rules_versioning import get_runtime_rules_root
 
 
 @dataclass(frozen=True)
@@ -42,6 +47,13 @@ class Item:
     event_type: str
     window_tag: str  # "24小时内" or "7天补充"
     summary_cn: str
+    source_id: str = ""
+    source_priority: int = 0
+    story_id: str = ""
+    is_primary: bool = True
+    other_sources: list = field(default_factory=list)
+    cluster_size: int = 1
+    dedupe_reason: str = ""
 
 
 RUNTIME_CONTENT = {
@@ -57,7 +69,60 @@ RUNTIME_CONTENT = {
     "lane_mapping": {},
     "platform_mapping": {},
     "event_mapping": {},
+    "source_priority": {},
+    "dedupe_cluster": {
+        "enabled": False,
+        "window_hours": 72,
+        "key_strategies": ["canonical_url", "normalized_url_host_path", "title_fingerprint_v1"],
+        "primary_select": ["source_priority", "evidence_grade", "published_at_earliest"],
+        "max_other_sources": 5,
+    },
 }
+
+
+def item_to_dict(it: Item) -> dict:
+    return {
+        "title": it.title,
+        "url": it.link,
+        "published_at": it.published,
+        "source": it.source,
+        "source_key": str(it.source_id or it.source).strip().lower().replace(" ", ""),
+        "region": it.region,
+        "lane": it.lane,
+        "platform": it.platform,
+        "event_type": it.event_type,
+        "window_tag": it.window_tag,
+        "summary_cn": it.summary_cn,
+        "source_id": it.source_id,
+        "source_priority": it.source_priority,
+        "story_id": it.story_id,
+        "is_primary": it.is_primary,
+        "other_sources": list(it.other_sources),
+        "cluster_size": it.cluster_size,
+        "dedupe_reason": it.dedupe_reason,
+    }
+
+
+def dict_to_item(d: dict) -> Item:
+    return Item(
+        title=str(d.get("title", "")),
+        link=str(d.get("url", d.get("link", ""))),
+        published=d.get("published_at"),
+        source=str(d.get("source", "")),
+        region=str(d.get("region", "北美")),
+        lane=str(d.get("lane", "其他")),
+        platform=str(d.get("platform", "跨平台/未标注")),
+        event_type=str(d.get("event_type", "政策与市场动态")),
+        window_tag=str(d.get("window_tag", "7天补充")),
+        summary_cn=str(d.get("summary_cn", "")),
+        source_id=str(d.get("source_id", "")),
+        source_priority=int(d.get("source_priority", 0)),
+        story_id=str(d.get("story_id", "")),
+        is_primary=bool(d.get("is_primary", True)),
+        other_sources=list(d.get("other_sources", [])),
+        cluster_size=int(d.get("cluster_size", 1)),
+        dedupe_reason=str(d.get("dedupe_reason", "")),
+    )
 
 
 def env(name: str, default: str = "") -> str:
@@ -554,6 +619,32 @@ def fetch_bytes(url: str, timeout: int = 15) -> bytes:
         return b""
 
 
+def fetch_bytes_with_status(url: str, timeout: int = 15) -> tuple[bytes, int]:
+    req = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; IVDMorningBot/1.0)",
+            "Accept": "application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8",
+        },
+    )
+    try:
+        with urlopen(req, timeout=timeout) as r:
+            return r.read(), int(getattr(r, "status", 200))
+    except HTTPError as e:
+        return b"", int(getattr(e, "code", 0) or 0)
+    except (URLError, SocketTimeout, TimeoutError, RemoteDisconnected):
+        return b"", 0
+
+
+def fetch_web_entries(url: str, timeout: int = 15) -> list[dict]:
+    html = fetch_text(url, timeout=timeout)
+    if not html:
+        return []
+    m = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
+    title = re.sub(r"\s+", " ", m.group(1)).strip() if m else url
+    return [{"title": title, "link": url, "summary": ""}]
+
+
 def collect_nmpa_udi(now_utc: dt.datetime, tz_name: str) -> list[Item]:
     """
     Add NMPA UDI day/week updates as high-confidence China signals.
@@ -940,8 +1031,20 @@ def main() -> int:
     root_dir = Path(__file__).resolve().parent.parent
     reports_dir = root_dir / "reports"
 
-    runtime_rules = load_runtime_rules(date_str=date_str)
-    if runtime_rules.get("enabled"):
+    run_id = env("REPORT_RUN_ID", "") or f"run-{uuid.uuid4().hex[:10]}"
+    runtime_rules = load_runtime_rules(date_str=date_str, run_id=run_id)
+    # Keep stdout stable (newsletter text). Operational logs go to stderr.
+    try:
+        rv = runtime_rules.get("rules_version", {})
+        print(
+            f"[RUN] run_id={run_id} profile={runtime_rules.get('active_profile','legacy')} "
+            f"rules_version.email={rv.get('email','')} rules_version.content={rv.get('content','')}",
+            file=sys.stderr,
+        )
+    except Exception:
+        pass
+    use_enhanced = runtime_rules.get("active_profile") == "enhanced"
+    if use_enhanced and runtime_rules.get("enabled"):
         content_cfg = runtime_rules.get("content", {})
         RUNTIME_CONTENT["title_similarity_threshold"] = float(
             content_cfg.get("title_similarity_threshold", RUNTIME_CONTENT["title_similarity_threshold"])
@@ -965,28 +1068,60 @@ def main() -> int:
         RUNTIME_CONTENT["lane_mapping"] = content_cfg.get("lane_mapping", {})
         RUNTIME_CONTENT["platform_mapping"] = content_cfg.get("platform_mapping", {})
         RUNTIME_CONTENT["event_mapping"] = content_cfg.get("event_mapping", {})
+        RUNTIME_CONTENT["source_priority"] = content_cfg.get("source_priority", {})
+        RUNTIME_CONTENT["dedupe_cluster"] = content_cfg.get("dedupe_cluster", RUNTIME_CONTENT["dedupe_cluster"])
 
     # Media + official feeds, with APAC/China reinforcement.
     sources = [
-        ("Fierce Biotech", "https://www.fiercebiotech.com/rss/xml", "北美", "media"),
-        ("Fierce Healthcare", "https://www.fiercehealthcare.com/rss/xml", "北美", "media"),
-        ("MedTech Dive", "https://www.medtechdive.com/feeds/news/", "北美", "media"),
-        ("BioPharma Dive", "https://www.biopharmadive.com/feeds/news/", "北美", "media"),
-        ("GenomeWeb", "https://www.genomeweb.com/rss.xml", "北美", "media"),
-        ("360Dx", "https://www.360dx.com/rss.xml", "北美", "media"),
-        ("STAT", "https://www.statnews.com/feed/", "北美", "media"),
-        ("MedTech Europe", "https://www.medtecheurope.org/feed/", "欧洲", "media"),
-        ("MHRA Alerts", "https://www.gov.uk/drug-device-alerts.atom", "欧洲", "regulatory"),
-        ("Reuters Healthcare", "https://www.reutersagency.com/feed/?best-topics=healthcare-pharmaceuticals", "北美", "media"),
-        ("RAPS", "https://www.raps.org/news-and-articles/news-articles/feed", "北美", "media"),
-        ("TGA Safety Alerts", "https://www.tga.gov.au/feeds/alert/safety-alerts.xml", "亚太", "regulatory"),
-        ("TGA Product Recalls", "https://www.tga.gov.au/feeds/alert/product-recalls.xml", "亚太", "regulatory"),
-        ("FDA MedWatch", "https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/medwatch/rss.xml", "北美", "regulatory"),
+        ("legacy-fierce-biotech-rss", "rss", "Fierce Biotech", "https://www.fiercebiotech.com/rss/xml", "北美", "media", 50),
+        ("legacy-fierce-healthcare-rss", "rss", "Fierce Healthcare", "https://www.fiercehealthcare.com/rss/xml", "北美", "media", 50),
+        ("legacy-medtech-dive-rss", "rss", "MedTech Dive", "https://www.medtechdive.com/feeds/news/", "北美", "media", 50),
+        ("legacy-biopharma-dive-rss", "rss", "BioPharma Dive", "https://www.biopharmadive.com/feeds/news/", "北美", "media", 50),
+        ("legacy-genomeweb-rss", "rss", "GenomeWeb", "https://www.genomeweb.com/rss.xml", "北美", "media", 50),
+        ("legacy-360dx-rss", "rss", "360Dx", "https://www.360dx.com/rss.xml", "北美", "media", 50),
+        ("legacy-statnews-rss", "rss", "STAT", "https://www.statnews.com/feed/", "北美", "media", 50),
+        ("legacy-medtecheurope-rss", "rss", "MedTech Europe", "https://www.medtecheurope.org/feed/", "欧洲", "media", 50),
+        ("legacy-mhra-alerts-rss", "rss", "MHRA Alerts", "https://www.gov.uk/drug-device-alerts.atom", "欧洲", "regulatory", 50),
+        ("legacy-reuters-health-rss", "rss", "Reuters Healthcare", "https://www.reutersagency.com/feed/?best-topics=healthcare-pharmaceuticals", "北美", "media", 50),
+        ("legacy-raps-rss", "rss", "RAPS", "https://www.raps.org/news-and-articles/news-articles/feed", "北美", "media", 50),
+        ("legacy-tga-safety-rss", "rss", "TGA Safety Alerts", "https://www.tga.gov.au/feeds/alert/safety-alerts.xml", "亚太", "regulatory", 50),
+        ("legacy-tga-recall-rss", "rss", "TGA Product Recalls", "https://www.tga.gov.au/feeds/alert/product-recalls.xml", "亚太", "regulatory", 50),
+        ("legacy-fda-medwatch-rss", "rss", "FDA MedWatch", "https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/medwatch/rss.xml", "北美", "regulatory", 50),
     ]
-    if runtime_rules.get("enabled"):
-        source_override = runtime_rules.get("content", {}).get("sources", [])
-        if source_override:
-            sources = source_override
+    source_stats: dict[str, dict] = {}
+
+    if use_enhanced and runtime_rules.get("enabled"):
+        selector = runtime_rules.get("content", {}).get("content_sources", {})
+        registry_sources = select_sources(
+            load_sources_registry(root_dir, rules_root=get_runtime_rules_root(root_dir)),
+            selector,
+        )
+        if registry_sources:
+            converted = []
+            for s in registry_sources:
+                sid = str(s.get("id", ""))
+                conn = str(s.get("connector", "rss"))
+                name = str(s.get("name", sid))
+                url = str(s.get("url", ""))
+                region = str(s.get("region", "北美"))
+                tags = [str(x) for x in s.get("tags", [])]
+                kind = "regulatory" if "regulatory" in tags else "media"
+                pri = int(s.get("priority", 0))
+                converted.append((sid, conn, name, url, region, kind, pri))
+            sources = converted
+        else:
+            # Compatibility fallback: use old inline sources in enhanced when registry is empty.
+            source_override = runtime_rules.get("content", {}).get("sources", [])
+            if source_override:
+                converted = []
+                for idx, x in enumerate(source_override):
+                    if not isinstance(x, tuple) or len(x) < 4:
+                        continue
+                    name, url, region, kind = x[0], x[1], x[2], x[3]
+                    sid = f"fallback-inline-{idx}"
+                    converted.append((sid, "rss", name, url, region, kind, 50))
+                if converted:
+                    sources = converted
 
     items: list[Item] = []
     seen_links: set[str] = set()
@@ -996,20 +1131,74 @@ def main() -> int:
     items.extend(collect_nmpa_site_updates(now_utc, tz_name))
     items.extend(collect_pmda_updates(now_utc, tz_name))
 
-    for src_name, url, default_region, kind in sources:
-        data = fetch_bytes(url, timeout=15)
-        if not data:
+    for source_id, connector, src_name, url, default_region, kind, source_priority in sources:
+        stat = source_stats.setdefault(
+            source_id,
+            {
+                "source_id": source_id,
+                "name": src_name,
+                "connector": connector,
+                "fetch_count": 0,
+                "parse_ok": 0,
+                "parse_fail": 0,
+                "last_success_at": "",
+                "top_http_status": {},
+            },
+        )
+        stat["fetch_count"] += 1
+        entries: list[dict] = []
+        http_status = 0
+        if connector == "rss":
+            data, http_status = fetch_bytes_with_status(url, timeout=15)
+            if data:
+                feed = feedparser.parse(data)
+                for e in feed.entries[:50]:
+                    entries.append(
+                        {
+                            "title": (getattr(e, "title", "") or "").strip(),
+                            "link": (getattr(e, "link", "") or "").strip(),
+                            "summary": (
+                                getattr(e, "summary", "")
+                                or getattr(e, "description", "")
+                                or ""
+                            ),
+                            "entry": e,
+                        }
+                    )
+        elif connector == "web":
+            web_entries = fetch_web_entries(url, timeout=15)
+            http_status = 200 if web_entries else 0
+            for e in web_entries:
+                entries.append(
+                    {
+                        "title": str(e.get("title", "")).strip(),
+                        "link": str(e.get("link", "")).strip(),
+                        "summary": str(e.get("summary", "")),
+                        "entry": None,
+                    }
+                )
+        else:
+            stat["parse_fail"] += 1
             continue
-        feed = feedparser.parse(data)
-        for e in feed.entries[:50]:
-            title = (getattr(e, "title", "") or "").strip()
-            link = (getattr(e, "link", "") or "").strip()
+
+        if http_status:
+            key = str(http_status)
+            stat["top_http_status"][key] = int(stat["top_http_status"].get(key, 0)) + 1
+        if not entries:
+            stat["parse_fail"] += 1
+            continue
+        stat["parse_ok"] += 1
+        stat["last_success_at"] = now_utc.isoformat()
+
+        for row in entries:
+            title = row["title"]
+            link = row["link"]
             if not title or not link:
                 continue
             if link in seen_links:
                 continue
             fallback_ok = False
-            combined = title + " " + (getattr(e, "summary", "") or getattr(e, "description", "") or "")
+            combined = title + " " + row["summary"]
             if kind == "regulatory":
                 if not is_regulatory_ivd_relevant(combined):
                     continue
@@ -1019,7 +1208,7 @@ def main() -> int:
                     if not is_relaxed_relevant(combined):
                         continue
                     fallback_ok = True
-            pub = to_dt(e)
+            pub = to_dt(row["entry"]) if row["entry"] is not None else now_utc
             if not pub:
                 continue
             age = now_utc - pub
@@ -1031,13 +1220,15 @@ def main() -> int:
             lane = cn_lane(combined)
             platform = cn_platform(combined)
             event_type = detect_event_type(combined, src_name, link)
-            summary = cn_summary(e)
+            summary = cn_summary(row["entry"]) if row["entry"] is not None else "摘要：该条来自网页源抓取。"
 
             it = Item(
                 title=title,
                 link=link,
                 published=pub,
                 source=src_name,
+                source_id=source_id,
+                source_priority=source_priority,
                 region=region,
                 lane=lane,
                 platform=platform,
@@ -1074,6 +1265,18 @@ def main() -> int:
 
     items = dedupe_items(items)
     items.sort(key=lambda x: x.published, reverse=True)
+    items_before_cluster_count = len(items)
+    cluster_explain = {"enabled": False, "clusters": []}
+
+    if runtime_rules.get("active_profile") == "enhanced":
+        clusterer = StoryClusterer(
+            config=RUNTIME_CONTENT.get("dedupe_cluster", {}),
+            source_priority=RUNTIME_CONTENT.get("source_priority", {}),
+        )
+        clustered_dicts, cluster_explain = clusterer.cluster([item_to_dict(i) for i in items])
+        items = [dict_to_item(d) for d in clustered_dicts]
+        items.sort(key=lambda x: x.published, reverse=True)
+    items_after_cluster_count = len(items)
 
     # Build candidates: strict 24h first, then 7d补充.
     within_24h = [i for i in items if i.window_tag == "24小时内"]
@@ -1202,6 +1405,40 @@ def main() -> int:
         f"重复率(昨/7日峰值)：{yday_dup:.0%}/{max_7d_dup:.0%} | "
         f"rules_profile={runtime_rules.get('active_profile', 'legacy')}"
     )
+
+    artifacts_dir = env("DRYRUN_ARTIFACTS_DIR", "")
+    if artifacts_dir:
+        p = Path(artifacts_dir)
+        p.mkdir(parents=True, exist_ok=True)
+        clustered_items = [item_to_dict(i) for i in items]
+        top_clusters = [
+            {
+                "story_id": i.story_id,
+                "primary_title": i.title,
+                "cluster_size": i.cluster_size,
+                "other_sources": i.other_sources,
+            }
+            for i in items
+            if i.cluster_size >= 2
+        ][:20]
+        (p / "clustered_items.json").write_text(
+            json.dumps(clustered_items, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        cluster_explain_out = {
+            "items_before_count": items_before_cluster_count,
+            "items_after_count": items_after_cluster_count,
+            "top_clusters": top_clusters,
+            "explain": cluster_explain,
+        }
+        (p / "cluster_explain.json").write_text(
+            json.dumps(cluster_explain_out, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        (p / "source_stats.json").write_text(
+            json.dumps({"sources": list(source_stats.values())}, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
 
     return 0
 

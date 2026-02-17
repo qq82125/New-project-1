@@ -86,9 +86,9 @@ def _parse_items_from_report(text: str) -> list[dict]:
 
 def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
     engine = RuleEngine()
-    decision = engine.build_decision(profile=profile)
-
     run_id = f"dryrun-{uuid.uuid4().hex[:10]}"
+    decision = engine.build_decision(profile=profile, run_id=run_id)
+
     project_root = engine.project_root
     artifacts_dir = project_root / "artifacts" / run_id
     artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -99,6 +99,12 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
     )
     if report_date:
         env["REPORT_DATE"] = report_date
+    env["REPORT_RUN_ID"] = run_id
+    env["DRYRUN_ARTIFACTS_DIR"] = str(artifacts_dir)
+    if profile == "enhanced":
+        env["ENHANCED_RULES_PROFILE"] = "enhanced"
+    else:
+        env.pop("ENHANCED_RULES_PROFILE", None)
 
     proc = subprocess.run(
         ["python3", "scripts/generate_ivd_report.py"],
@@ -110,6 +116,21 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
     )
     preview_text = proc.stdout
     items = _parse_items_from_report(preview_text)
+    cluster_explain_file = artifacts_dir / "cluster_explain.json"
+    clustered_items_file = artifacts_dir / "clustered_items.json"
+    source_stats_file = artifacts_dir / "source_stats.json"
+    cluster_payload = {}
+    if cluster_explain_file.exists():
+        try:
+            cluster_payload = json.loads(cluster_explain_file.read_text(encoding="utf-8"))
+        except Exception:
+            cluster_payload = {}
+    source_payload = {}
+    if source_stats_file.exists():
+        try:
+            source_payload = json.loads(source_stats_file.read_text(encoding="utf-8"))
+        except Exception:
+            source_payload = {}
 
     explain_payload = {
         "run_id": run_id,
@@ -141,8 +162,15 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             "explain": str(artifacts_dir / "run_id.json"),
             "preview": str(artifacts_dir / "newsletter_preview.md"),
             "items": str(artifacts_dir / "items.json"),
+            "clustered_items": str(clustered_items_file),
+            "cluster_explain": str(cluster_explain_file),
+            "source_stats": str(source_stats_file),
         },
         "items_count": len(items),
+        "items_before_count": int(cluster_payload.get("items_before_count", len(items))),
+        "items_after_count": int(cluster_payload.get("items_after_count", len(items))),
+        "top_clusters": cluster_payload.get("top_clusters", []),
+        "source_stats": source_payload.get("sources", []),
         "sent": False,
         "decision": {
             "content_decision": decision.get("content_decision", {}),

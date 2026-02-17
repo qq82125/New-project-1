@@ -1,0 +1,134 @@
+version: "1.0.0"
+sources:
+  - id: fierce-biotech-rss
+    enabled: true
+    connector: rss
+    url: https://www.fiercebiotech.com/rss/xml
+    name: Fierce Biotech
+    region: 北美
+    trust_tier: B
+    priority: 75
+    tags:
+      - media
+      - global
+      - en
+      - ivd
+
+  - id: medtech-dive-rss
+    enabled: true
+    connector: rss
+    url: https://www.medtechdive.com/feeds/news/
+    name: MedTech Dive
+    region: 北美
+    trust_tier: B
+    priority: 70
+    tags:
+      - media
+      - global
+      - en
+
+  - id: biopharma-dive-rss
+    enabled: true
+    connector: rss
+    url: https://www.biopharmadive.com/feeds/news/
+    name: BioPharma Dive
+    region: 北美
+    trust_tier: B
+    priority: 68
+    tags:
+      - media
+      - global
+      - en
+
+  - id: genomeweb-rss
+    enabled: true
+    connector: rss
+    url: https://www.genomeweb.com/rss.xml
+    name: GenomeWeb
+    region: 北美
+    trust_tier: A
+    priority: 82
+    tags:
+      - media
+      - global
+      - en
+      - ivd
+
+  - id: 360dx-rss
+    enabled: true
+    connector: rss
+    url: https://www.360dx.com/rss.xml
+    name: 360Dx
+    region: 北美
+    trust_tier: A
+    priority: 80
+    tags:
+      - media
+      - global
+      - en
+      - diagnostics
+
+  - id: statnews-rss
+    enabled: true
+    connector: rss
+    url: https://www.statnews.com/feed/
+    name: STAT
+    region: 北美
+    trust_tier: B
+    priority: 85
+    tags:
+      - media
+      - global
+      - en
+
+  - id: reuters-health-rss
+    enabled: true
+    connector: rss
+    url: https://www.reutersagency.com/feed/?best-topics=healthcare-pharmaceuticals
+    name: Reuters Healthcare
+    region: 北美
+    trust_tier: A
+    priority: 100
+    tags:
+      - media
+      - global
+      - en
+
+  - id: tga-safety-rss
+    enabled: true
+    connector: rss
+    url: https://www.tga.gov.au/feeds/alert/safety-alerts.xml
+    name: TGA Safety Alerts
+    region: 亚太
+    trust_tier: A
+    priority: 90
+    tags:
+      - regulatory
+      - apac
+      - en
+
+  - id: tga-recall-rss
+    enabled: true
+    connector: rss
+    url: https://www.tga.gov.au/feeds/alert/product-recalls.xml
+    name: TGA Product Recalls
+    region: 亚太
+    trust_tier: A
+    priority: 90
+    tags:
+      - regulatory
+      - apac
+      - en
+
+  - id: fda-medwatch-rss
+    enabled: true
+    connector: rss
+    url: https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/medwatch/rss.xml
+    name: FDA MedWatch
+    region: 北美
+    trust_tier: A
+    priority: 88
+    tags:
+      - regulatory
+      - us
+      - en

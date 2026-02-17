@@ -76,6 +76,75 @@ SMTP_FROM_NAME=全球IVD晨报
 2. 先检查 iCloud「已发送」是否存在当日主题邮件。  
 3. 若不存在，则自动补发到目标邮箱。  
 
+## Rules Console
+
+提供网页规则控制台（编辑/校验/预览/发布/回滚），不影响 `send_mail_icloud.sh` 与 GitHub Actions 兜底补发逻辑。
+
+### 1) 启动 /admin 控制台（FastAPI，推荐）
+
+本地启动（命令行一次性注入账号密码）：
+
+```bash
+ADMIN_USER=admin ADMIN_PASS=change-me python -m app.admin_server
+```
+
+或使用脚本（会自动读取同目录的 `.admin_api.env`，如存在）：
+
+```bash
+./scripts/run_admin.sh
+```
+
+打开页面：
+
+- `http://127.0.0.1:8789/admin`（会跳转到 `/admin/email`）
+
+### 2) 在浏览器配置规则（Draft -> Publish）
+
+通用流程（邮件规则/采集规则一致）：
+
+1. 打开 `/admin/email` 或 `/admin/content`
+2. 修改表单
+3. 点击“保存草稿并校验”
+4. 校验通过后点击“发布生效”
+
+版本管理：
+
+- 打开 `/admin/versions` 查看生效版本、对比差异、以及“一键回滚到上一版本”
+
+### 3) dry-run 预览（不发信）
+
+在页面上：
+
+- `/admin/email` 右侧点击“试跑预览(不发信)”
+- `/admin/content` 右侧点击“试跑预览(不发信)”查看候选条数与聚合簇
+
+API 一键 dry-run（推荐）：
+
+```bash
+curl -u admin:change-me \
+  -X POST "http://127.0.0.1:8789/admin/api/dryrun?profile=enhanced&date=2026-02-16" | python3 -m json.tool
+```
+
+### 4) 发布/回滚
+
+- 发布：页面在 Draft 校验通过后，点击“发布生效”
+- 回滚：进入 `/admin/versions` 点击“回滚邮件规则 / 回滚采集规则”
+
+详细 API 与示例：见 `docs/RULES_CONSOLE.md`。
+
+### 5) 旧版 Rules Console（8787）
+
+历史版本的简易控制台仍保留，可用于对比/兼容验证：
+
+```bash
+export RULES_CONSOLE_USER=admin
+export RULES_CONSOLE_PASS=change-me
+python -m app.web.rules_console
+```
+
+打开 `http://127.0.0.1:8787`。  
+该服务主要用于兼容验证；主运行侧规则读取以 DB active 版本为优先（失败回退到 `rules/legacy.*`）。
+
 ## Contributing
 
 欢迎提交 Issue 和 Pull Request。建议先描述问题背景与预期行为，再提交最小可复现改动，便于快速评审和合并。

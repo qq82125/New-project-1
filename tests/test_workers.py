@@ -51,6 +51,9 @@ class WorkerTests(unittest.TestCase):
             items = json.loads((artifacts_dir / "items.json").read_text(encoding="utf-8"))
             self.assertEqual(len(items), 1)
             self.assertEqual(items[0]["title"], "test title")
+            self.assertIn("items_before_count", result)
+            self.assertIn("items_after_count", result)
+            self.assertIn("top_clusters", result)
 
             cmd = mock_run.call_args[0][0]
             self.assertEqual(cmd, ["python3", "scripts/generate_ivd_report.py"])

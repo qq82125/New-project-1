@@ -5,6 +5,7 @@ import os
 import smtplib
 import ssl
 import sys
+import uuid
 from email.mime.text import MIMEText
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -55,9 +56,16 @@ def main(argv: list[str]) -> int:
     prefix = env("REPORT_SUBJECT_PREFIX", "全球IVD晨报 - ")
     date_str = now_in_tz(tz_name).strftime("%Y-%m-%d")
     subject = f"{prefix}{date_str}"
-    runtime_rules = load_runtime_rules(date_str=date_str)
+    run_id = env("REPORT_RUN_ID", "") or f"send-{uuid.uuid4().hex[:10]}"
+    runtime_rules = load_runtime_rules(date_str=date_str, run_id=run_id)
     if runtime_rules.get("enabled"):
         subject = runtime_rules.get("email", {}).get("subject", subject)
+    rv = runtime_rules.get("rules_version", {}) if isinstance(runtime_rules, dict) else {}
+    print(
+        f"[RUN] run_id={run_id} profile={runtime_rules.get('active_profile','legacy')} "
+        f"rules_version.email={rv.get('email','')} rules_version.content={rv.get('content','')}",
+        file=sys.stderr,
+    )
 
     missing = [k for k in ["SMTP_HOST", "SMTP_USER", "SMTP_PASS", "TO_EMAIL"] if not env(k)]
     if missing:
