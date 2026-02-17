@@ -24,6 +24,29 @@ def _email_cfg(profile: str, version: str) -> dict:
         "output": {"format": "plain_text", "sections": ["A"], "summary_max_chars": 100, "charts_enabled": False},
     }
 
+def _qc_cfg(profile: str, version: str) -> dict:
+    return {
+        "ruleset": "qc_rules",
+        "profile": profile,
+        "version": version,
+        "defaults": {"timezone": "Asia/Shanghai"},
+        "overrides": {"enabled": True},
+        "rules": [],
+        "output": {},
+    }
+
+
+def _output_cfg(profile: str, version: str) -> dict:
+    return {
+        "ruleset": "output_rules",
+        "profile": profile,
+        "version": version,
+        "defaults": {"format": "plain_text"},
+        "overrides": {"enabled": True},
+        "rules": [],
+        "output": {"sections": ["A", "G"]},
+    }
+
 
 class RulesStoreTests(unittest.TestCase):
     def test_create_activate_rollback(self) -> None:
@@ -59,6 +82,76 @@ class RulesStoreTests(unittest.TestCase):
             active2 = store.get_active_email_rules("legacy")
             self.assertIsNotNone(active2)
             self.assertEqual(active2["_store_meta"]["version"], "v0001")
+
+    def test_qc_and_output_rules_draft_publish_active_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = RulesStore(root)
+
+            # QC rules: draft -> publish -> active -> rollback
+            d1 = store.create_draft(
+                "qc_rules",
+                "enhanced",
+                _qc_cfg("enhanced", "2.0.0"),
+                validation_errors=[],
+                created_by="tester",
+            )
+            pub1 = store.publish_draft("qc_rules", d1["id"], "enhanced", created_by="tester")
+            self.assertTrue(pub1["ok"])
+            active_qc = store.get_active_rules("qc_rules", "enhanced")
+            self.assertIsNotNone(active_qc)
+            self.assertEqual(active_qc.get("ruleset"), "qc_rules")
+            self.assertEqual(active_qc.get("profile"), "enhanced")
+            self.assertTrue(str(active_qc["_store_meta"]["version"]).startswith("db-"))
+
+            d2 = store.create_draft(
+                "qc_rules",
+                "enhanced",
+                _qc_cfg("enhanced", "2.0.1"),
+                validation_errors=[],
+                created_by="tester",
+            )
+            pub2 = store.publish_draft("qc_rules", d2["id"], "enhanced", created_by="tester")
+            self.assertTrue(pub2["ok"])
+            active_qc2 = store.get_active_rules("qc_rules", "enhanced")
+            self.assertIsNotNone(active_qc2)
+            self.assertEqual(active_qc2["_store_meta"]["version"], pub2["version"])
+
+            rb = store.rollback("qc_rules", profile="enhanced")
+            self.assertTrue(rb["ok"])
+            active_qc3 = store.get_active_rules("qc_rules", "enhanced")
+            self.assertIsNotNone(active_qc3)
+            self.assertEqual(active_qc3["_store_meta"]["version"], pub1["version"])
+
+            # Output rules: draft -> publish -> active -> rollback
+            od1 = store.create_draft(
+                "output_rules",
+                "enhanced",
+                _output_cfg("enhanced", "2.0.0"),
+                validation_errors=[],
+                created_by="tester",
+            )
+            opub1 = store.publish_draft("output_rules", od1["id"], "enhanced", created_by="tester")
+            self.assertTrue(opub1["ok"])
+            active_out = store.get_active_rules("output_rules", "enhanced")
+            self.assertIsNotNone(active_out)
+            self.assertEqual(active_out.get("ruleset"), "output_rules")
+            self.assertEqual(active_out["_store_meta"]["version"], opub1["version"])
+
+            od2 = store.create_draft(
+                "output_rules",
+                "enhanced",
+                _output_cfg("enhanced", "2.0.1"),
+                validation_errors=[],
+                created_by="tester",
+            )
+            opub2 = store.publish_draft("output_rules", od2["id"], "enhanced", created_by="tester")
+            self.assertTrue(opub2["ok"])
+            rb2 = store.rollback("output_rules", profile="enhanced")
+            self.assertTrue(rb2["ok"])
+            active_out2 = store.get_active_rules("output_rules", "enhanced")
+            self.assertIsNotNone(active_out2)
+            self.assertEqual(active_out2["_store_meta"]["version"], opub1["version"])
 
     def test_sources_upsert(self) -> None:
         with tempfile.TemporaryDirectory() as td:

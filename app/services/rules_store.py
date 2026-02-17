@@ -56,6 +56,34 @@ class RulesStore:
                 CREATE INDEX IF NOT EXISTS idx_content_rules_profile_active
                     ON content_rules_versions(profile, is_active, id);
 
+                CREATE TABLE IF NOT EXISTS qc_rules_versions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    profile TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    config_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    created_by TEXT NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_qc_rules_profile_version
+                    ON qc_rules_versions(profile, version);
+                CREATE INDEX IF NOT EXISTS idx_qc_rules_profile_active
+                    ON qc_rules_versions(profile, is_active, id);
+
+                CREATE TABLE IF NOT EXISTS output_rules_versions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    profile TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    config_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    created_by TEXT NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_output_rules_profile_version
+                    ON output_rules_versions(profile, version);
+                CREATE INDEX IF NOT EXISTS idx_output_rules_profile_active
+                    ON output_rules_versions(profile, is_active, id);
+
                 CREATE TABLE IF NOT EXISTS sources (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -103,6 +131,10 @@ class RulesStore:
             return "email_rules_versions"
         if ruleset == "content_rules":
             return "content_rules_versions"
+        if ruleset == "qc_rules":
+            return "qc_rules_versions"
+        if ruleset == "output_rules":
+            return "output_rules_versions"
         raise ValueError(f"unsupported ruleset={ruleset}")
 
     def _decode_config(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -128,10 +160,13 @@ class RulesStore:
             return row is not None
 
     def get_active_email_rules(self, profile: str) -> dict[str, Any] | None:
-        return self._get_active("email_rules", profile)
+        return self.get_active_rules("email_rules", profile)
 
     def get_active_content_rules(self, profile: str) -> dict[str, Any] | None:
-        return self._get_active("content_rules", profile)
+        return self.get_active_rules("content_rules", profile)
+
+    def get_active_rules(self, ruleset: str, profile: str) -> dict[str, Any] | None:
+        return self._get_active(ruleset, profile)
 
     def _get_active(self, ruleset: str, profile: str) -> dict[str, Any] | None:
         table = self._table_name(ruleset)
@@ -471,15 +506,19 @@ class RulesStore:
 
     def create_draft(
         self,
-        *,
         ruleset: str,
         profile: str,
-        config: dict[str, Any],
-        created_by: str,
+        config_json: dict[str, Any] | None = None,
         validation_errors: list[dict[str, Any]] | None = None,
+        created_by: str = "",
+        *,
+        # Backward-compatible alias for older call sites.
+        config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         now = _utc_now()
-        payload = json.dumps(config, ensure_ascii=False)
+        if config_json is None:
+            config_json = config or {}
+        payload = json.dumps(config_json, ensure_ascii=False)
         vjson = json.dumps(validation_errors or [], ensure_ascii=False)
         with self._connect() as conn:
             cur = conn.execute(
@@ -501,6 +540,49 @@ class RulesStore:
             "created_by": created_by,
             "validation_errors": validation_errors or [],
         }
+
+    def publish_draft(
+        self,
+        ruleset: str,
+        draft_id: int,
+        profile: str,
+        created_by: str,
+    ) -> dict[str, Any]:
+        """
+        Publish a draft as a new active version.
+
+        Note: This method does not perform schema validation; callers should validate prior to publishing.
+        """
+        draft = self.get_draft(ruleset=ruleset, profile=profile, draft_id=draft_id)
+        if draft is None:
+            raise RuntimeError(f"draft not found: ruleset={ruleset} profile={profile} draft_id={draft_id}")
+        if str(draft.get("ruleset")) != ruleset or str(draft.get("profile")) != profile:
+            raise RuntimeError(
+                f"draft mismatch: expected ruleset={ruleset} profile={profile} got ruleset={draft.get('ruleset')} profile={draft.get('profile')}"
+            )
+
+        base = datetime.now(timezone.utc).strftime("db-%Y%m%dT%H%M%SZ")
+        existing = {str(x["version"]) for x in self.list_versions(ruleset, profile=profile)}
+        version = base if base not in existing else f"{base}-{draft_id}"
+        # Ensure uniqueness if draft_id also collides (rare, but deterministic).
+        if version in existing:
+            idx = 2
+            while True:
+                cand = f"{base}-{idx}"
+                if cand not in existing:
+                    version = cand
+                    break
+                idx += 1
+
+        out = self.create_version(
+            ruleset,
+            profile=profile,
+            version=version,
+            config=draft["config_json"],
+            created_by=created_by,
+            activate=True,
+        )
+        return {"ok": True, "published": True, "ruleset": ruleset, "profile": profile, "version": out["version"], "draft_id": int(draft_id)}
 
     def get_draft(
         self,
