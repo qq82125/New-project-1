@@ -1426,11 +1426,11 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         """
         return _page_shell("采集规则", body, js)
 
-        @app.get("/admin/qc", response_class=HTMLResponse)
-        def page_qc(_: dict[str, str] = Depends(_auth_guard)) -> str:
-            body = """
-            <div class="layout">
-              <div class="card">
+    @app.get("/admin/qc", response_class=HTMLResponse)
+    def page_qc(_: dict[str, str] = Depends(_auth_guard)) -> str:
+        body = """
+        <div class="layout">
+          <div class="card">
             <label>规则 Profile</label>
             <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
             <label>启用开关</label><select id="enabled"><option value="true">true</option><option value="false">false</option></select>
@@ -1451,35 +1451,35 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             <label>传闻触发词（rumor_policy.trigger_terms，逗号分隔）</label><input id="rumor_terms" placeholder="rumor,unconfirmed,据传,传闻"/>
             <label>传闻标签（rumor_policy.label）</label><input id="rumor_label" placeholder="传闻（未确认）"/>
 
-                <label>QC fail 策略（fail_policy.mode）</label>
-                <select id="fail_mode">
-                  <option value="only_warn">only_warn（仅提示）</option>
-                  <option value="auto_topup">auto_topup（自动补齐）</option>
-                  <option value="degrade_output_legacy">degrade_output_legacy（降级输出）</option>
-                  <option value="require_manual_review">require_manual_review（标记人工复核）</option>
-                </select>
-                <label>回补偏好（fail_policy.topup_prefer，逗号分隔）</label>
-                <input id="topup_prefer" placeholder="regulatory_cn,regulatory_apac,procurement_cn"/>
+            <label>QC fail 策略（fail_policy.mode）</label>
+            <select id="fail_mode">
+              <option value="only_warn">only_warn（仅提示）</option>
+              <option value="auto_topup">auto_topup（自动补齐）</option>
+              <option value="degrade_output_legacy">degrade_output_legacy（降级输出）</option>
+              <option value="require_manual_review">require_manual_review（标记人工复核）</option>
+            </select>
+            <label>回补偏好（fail_policy.topup_prefer，逗号分隔）</label>
+            <input id="topup_prefer" placeholder="regulatory_cn,regulatory_apac,procurement_cn"/>
 
-                <label>事件类型结构目标（可选：regulatory_vs_commercial_mix）</label>
-                <div class="row">
-                  <select id="mix_enabled" style="width:140px"><option value="false">false</option><option value="true">true</option></select>
-                  <input id="mix_reg_min" type="number" step="0.01" min="0" max="1" placeholder="监管占比下限 0.25"/>
-                  <input id="mix_com_min" type="number" step="0.01" min="0" max="1" placeholder="商业占比下限 0.35"/>
-                </div>
+            <label>事件类型结构目标（可选：regulatory_vs_commercial_mix）</label>
+            <div class="row">
+              <select id="mix_enabled" style="width:140px"><option value="false">false</option><option value="true">true</option></select>
+              <input id="mix_reg_min" type="number" step="0.01" min="0" max="1" placeholder="监管占比下限 0.25"/>
+              <input id="mix_com_min" type="number" step="0.01" min="0" max="1" placeholder="商业占比下限 0.35"/>
+            </div>
 
-                <label>条目字段齐全检查（completeness_policy）</label>
-                <div class="row">
-                  <select id="comp_enabled" style="width:140px"><option value="true">true</option><option value="false">false</option></select>
-                  <input id="comp_min_share" type="number" step="0.01" min="0" max="1" placeholder="最小合格占比 1.00"/>
-                </div>
-                <label>必填字段（逗号分隔）</label>
-                <input id="comp_fields" placeholder="title,summary,published,link,region,lane,platform,event_type"/>
-                <label>摘要句数要求（min/max）</label>
-                <div class="row">
-                  <input id="comp_sum_min" type="number" min="1" max="10"/>
-                  <input id="comp_sum_max" type="number" min="1" max="10"/>
-                </div>
+            <label>条目字段齐全检查（completeness_policy）</label>
+            <div class="row">
+              <select id="comp_enabled" style="width:140px"><option value="true">true</option><option value="false">false</option></select>
+              <input id="comp_min_share" type="number" step="0.01" min="0" max="1" placeholder="最小合格占比 1.00"/>
+            </div>
+            <label>必填字段（逗号分隔）</label>
+            <input id="comp_fields" placeholder="title,summary,published,link,region,lane,platform,event_type"/>
+            <label>摘要句数要求（min/max）</label>
+            <div class="row">
+              <input id="comp_sum_min" type="number" min="1" max="10"/>
+              <input id="comp_sum_max" type="number" min="1" max="10"/>
+            </div>
 
             <label>操作人</label><input id="created_by" value="rules-admin-ui"/>
             <div>
@@ -1494,13 +1494,13 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 <ul>
                   <li><b>min_24h_items</b>：过去24小时有效条目不足时视为 QC 风险。</li>
                   <li><b>fallback_days / 7d_topup_limit</b>：回补窗口与回补上限（回补仅从本次候选池选择，不重新抓网）。</li>
-                      <li><b>required_sources_checklist</b>：必查信源命中审计项（G 段展示）。</li>
-                      <li><b>fail_policy.mode</b>：QC 未达标时的动作策略（仅 dry-run 生效，不影响线上定时）。</li>
-                      <li><b>completeness_policy</b>：用于保证每条“标题/摘要/日期/链接/地区/赛道/平台/事件类型”等字段齐全，并校验摘要句数（建议 2-3 句）。</li>
-                    </ul>
-                  </div>
-                </details>
+                  <li><b>required_sources_checklist</b>：必查信源命中审计项（G 段展示）。</li>
+                  <li><b>fail_policy.mode</b>：QC 未达标时的动作策略（仅 dry-run 生效，不影响线上定时）。</li>
+                  <li><b>completeness_policy</b>：用于保证每条“标题/摘要/日期/链接/地区/赛道/平台/事件类型”等字段齐全，并校验摘要句数（建议 2-3 句）。</li>
+                </ul>
               </div>
+            </details>
+          </div>
           <div class="card">
             <label>试跑日期(可选, YYYY-MM-DD)</label><input id="dryrun_date" />
             <div class="row">
@@ -1519,14 +1519,14 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         let currentDraftId = null;
         function splitCsv(s){ return (s||'').split(',').map(x=>x.trim()).filter(Boolean); }
 
-            async function loadActive(){
-              const profile = document.getElementById('profile').value;
-              const j = await api(`/admin/api/qc_rules/active?profile=${encodeURIComponent(profile)}`);
-              if(!j||!j.ok){ document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
-              currentConfig = j.config_json;
-              document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
-              document.getElementById('enabled').value = String(!!(currentConfig.overrides||{}).enabled);
-              const d = currentConfig.defaults||{};
+        async function loadActive(){
+          const profile = document.getElementById('profile').value;
+          const j = await api(`/admin/api/qc_rules/active?profile=${encodeURIComponent(profile)}`);
+          if(!j||!j.ok){ document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
+          currentConfig = j.config_json;
+          document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
+          document.getElementById('enabled').value = String(!!(currentConfig.overrides||{}).enabled);
+          const d = currentConfig.defaults||{};
           document.getElementById('min_24h_items').value = d.min_24h_items ?? 10;
           document.getElementById('fallback_days').value = d.fallback_days ?? 7;
           document.getElementById('topup_limit').value = d['7d_topup_limit'] ?? 20;
@@ -1534,33 +1534,33 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('china_min_share').value = d.china_min_share ?? 0.2;
           document.getElementById('daily_repeat_rate_max').value = d.daily_repeat_rate_max ?? 0.25;
           document.getElementById('recent_7d_repeat_rate_max').value = d.recent_7d_repeat_rate_max ?? 0.4;
-                  document.getElementById('required_sources').value = (d.required_sources_checklist||[]).join(',');
-                  const qp = d.quality_policy || {};
-                  // Back-compat: prefer new quality_policy.required_sources_checklist if present.
-                  if(Array.isArray(qp.required_sources_checklist) && qp.required_sources_checklist.length){
-                    document.getElementById('required_sources').value = (qp.required_sources_checklist||[]).join(',');
-                  }
-                  const rp = d.rumor_policy||{};
+          document.getElementById('required_sources').value = (d.required_sources_checklist||[]).join(',');
+          const qp = d.quality_policy || {};
+          // Back-compat: prefer new quality_policy.required_sources_checklist if present.
+          if(Array.isArray(qp.required_sources_checklist) && qp.required_sources_checklist.length){
+            document.getElementById('required_sources').value = (qp.required_sources_checklist||[]).join(',');
+          }
+          const rp = d.rumor_policy||{};
           document.getElementById('rumor_enabled').value = String(!!rp.enabled);
           document.getElementById('rumor_terms').value = (rp.trigger_terms||[]).join(',');
           document.getElementById('rumor_label').value = rp.label || '传闻（未确认）';
-              const fp = d.fail_policy||{};
-              document.getElementById('fail_mode').value = fp.mode || 'only_warn';
-              document.getElementById('topup_prefer').value = (fp.topup_prefer||[]).join(',');
-              const mix = d.regulatory_vs_commercial_mix || {};
-              document.getElementById('mix_enabled').value = String(!!mix.enabled);
-              document.getElementById('mix_reg_min').value = mix.regulatory_min ?? 0.25;
-              document.getElementById('mix_com_min').value = mix.commercial_min ?? 0.35;
-              const cp = d.completeness_policy || {};
-              document.getElementById('comp_enabled').value = String(cp.enabled ?? true);
-              document.getElementById('comp_min_share').value = cp.min_complete_share ?? 1.0;
-              document.getElementById('comp_fields').value = (cp.required_fields||[]).join(',');
-              document.getElementById('comp_sum_min').value = cp.summary_sentences_min ?? 2;
-              document.getElementById('comp_sum_max').value = cp.summary_sentences_max ?? 3;
-              document.getElementById('btnPublish').disabled = true;
-              currentDraftId = null;
-              document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
-            }
+          const fp = d.fail_policy||{};
+          document.getElementById('fail_mode').value = fp.mode || 'only_warn';
+          document.getElementById('topup_prefer').value = (fp.topup_prefer||[]).join(',');
+          const mix = d.regulatory_vs_commercial_mix || {};
+          document.getElementById('mix_enabled').value = String(!!mix.enabled);
+          document.getElementById('mix_reg_min').value = mix.regulatory_min ?? 0.25;
+          document.getElementById('mix_com_min').value = mix.commercial_min ?? 0.35;
+          const cp = d.completeness_policy || {};
+          document.getElementById('comp_enabled').value = String(cp.enabled ?? true);
+          document.getElementById('comp_min_share').value = cp.min_complete_share ?? 1.0;
+          document.getElementById('comp_fields').value = (cp.required_fields||[]).join(',');
+          document.getElementById('comp_sum_min').value = cp.summary_sentences_min ?? 2;
+          document.getElementById('comp_sum_max').value = cp.summary_sentences_max ?? 3;
+          document.getElementById('btnPublish').disabled = true;
+          currentDraftId = null;
+          document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
+        }
 
         function buildConfig(){
           const cfg = JSON.parse(JSON.stringify(currentConfig||{}));
@@ -1577,36 +1577,36 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           cfg.defaults.china_min_share = Number(document.getElementById('china_min_share').value||0.2);
           cfg.defaults.daily_repeat_rate_max = Number(document.getElementById('daily_repeat_rate_max').value||0.25);
           cfg.defaults.recent_7d_repeat_rate_max = Number(document.getElementById('recent_7d_repeat_rate_max').value||0.4);
-                  const reqList = splitCsv(document.getElementById('required_sources').value);
-                  cfg.defaults.required_sources_checklist = reqList;
-                  // v2 structured field (prompt7)
-                  cfg.defaults.quality_policy = cfg.defaults.quality_policy || {};
-                  cfg.defaults.quality_policy.required_sources_checklist = reqList;
-                  cfg.defaults.rumor_policy = {
-                    enabled: document.getElementById('rumor_enabled').value === 'true',
-                    trigger_terms: splitCsv(document.getElementById('rumor_terms').value),
-                    label: document.getElementById('rumor_label').value.trim() || '传闻（未确认）',
-                  };
-              cfg.defaults.fail_policy = {
-                mode: document.getElementById('fail_mode').value,
-                topup_prefer: splitCsv(document.getElementById('topup_prefer').value),
-              };
-              cfg.defaults.regulatory_vs_commercial_mix = {
-                enabled: document.getElementById('mix_enabled').value === 'true',
-                regulatory_min: Number(document.getElementById('mix_reg_min').value||0.25),
-                commercial_min: Number(document.getElementById('mix_com_min').value||0.35),
-              };
-              cfg.defaults.completeness_policy = {
-                enabled: document.getElementById('comp_enabled').value === 'true',
-                min_complete_share: Number(document.getElementById('comp_min_share').value||1.0),
-                required_fields: splitCsv(document.getElementById('comp_fields').value),
-                summary_sentences_min: Number(document.getElementById('comp_sum_min').value||2),
-                summary_sentences_max: Number(document.getElementById('comp_sum_max').value||3),
-              };
-              cfg.output = cfg.output || { format: 'json', panel_enabled: true };
-              cfg.rules = cfg.rules || [];
-              return cfg;
-            }
+          const reqList = splitCsv(document.getElementById('required_sources').value);
+          cfg.defaults.required_sources_checklist = reqList;
+          // v2 structured field (prompt7)
+          cfg.defaults.quality_policy = cfg.defaults.quality_policy || {};
+          cfg.defaults.quality_policy.required_sources_checklist = reqList;
+          cfg.defaults.rumor_policy = {
+            enabled: document.getElementById('rumor_enabled').value === 'true',
+            trigger_terms: splitCsv(document.getElementById('rumor_terms').value),
+            label: document.getElementById('rumor_label').value.trim() || '传闻（未确认）',
+          };
+          cfg.defaults.fail_policy = {
+            mode: document.getElementById('fail_mode').value,
+            topup_prefer: splitCsv(document.getElementById('topup_prefer').value),
+          };
+          cfg.defaults.regulatory_vs_commercial_mix = {
+            enabled: document.getElementById('mix_enabled').value === 'true',
+            regulatory_min: Number(document.getElementById('mix_reg_min').value||0.25),
+            commercial_min: Number(document.getElementById('mix_com_min').value||0.35),
+          };
+          cfg.defaults.completeness_policy = {
+            enabled: document.getElementById('comp_enabled').value === 'true',
+            min_complete_share: Number(document.getElementById('comp_min_share').value||1.0),
+            required_fields: splitCsv(document.getElementById('comp_fields').value),
+            summary_sentences_min: Number(document.getElementById('comp_sum_min').value||2),
+            summary_sentences_max: Number(document.getElementById('comp_sum_max').value||3),
+          };
+          cfg.output = cfg.output || { format: 'json', panel_enabled: true };
+          cfg.rules = cfg.rules || [];
+          return cfg;
+        }
 
         async function saveDraft(){
           const profile = document.getElementById('profile').value;
@@ -1660,27 +1660,28 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         """
         return _page_shell("质控规则", body, js)
 
-        @app.get("/admin/output", response_class=HTMLResponse)
-        def page_output(_: dict[str, str] = Depends(_auth_guard)) -> str:
-            body = """
-            <div class="layout">
-              <div class="card">
+    @app.get("/admin/output", response_class=HTMLResponse)
+    def page_output(_: dict[str, str] = Depends(_auth_guard)) -> str:
+        body = """
+        <div class="layout">
+          <div class="card">
             <label>规则 Profile</label>
             <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
             <label>启用开关</label><select id="enabled"><option value="true">true</option><option value="false">false</option></select>
 
-                <label>栏目顺序（A..G，逗号分隔，G 必须最后）</label>
-                <input id="sections_order" placeholder="A,B,C,D,E,F,G"/>
-                <label>栏目开关（sections.enabled）</label>
-                <div class="box">
-                  <label class="chk"><input type="checkbox" name="sec_enabled" value="A"/> A 今日要点</label>
-                  <label class="chk"><input type="checkbox" name="sec_enabled" value="B"/> B 分赛道速览</label>
-                  <label class="chk"><input type="checkbox" name="sec_enabled" value="C"/> C 技术平台雷达</label>
-                  <label class="chk"><input type="checkbox" name="sec_enabled" value="D"/> D 区域热力图</label>
-                  <label class="chk"><input type="checkbox" name="sec_enabled" value="E"/> E 趋势判断</label>
-                  <label class="chk"><input type="checkbox" name="sec_enabled" value="F"/> F 信息缺口</label>
-                  <label class="chk"><input type="checkbox" name="sec_enabled" value="G"/> G 质量指标</label>
-                </div>
+            <label>栏目顺序（A..G，逗号分隔，G 必须最后）</label>
+            <input id="sections_order" placeholder="A,B,C,D,E,F,G"/>
+            <label>栏目开关（sections.enabled）</label>
+            <div class="box">
+              <label class="chk"><input type="checkbox" name="sec_enabled" value="A"/> A 今日要点</label>
+              <label class="chk"><input type="checkbox" name="sec_enabled" value="B"/> B 分赛道速览</label>
+              <label class="chk"><input type="checkbox" name="sec_enabled" value="C"/> C 技术平台雷达</label>
+              <label class="chk"><input type="checkbox" name="sec_enabled" value="D"/> D 区域热力图</label>
+              <label class="chk"><input type="checkbox" name="sec_enabled" value="E"/> E 趋势判断</label>
+              <label class="chk"><input type="checkbox" name="sec_enabled" value="F"/> F 信息缺口</label>
+              <label class="chk"><input type="checkbox" name="sec_enabled" value="G"/> G 质量指标</label>
+            </div>
+
             <label>A 段条数最小/最大</label>
             <div class="row"><input id="a_min" type="number" min="1" max="30"/><input id="a_max" type="number" min="1" max="30"/></div>
             <label>A 段摘要句数（min/max）</label>
@@ -1694,21 +1695,21 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             <label>趋势判断条数（trends_count）</label><input id="trends_count" type="number" min="1" max="10"/>
             <label>缺口清单条数（gaps_count min/max）</label>
             <div class="row"><input id="gaps_min" type="number" min="1" max="10"/><input id="gaps_max" type="number" min="1" max="10"/></div>
-                <label>热力图区域（heatmap_regions，逗号分隔）</label>
-                <input id="heatmap_regions" placeholder="北美,欧洲,亚太,中国"/>
+            <label>热力图区域（heatmap_regions，逗号分隔）</label>
+            <input id="heatmap_regions" placeholder="北美,欧洲,亚太,中国"/>
 
-                <label>风格（style）</label>
-                <div class="row">
-                  <select id="style_lang" style="width:140px">
-                    <option value="zh">中文(zh)</option>
-                    <option value="en">英文(en)</option>
-                  </select>
-                  <select id="style_tone" class="grow">
-                    <option value="concise_decision">简洁可决策</option>
-                    <option value="neutral">中性</option>
-                  </select>
-                  <select id="style_no_fluff" style="width:140px"><option value="true">不写空话</option><option value="false">允许更长</option></select>
-                </div>
+            <label>风格（style）</label>
+            <div class="row">
+              <select id="style_lang" style="width:140px">
+                <option value="zh">中文(zh)</option>
+                <option value="en">英文(en)</option>
+              </select>
+              <select id="style_tone" class="grow">
+                <option value="concise_decision">简洁可决策</option>
+                <option value="neutral">中性</option>
+              </select>
+              <select id="style_no_fluff" style="width:140px"><option value="true">不写空话</option><option value="false">允许更长</option></select>
+            </div>
 
             <label>操作人</label><input id="created_by" value="rules-admin-ui"/>
             <div>
@@ -1732,37 +1733,37 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         </div>
         """
         js = """
-            let currentConfig = null;
-            let currentDraftId = null;
-            function splitCsv(s){ return (s||'').split(',').map(x=>x.trim()).filter(Boolean); }
-            function setChecks(name, values){
-              const set = new Set((values||[]).map(String));
-              for(const el of document.querySelectorAll(`input[name="${name}"]`)){
-                el.checked = set.has(String(el.value));
-              }
-            }
-            function getChecks(name){
-              const out = [];
-              for(const el of document.querySelectorAll(`input[name="${name}"]:checked`)){
-                out.push(String(el.value));
-              }
-              return out;
-            }
+        let currentConfig = null;
+        let currentDraftId = null;
+        function splitCsv(s){ return (s||'').split(',').map(x=>x.trim()).filter(Boolean); }
+        function setChecks(name, values){
+          const set = new Set((values||[]).map(String));
+          for(const el of document.querySelectorAll(`input[name="${name}"]`)){
+            el.checked = set.has(String(el.value));
+          }
+        }
+        function getChecks(name){
+          const out = [];
+          for(const el of document.querySelectorAll(`input[name="${name}"]:checked`)){
+            out.push(String(el.value));
+          }
+          return out;
+        }
 
-            async function loadActive(){
-              const profile = document.getElementById('profile').value;
-              const j = await api(`/admin/api/output_rules/active?profile=${encodeURIComponent(profile)}`);
-              if(!j||!j.ok){ document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
-              currentConfig = j.config_json;
-              document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
-              document.getElementById('enabled').value = String(!!(currentConfig.overrides||{}).enabled);
-              const d = currentConfig.defaults||{};
-              const order = (currentConfig.output && currentConfig.output.sections_order) ? currentConfig.output.sections_order : ['A','B','C','D','E','F','G'];
-              document.getElementById('sections_order').value = (order||[]).join(',');
-              const secs = (d.sections||[]).filter(x=>x && typeof x==='object');
-              const enabledSecs = secs.filter(s=>s.enabled).map(s=>String(s.id));
-              setChecks('sec_enabled', enabledSecs.length ? enabledSecs : ['A','B','C','D','E','F','G']);
-              const A = d.A||{};
+        async function loadActive(){
+          const profile = document.getElementById('profile').value;
+          const j = await api(`/admin/api/output_rules/active?profile=${encodeURIComponent(profile)}`);
+          if(!j||!j.ok){ document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
+          currentConfig = j.config_json;
+          document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
+          document.getElementById('enabled').value = String(!!(currentConfig.overrides||{}).enabled);
+          const d = currentConfig.defaults||{};
+          const order = (currentConfig.output && currentConfig.output.sections_order) ? currentConfig.output.sections_order : ['A','B','C','D','E','F','G'];
+          document.getElementById('sections_order').value = (order||[]).join(',');
+          const secs = (d.sections||[]).filter(x=>x && typeof x==='object');
+          const enabledSecs = secs.filter(s=>s.enabled).map(s=>String(s.id));
+          setChecks('sec_enabled', enabledSecs.length ? enabledSecs : ['A','B','C','D','E','F','G']);
+          const A = d.A||{};
           document.getElementById('a_min').value = (A.items_range||{}).min ?? 8;
           document.getElementById('a_max').value = (A.items_range||{}).max ?? 15;
           document.getElementById('sum_min').value = (A.summary_sentences||{}).min ?? 2;
@@ -1772,18 +1773,18 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('show_other_sources').value = String(!!A.show_other_sources);
           document.getElementById('show_source_link').value = String(!!A.show_source_link);
           document.getElementById('trends_count').value = (d.E||{}).trends_count ?? 3;
-              const gc = ((d.F||{}).gaps_count)||{};
-              document.getElementById('gaps_min').value = gc.min ?? 3;
-              document.getElementById('gaps_max').value = gc.max ?? 5;
-              document.getElementById('heatmap_regions').value = ((d.D||{}).heatmap_regions||['北美','欧洲','亚太','中国']).join(',');
-              const st = d.style || {};
-              document.getElementById('style_lang').value = st.language || 'zh';
-              document.getElementById('style_tone').value = st.tone || 'concise_decision';
-              document.getElementById('style_no_fluff').value = String(st.no_fluff ?? true);
-              document.getElementById('btnPublish').disabled = true;
-              currentDraftId = null;
-              document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
-            }
+          const gc = ((d.F||{}).gaps_count)||{};
+          document.getElementById('gaps_min').value = gc.min ?? 3;
+          document.getElementById('gaps_max').value = gc.max ?? 5;
+          document.getElementById('heatmap_regions').value = ((d.D||{}).heatmap_regions||['北美','欧洲','亚太','中国']).join(',');
+          const st = d.style || {};
+          document.getElementById('style_lang').value = st.language || 'zh';
+          document.getElementById('style_tone').value = st.tone || 'concise_decision';
+          document.getElementById('style_no_fluff').value = String(st.no_fluff ?? true);
+          document.getElementById('btnPublish').disabled = true;
+          currentDraftId = null;
+          document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
+        }
 
         function buildConfig(){
           const cfg = JSON.parse(JSON.stringify(currentConfig||{}));
@@ -1792,12 +1793,12 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           cfg.ruleset = 'output_rules';
           cfg.profile = document.getElementById('profile').value;
           cfg.overrides.enabled = document.getElementById('enabled').value === 'true';
-              cfg.defaults.format = cfg.defaults.format || 'plain_text';
-              cfg.output = cfg.output || {};
-              cfg.output.sections_order = splitCsv(document.getElementById('sections_order').value);
-              const enabledSet = new Set(getChecks('sec_enabled'));
-              cfg.defaults.sections = (cfg.output.sections_order||[]).map(id=>({id, enabled: enabledSet.has(String(id))}));
-              cfg.defaults.A = cfg.defaults.A || {};
+          cfg.defaults.format = cfg.defaults.format || 'plain_text';
+          cfg.output = cfg.output || {};
+          cfg.output.sections_order = splitCsv(document.getElementById('sections_order').value);
+          const enabledSet = new Set(getChecks('sec_enabled'));
+          cfg.defaults.sections = (cfg.output.sections_order||[]).map(id=>({id, enabled: enabledSet.has(String(id))}));
+          cfg.defaults.A = cfg.defaults.A || {};
           cfg.defaults.A.items_range = { min: Number(document.getElementById('a_min').value||8), max: Number(document.getElementById('a_max').value||15) };
           cfg.defaults.A.sort_by = 'importance';
           cfg.defaults.A.summary_sentences = { min: Number(document.getElementById('sum_min').value||2), max: Number(document.getElementById('sum_max').value||3) };
@@ -1807,16 +1808,16 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           cfg.defaults.A.show_source_link = document.getElementById('show_source_link').value === 'true';
           cfg.defaults.E = { trends_count: Number(document.getElementById('trends_count').value||3) };
           cfg.defaults.F = { gaps_count: { min: Number(document.getElementById('gaps_min').value||3), max: Number(document.getElementById('gaps_max').value||5) } };
-              cfg.defaults.D = { heatmap_regions: splitCsv(document.getElementById('heatmap_regions').value) };
-              cfg.defaults.style = {
-                language: document.getElementById('style_lang').value || 'zh',
-                tone: document.getElementById('style_tone').value || 'concise_decision',
-                no_fluff: document.getElementById('style_no_fluff').value === 'true',
-              };
-              cfg.defaults.constraints = { g_must_be_last: true, a_to_f_must_not_include_quality_metrics: true };
-              cfg.rules = cfg.rules || [];
-              return cfg;
-            }
+          cfg.defaults.D = { heatmap_regions: splitCsv(document.getElementById('heatmap_regions').value) };
+          cfg.defaults.style = {
+            language: document.getElementById('style_lang').value || 'zh',
+            tone: document.getElementById('style_tone').value || 'concise_decision',
+            no_fluff: document.getElementById('style_no_fluff').value === 'true',
+          };
+          cfg.defaults.constraints = { g_must_be_last: true, a_to_f_must_not_include_quality_metrics: true };
+          cfg.rules = cfg.rules || [];
+          return cfg;
+        }
 
         async function saveDraft(){
           const profile = document.getElementById('profile').value;

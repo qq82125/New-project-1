@@ -72,6 +72,93 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(cmd, ["python3", "scripts/generate_ivd_report.py"])
             self.assertNotIn("send_mail_icloud.sh", " ".join(cmd))
 
+    @patch("app.workers.dryrun.RuleEngine")
+    @patch("app.workers.dryrun.subprocess.run")
+    def test_qc_apac_share_auto_topup_triggers(self, mock_run, mock_engine_cls) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project_root = Path(td)
+            mock_engine = mock_engine_cls.return_value
+            mock_engine.project_root = project_root
+            mock_engine.build_decision.return_value = {
+                "rules_version": {"email": "2.0.0", "content": "2.0.0", "qc": "2.0.0", "output": "2.0.0"},
+                "content_decision": {},
+                "qc_decision": {
+                    "min_24h_items": 1,
+                    "apac_min_share": 0.4,
+                    "china_min_share": 0.0,
+                    "7d_topup_limit": 10,
+                    "required_sources_checklist": [],
+                    "fail_policy": {"mode": "auto_topup", "topup_prefer": []},
+                },
+                "output_decision": {"A": {"items_range": {"min": 3, "max": 15}}},
+                "email_decision": {"schedule": {"timezone": "Asia/Shanghai"}},
+                "explain": {},
+            }
+
+            def _side_effect(*args, **kwargs):
+                env = kwargs.get("env") or {}
+                artifacts_dir = Path(env["DRYRUN_ARTIFACTS_DIR"])
+                artifacts_dir.mkdir(parents=True, exist_ok=True)
+                # Provide 7d pool items from APAC/CN to allow auto-topup to raise APAC share.
+                (artifacts_dir / "clustered_items.json").write_text(
+                    json.dumps(
+                        [
+                            {
+                                "window_tag": "7天补充",
+                                "title": "CN regulatory update",
+                                "summary_cn": "s",
+                                "published_at": "2026-02-10",
+                                "source": "NMPA",
+                                "url": "https://example.com/cn-1",
+                                "region": "中国",
+                                "lane": "其他",
+                                "event_type": "监管审批与指南",
+                                "platform": "跨平台/未标注",
+                            },
+                            {
+                                "window_tag": "7天补充",
+                                "title": "APAC regulatory update",
+                                "summary_cn": "s",
+                                "published_at": "2026-02-11",
+                                "source": "PMDA",
+                                "url": "https://example.com/apac-1",
+                                "region": "亚太",
+                                "lane": "其他",
+                                "event_type": "监管审批与指南",
+                                "platform": "跨平台/未标注",
+                            },
+                        ],
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+
+                class _R:
+                    returncode = 0
+                    stdout = (
+                        "全球IVD晨报 - 2026-02-16\n\n"
+                        "A. 今日要点（8-15条，按重要性排序）\n"
+                        "1) [24小时内] NA item\n"
+                        "摘要：s\n"
+                        "发布日期：2026-02-16 08:30 CST\n"
+                        "来源：Test Source | https://example.com/na\n"
+                        "地区：北美\n"
+                        "赛道：其他\n"
+                        "事件类型：政策与市场动态\n"
+                        "技术平台：跨平台/未标注\n\n"
+                        "B. 分赛道速览（肿瘤/感染/生殖遗传/其他）\n"
+                    )
+
+                return _R()
+
+            mock_run.side_effect = _side_effect
+
+            result = run_dryrun(profile="enhanced", report_date="2026-02-16")
+            self.assertEqual(result["qc"]["fail_policy"]["action_taken"], "auto_topup")
+            self.assertGreaterEqual(float(result["qc"]["panel"]["apac_share"]), 0.4)
+            self.assertTrue(result["qc"]["pass"])
+
     @patch("app.workers.replay.RuleEngine")
     @patch("app.workers.replay.subprocess.run")
     def test_replay_uses_artifacts_only_and_no_send(self, mock_run, mock_engine_cls) -> None:

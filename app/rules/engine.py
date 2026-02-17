@@ -224,6 +224,9 @@ class RuleEngine:
             "content_trim",
             "sections",
         }
+        # Backward-compatible: legacy content_rules historically had `output.sections`.
+        # We still forbid delivery/schedule-like keys, but allow `sections` under content_rules.
+        content_email_forbid = set(qc_forbid) - {"sections"}
         content_forbid = {
             # content-ish keys (sources/filters/candidates)
             "sources",
@@ -253,7 +256,7 @@ class RuleEngine:
         elif ruleset == "email_rules":
             bad = self._find_forbidden_keys(selection.data, content_forbid)
         elif ruleset == "content_rules":
-            bad = self._find_forbidden_keys(selection.data, qc_forbid)
+            bad = self._find_forbidden_keys(selection.data, content_email_forbid)
         else:
             bad = []
 
@@ -390,6 +393,22 @@ class RuleEngine:
             content_profile=profile,
             fallback_on_missing=False,
         )
+        qc = self.select_profile(
+            "qc_rules",
+            profile,
+            fallback_on_missing=False,
+        )
+        output = self.select_profile(
+            "output_rules",
+            profile,
+            fallback_on_missing=False,
+        )
+
+        # Validate boundary constraints during validate to catch cross-coupling early.
+        self._boundary_check(email)
+        self._boundary_check(content)
+        self._boundary_check(qc)
+        self._boundary_check(output)
         return {
             "profile": profile,
             "validated": [
@@ -404,6 +423,18 @@ class RuleEngine:
                     "profile": content.profile,
                     "version": content.version,
                     "path": str(content.path),
+                },
+                {
+                    "ruleset": qc.ruleset,
+                    "profile": qc.profile,
+                    "version": qc.version,
+                    "path": str(qc.path),
+                },
+                {
+                    "ruleset": output.ruleset,
+                    "profile": output.profile,
+                    "version": output.version,
+                    "path": str(output.path),
                 },
             ],
         }

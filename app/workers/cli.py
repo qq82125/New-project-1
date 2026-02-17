@@ -4,8 +4,9 @@ import json
 import sys
 from subprocess import CalledProcessError
 
-from app.rules.errors import RuleEngineError
+from app.rules.errors import RULES_003_RULESET_MISMATCH, RuleEngineError
 from app.rules.engine import RuleEngine
+from app.rules.models import RuleSelection
 from app.services.source_registry import (
     SourceRegistryError,
     diff_sources_for_profiles,
@@ -38,10 +39,31 @@ def cmd_rules_validate(argv: list[str]) -> int:
         return 0
 
     validated: list[dict[str, str]] = []
-    for ruleset in ("email_rules", "content_rules"):
-        rules_dir = engine.rules_root / ruleset
-        for path in sorted(rules_dir.glob("*.y*ml")) + sorted(rules_dir.glob("*.json")):
-            selection = engine.load(ruleset, path.stem)
+    for ruleset in ("email_rules", "content_rules", "qc_rules", "output_rules"):
+        # Validate both workspace-published rules and repo fallbacks.
+        dirs = [engine.rules_root / ruleset, engine.project_root / "rules" / ruleset]
+        seen: set[str] = set()
+        paths = []
+        for d in dirs:
+            if not d.exists():
+                continue
+            for p in sorted(d.glob("*.y*ml")) + sorted(d.glob("*.json")):
+                sp = str(p)
+                if sp in seen:
+                    continue
+                seen.add(sp)
+                paths.append(p)
+        for path in paths:
+            data = engine._load_file(path)
+            if data.get("ruleset") != ruleset:
+                raise RuleEngineError(
+                    RULES_003_RULESET_MISMATCH,
+                    f"file={path} ruleset={data.get('ruleset')} expected={ruleset}",
+                )
+            engine.validate(ruleset, data)
+            # Apply boundary assertions as part of validation.
+            engine._boundary_check(RuleSelection(ruleset, str(data.get("profile", path.stem)), str(data.get("version", "")), path, data))
+            selection = RuleSelection(ruleset, str(data.get("profile", path.stem)), str(data.get("version", "")), path, data)
             validated.append(
                 {
                     "ruleset": selection.ruleset,

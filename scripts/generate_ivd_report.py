@@ -7,6 +7,8 @@ Notes:
   briefing on time. You can extend sources and tagging rules incrementally.
 """
 
+from __future__ import annotations
+
 import datetime as dt
 import json
 import math
