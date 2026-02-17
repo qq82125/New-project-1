@@ -1,0 +1,107 @@
+ruleset: content_rules
+version: "2.0.0"
+profile: strict.v2
+description: "严格采集规则（需显式启用），提升监管与亚太覆盖。"
+
+feature_flags:
+  enable_new_content_rules: true
+  enable_explain: true
+  enforce_source_priority: true
+
+compatibility:
+  backward_compatible: true
+  fallback_to_legacy_on_error: true
+
+collection:
+  date_tz: Asia/Shanghai
+  primary_window_hours: 24
+  fallback_window_days: 7
+  min_items: 10
+  max_items: 15
+  topup_if_24h_lt: 10
+
+coverage:
+  tracks:
+    - 肿瘤检测
+    - 感染检测
+    - 生殖与遗传检测
+    - 其他
+  platforms:
+    - NGS
+    - PCR
+    - 数字PCR
+    - 流式细胞
+    - 质谱
+    - 免疫诊断（化学发光/ELISA/IHC等）
+    - POCT/分子POCT
+    - 微流控/单分子
+    - 跨平台/未标注
+  event_types:
+    - 监管审批与指南
+    - 并购融资/IPO与合作
+    - 注册上市/产品发布
+    - 临床与科研证据
+    - 支付与招采
+    - 政策与市场动态
+  region_targets:
+    apac_min_share: 0.45
+    china_min_share: 0.20
+
+quality_gates:
+  dedupe:
+    daily_max_repeat_rate: 0.20
+    recent_7d_max_repeat_rate: 0.35
+  source_requirements:
+    must_check:
+      - NMPA
+      - CMDE
+      - CCGP
+      - TGA
+      - HSA
+      - PMDA/MHLW
+      - MFDS
+    priority_order:
+      - 官方监管
+      - 公司公告
+      - 交易所公告
+      - 权威媒体
+
+sources:
+  feed_timeout_sec: 12
+  media:
+    - name: Fierce Biotech
+      url: https://www.fiercebiotech.com/rss/xml
+      region: 北美
+    - name: Fierce Healthcare
+      url: https://www.fiercehealthcare.com/rss/xml
+      region: 北美
+    - name: MedTech Dive
+      url: https://www.medtechdive.com/feeds/news/
+      region: 北美
+    - name: BioPharma Dive
+      url: https://www.biopharmadive.com/feeds/news/
+      region: 北美
+    - name: Reuters Healthcare
+      url: https://www.reutersagency.com/feed/?best-topics=healthcare-pharmaceuticals
+      region: 北美
+  regulatory:
+    - name: FDA MedWatch
+      url: https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/medwatch/rss.xml
+      region: 北美
+    - name: TGA Safety Alerts
+      url: https://www.tga.gov.au/feeds/alert/safety-alerts.xml
+      region: 亚太
+    - name: TGA Product Recalls
+      url: https://www.tga.gov.au/feeds/alert/product-recalls.xml
+      region: 亚太
+
+output:
+  sections:
+    - A
+    - B
+    - C
+    - D
+    - E
+    - F
+    - G
+  quality_section_only_at_end: true

@@ -14,6 +14,20 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="${SCRIPT_DIR}/logs"
 LOG_FILE="${LOG_DIR}/mail_send.log"
 
+encode_rfc2047() {
+  # Encode non-ASCII headers (Subject / From name) for broad mailbox compatibility.
+  # Reads UTF-8 text from stdin, prints RFC2047 encoded-word if needed.
+  python3 - <<'PY'
+import sys
+from email.header import Header
+
+s = sys.stdin.read()
+if s.endswith("\n"):
+    s = s[:-1]
+print(str(Header(s, "utf-8")))
+PY
+}
+
 if [ ! -f "$ENV_FILE" ]; then
   echo "Missing $ENV_FILE" >&2
   exit 1
@@ -31,16 +45,20 @@ source "$ENV_FILE"
 TMP_EML="$(mktemp)"
 trap 'rm -f "$TMP_EML"' EXIT
 
+ENC_FROM_NAME="$(printf '%s' "${SMTP_FROM_NAME:-}" | encode_rfc2047)"
+ENC_SUBJECT="$(printf '%s' "$SUBJECT" | encode_rfc2047)"
+
 {
-  printf 'From: %s <%s>\n' "$SMTP_FROM_NAME" "$SMTP_FROM"
-  printf 'To: %s\n' "$TO_EMAIL"
-  printf 'Subject: %s\n' "$SUBJECT"
+  printf 'From: %s <%s>\r\n' "$ENC_FROM_NAME" "$SMTP_FROM"
+  printf 'To: %s\r\n' "$TO_EMAIL"
+  printf 'Subject: %s\r\n' "$ENC_SUBJECT"
+  printf 'Date: %s\r\n' "$(date -R)"
   # Stable-ish Message-ID helps mailbox threading and tracking.
-  printf 'Message-ID: <%s.%s@%s>\n' "$(date +%s)" "$RANDOM" "${SMTP_USER#*@}"
-  printf 'MIME-Version: 1.0\n'
-  printf 'Content-Type: text/plain; charset=UTF-8\n'
-  printf 'Content-Transfer-Encoding: 8bit\n'
-  printf '\n'
+  printf 'Message-ID: <%s.%s@%s>\r\n' "$(date +%s)" "$RANDOM" "${SMTP_USER#*@}"
+  printf 'MIME-Version: 1.0\r\n'
+  printf 'Content-Type: text/plain; charset=UTF-8\r\n'
+  printf 'Content-Transfer-Encoding: 8bit\r\n'
+  printf '\r\n'
   cat "$BODY_FILE"
 } > "$TMP_EML"
 
@@ -72,13 +90,15 @@ while :; do
   set -e
 
   if [ "$code" -eq 0 ]; then
-    printf '[%s] SENT to=%s subject=%q\n' "$(ts)" "$TO_EMAIL" "$SUBJECT" >>"$LOG_FILE"
+    printf '[%s] SENT to=%s subject=%s\n' "$(ts)" "$TO_EMAIL" "$SUBJECT" >>"$LOG_FILE"
     echo "SENT"
     exit 0
   fi
 
-  printf '[%s] FAIL attempt=%s/%s code=%s to=%s subject=%q err=%q\n' \
-    "$(ts)" "$attempt" "$SMTP_RETRIES" "$code" "$TO_EMAIL" "$SUBJECT" "$out" >>"$LOG_FILE"
+  # Keep log UTF-8 readable; errors may contain newlines.
+  out_one_line="$(printf '%s' "$out" | tr '\n' ' ' | sed 's/[[:space:]]\\{1,\\}/ /g')"
+  printf '[%s] FAIL attempt=%s/%s code=%s to=%s subject=%s err=%s\n' \
+    "$(ts)" "$attempt" "$SMTP_RETRIES" "$code" "$TO_EMAIL" "$SUBJECT" "$out_one_line" >>"$LOG_FILE"
 
   if [ "$attempt" -ge "$SMTP_RETRIES" ]; then
     echo "$out" >&2

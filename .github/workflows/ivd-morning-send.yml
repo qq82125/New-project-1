@@ -24,7 +24,11 @@ jobs:
       - name: Install deps
         run: |
           python3 -m pip install --quiet --upgrade pip
-          python3 -m pip install --quiet feedparser requests beautifulsoup4 lxml
+          python3 -m pip install --quiet feedparser requests beautifulsoup4 lxml pyyaml
+
+      - name: Validate rules profiles
+        run: |
+          python3 -m app.workers.cli rules:validate
 
       - name: Generate report
         env:

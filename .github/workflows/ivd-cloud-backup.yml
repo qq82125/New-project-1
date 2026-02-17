@@ -21,6 +21,15 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install deps
+        run: |
+          python3 -m pip install --quiet --upgrade pip
+          python3 -m pip install --quiet pyyaml
+
+      - name: Validate rules profiles
+        run: |
+          python3 -m app.workers.cli rules:validate
+
       - name: Run cloud backup sender
         env:
           SMTP_HOST: smtp.mail.me.com

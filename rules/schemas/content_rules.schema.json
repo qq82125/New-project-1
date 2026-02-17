@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/content_rules.schema.json",
+  "title": "Content Rules Schema",
+  "type": "object",
+  "required": [
+    "ruleset",
+    "version",
+    "profile",
+    "feature_flags",
+    "compatibility",
+    "collection",
+    "coverage",
+    "quality_gates",
+    "sources",
+    "output"
+  ],
+  "properties": {
+    "ruleset": {
+      "type": "string",
+      "const": "content_rules"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "feature_flags": {
+      "type": "object",
+      "required": ["enable_new_content_rules"],
+      "properties": {
+        "enable_new_content_rules": { "type": "boolean" },
+        "enable_explain": { "type": "boolean" },
+        "enforce_source_priority": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "compatibility": {
+      "type": "object",
+      "required": [
+        "backward_compatible",
+        "fallback_to_legacy_on_error"
+      ],
+      "properties": {
+        "backward_compatible": { "type": "boolean" },
+        "fallback_to_legacy_on_error": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "collection": {
+      "type": "object",
+      "required": [
+        "date_tz",
+        "primary_window_hours",
+        "fallback_window_days",
+        "min_items",
+        "max_items",
+        "topup_if_24h_lt"
+      ],
+      "properties": {
+        "date_tz": { "type": "string", "minLength": 1 },
+        "primary_window_hours": { "type": "integer", "minimum": 1 },
+        "fallback_window_days": { "type": "integer", "minimum": 1 },
+        "min_items": { "type": "integer", "minimum": 1 },
+        "max_items": { "type": "integer", "minimum": 1 },
+        "topup_if_24h_lt": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["tracks", "platforms", "event_types", "region_targets"],
+      "properties": {
+        "tracks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "platforms": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "event_types": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "region_targets": {
+          "type": "object",
+          "required": ["apac_min_share"],
+          "properties": {
+            "apac_min_share": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+            "china_min_share": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "quality_gates": {
+      "type": "object",
+      "required": ["dedupe", "source_requirements"],
+      "properties": {
+        "dedupe": {
+          "type": "object",
+          "required": ["daily_max_repeat_rate", "recent_7d_max_repeat_rate"],
+          "properties": {
+            "daily_max_repeat_rate": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+            "recent_7d_max_repeat_rate": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+          },
+          "additionalProperties": true
+        },
+        "source_requirements": {
+          "type": "object",
+          "required": ["must_check"],
+          "properties": {
+            "must_check": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string" }
+            },
+            "priority_order": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "sources": {
+      "type": "object",
+      "required": ["feed_timeout_sec"],
+      "properties": {
+        "feed_timeout_sec": { "type": "integer", "minimum": 1 },
+        "media": { "$ref": "#/$defs/sourceList" },
+        "regulatory": { "$ref": "#/$defs/sourceList" }
+      },
+      "additionalProperties": true
+    },
+    "output": {
+      "type": "object",
+      "required": ["sections", "quality_section_only_at_end"],
+      "properties": {
+        "sections": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "enum": ["A", "B", "C", "D", "E", "F", "G"] }
+        },
+        "quality_section_only_at_end": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "sourceItem": {
+      "type": "object",
+      "required": ["name", "url", "region"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "minLength": 1 },
+        "region": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    },
+    "sourceList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sourceItem" }
+    }
+  }
+}
