@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -99,6 +100,44 @@ def _validate_schema(
                 errors.extend(_validate_schema(data[k], subschema, f"{path}.{k}", root_schema))
 
     return errors
+
+
+def _deep_merge_dict(dst: dict[str, Any], src: dict[str, Any]) -> dict[str, Any]:
+    out = deepcopy(dst)
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge_dict(out[k], v)
+        else:
+            out[k] = deepcopy(v)
+    return out
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _set_path(obj: dict[str, Any], path: str, value: Any) -> None:
+    parts = path.split(".")
+    cur: Any = obj
+    for p in parts[:-1]:
+        if p not in cur or not isinstance(cur[p], dict):
+            cur[p] = {}
+        cur = cur[p]
+    cur[parts[-1]] = value
+
+
+def _get_path(obj: dict[str, Any], path: str) -> tuple[bool, Any]:
+    parts = path.split(".")
+    cur: Any = obj
+    for p in parts:
+        if not isinstance(cur, dict) or p not in cur:
+            return False, None
+        cur = cur[p]
+    return True, cur
 
 
 class RuleEngine:
@@ -221,3 +260,361 @@ class RuleEngine:
             content_version=content.version,
             notes=notes or [],
         )
+
+    def validate_profile_pair(self, profile: str) -> dict[str, Any]:
+        email, content = self.load_pair(
+            email_profile=profile,
+            content_profile=profile,
+            fallback_on_missing=False,
+        )
+        return {
+            "profile": profile,
+            "validated": [
+                {
+                    "ruleset": email.ruleset,
+                    "profile": email.profile,
+                    "version": email.version,
+                    "path": str(email.path),
+                },
+                {
+                    "ruleset": content.ruleset,
+                    "profile": content.profile,
+                    "version": content.version,
+                    "path": str(content.path),
+                },
+            ],
+        }
+
+    def _flatten_sources(self, defaults: dict[str, Any]) -> list[dict[str, Any]]:
+        sources = defaults.get("sources", {}) if isinstance(defaults.get("sources"), dict) else {}
+        out: list[dict[str, Any]] = []
+        for group, items in sources.items():
+            for item in _as_list(items):
+                if not isinstance(item, dict):
+                    continue
+                s = deepcopy(item)
+                s["group"] = group
+                out.append(s)
+        return out
+
+    def _base_content_decision(self, content: RuleSelection) -> dict[str, Any]:
+        defaults = content.data.get("defaults", {})
+        overrides = content.data.get("overrides", {})
+        time_window = defaults.get("time_window", {})
+
+        return {
+            "allow_sources": self._flatten_sources(defaults),
+            "deny_sources": [],
+            "keyword_sets": {
+                "packs": _as_list(overrides.get("keywords_pack")),
+                "include_keywords": [],
+                "exclude_keywords": _as_list(overrides.get("exclude_terms")),
+            },
+            "categories_map": {
+                "tracks": _as_list(defaults.get("coverage_tracks")),
+                "lane_mapping": {},
+                "platform_mapping": {},
+                "event_mapping": {},
+            },
+            "dedupe_window": {
+                "primary_hours": time_window.get("primary_hours", 24),
+                "fallback_days": time_window.get("fallback_days", 7),
+            },
+            "item_limit": deepcopy(defaults.get("item_limit", {})),
+            "region_filter": deepcopy(defaults.get("region_filter", {})),
+            "confidence": {
+                "min_confidence": float(overrides.get("min_confidence", 0.0) or 0.0),
+                "ranking": {},
+            },
+        }
+
+    def _base_email_decision(self, email: RuleSelection) -> dict[str, Any]:
+        defaults = email.data.get("defaults", {})
+        overrides = email.data.get("overrides", {})
+        output = email.data.get("output", {})
+        send_window = defaults.get("send_window", {})
+
+        subject_template = str(defaults.get("subject_template", "全球IVD晨报 - {{date}}"))
+        subject_prefix = str(overrides.get("subject_prefix", ""))
+        if overrides.get("enabled") and subject_prefix:
+            subject_template = f"{subject_prefix}{subject_template}"
+
+        return {
+            "subject_template": subject_template,
+            "sections": _as_list(output.get("sections")),
+            "recipients": [defaults.get("recipient", "${TO_EMAIL}")],
+            "schedule": {
+                "timezone": defaults.get("timezone", "Asia/Shanghai"),
+                "hour": int(send_window.get("hour", 8)),
+                "minute": int(send_window.get("minute", 30)),
+            },
+            "thresholds": {},
+            "retry": deepcopy(defaults.get("retry", {})),
+            "dedupe_window_hours": int(overrides.get("dedupe_window_hours", 24) or 24),
+            "charts": {
+                "enabled": bool(output.get("charts_enabled", False)),
+                "types": _as_list(output.get("chart_types")),
+            },
+        }
+
+    def _effect_paths(
+        self,
+        ruleset: str,
+        rule_type: str,
+        params: dict[str, Any],
+    ) -> list[tuple[str, Any]]:
+        if ruleset == "content_rules":
+            if rule_type == "source_priority":
+                return [("source_priority", params)]
+            if rule_type == "include_filter":
+                return [("keyword_sets.include_keywords", params.get("include_keywords", params))]
+            if rule_type == "exclude_filter":
+                return [
+                    ("keyword_sets.exclude_keywords", params.get("exclude_keywords", params)),
+                    ("deny_sources", _as_list(params.get("deny_sources"))),
+                ]
+            if rule_type == "lane_mapping":
+                return [("categories_map.lane_mapping", params)]
+            if rule_type == "platform_mapping":
+                return [("categories_map.platform_mapping", params)]
+            if rule_type == "event_mapping":
+                return [("categories_map.event_mapping", params)]
+            if rule_type == "dedupe":
+                return [("dedupe_window", params)]
+            if rule_type == "confidence_ranking":
+                return [("confidence.ranking", params)]
+            if rule_type == "region_filter":
+                return [("region_filter", params)]
+
+        if ruleset == "email_rules":
+            if rule_type == "subject_template":
+                return [("subject_template", params.get("template", ""))]
+            if rule_type == "recipient_policy":
+                out = []
+                recipients = params.get("recipients")
+                if recipients is None:
+                    default_to = params.get("default_to")
+                    if default_to:
+                        recipients = [default_to]
+                if recipients is not None:
+                    out.append(("recipients", _as_list(recipients)))
+                return out
+            if rule_type == "dedupe":
+                return [("dedupe_window_hours", int(params.get("window_hours", 24) or 24))]
+            if rule_type == "retry_policy":
+                return [("retry", params)]
+            if rule_type == "backup_policy":
+                return [("backup", params)]
+            if rule_type == "content_format":
+                out = []
+                if "section_priority" in params:
+                    out.append(("sections", _as_list(params.get("section_priority"))))
+                out.append(("thresholds", params))
+                return out
+            if rule_type == "charts_toggle":
+                out = [("charts.enabled", bool(params.get("charts_enabled", False)))]
+                if "chart_types" in params:
+                    out.append(("charts.types", _as_list(params.get("chart_types"))))
+                return out
+
+        return []
+
+    def _apply_one(
+        self,
+        decision: dict[str, Any],
+        path: str,
+        value: Any,
+        merge_strategy: str,
+    ) -> Any:
+        exists, old = _get_path(decision, path)
+        if not exists:
+            _set_path(decision, path, deepcopy(value))
+            return deepcopy(value)
+
+        if merge_strategy == "append":
+            old_list = _as_list(old)
+            new_list = _as_list(value)
+            merged = old_list[:]
+            for i in new_list:
+                if i not in merged:
+                    merged.append(i)
+            _set_path(decision, path, merged)
+            return merged
+
+        if merge_strategy == "merge" and isinstance(old, dict) and isinstance(value, dict):
+            merged = _deep_merge_dict(old, value)
+            _set_path(decision, path, merged)
+            return merged
+
+        _set_path(decision, path, deepcopy(value))
+        return deepcopy(value)
+
+    def _resolve_rules(
+        self,
+        selection: RuleSelection,
+        decision: dict[str, Any],
+        *,
+        default_merge: str,
+        explain: dict[str, Any],
+        provenance: dict[str, dict[str, Any]],
+    ) -> None:
+        raw_rules = selection.data.get("rules", [])
+        rules = [r for r in raw_rules if isinstance(r, dict)]
+        indexed = list(enumerate(rules))
+        indexed.sort(key=lambda x: (int(x[1].get("priority", 0)), x[0]))
+
+        for idx, rule in indexed:
+            rule_id = str(rule.get("id", f"rule_{idx}"))
+            enabled = bool(rule.get("enabled", False))
+            rule_type = str(rule.get("type", "unknown"))
+            priority = int(rule.get("priority", 0))
+            params = rule.get("params", {})
+            if not isinstance(params, dict):
+                params = {"value": params}
+
+            if not enabled:
+                explain["skipped_rules"].append(
+                    {
+                        "ruleset": selection.ruleset,
+                        "rule_id": rule_id,
+                        "type": rule_type,
+                        "priority": priority,
+                        "reason": "disabled",
+                    }
+                )
+                continue
+
+            merge_strategy = str(rule.get("merge_strategy") or rule.get("merge") or default_merge)
+            if merge_strategy not in ("last_match", "append", "merge"):
+                merge_strategy = default_merge
+
+            effects = self._effect_paths(selection.ruleset, rule_type, params)
+            if not effects:
+                explain["skipped_rules"].append(
+                    {
+                        "ruleset": selection.ruleset,
+                        "rule_id": rule_id,
+                        "type": rule_type,
+                        "priority": priority,
+                        "reason": "no_effect_mapping",
+                    }
+                )
+                continue
+
+            affected_fields: list[str] = []
+            for path, value in effects:
+                exists, old = _get_path(decision, path)
+                if exists and path in provenance:
+                    explain["conflicts"].append(
+                        {
+                            "field": path,
+                            "previous_rule": provenance[path]["rule_id"],
+                            "current_rule": rule_id,
+                            "strategy": merge_strategy,
+                            "previous_value": old,
+                        }
+                    )
+
+                new_value = self._apply_one(decision, path, value, merge_strategy)
+                provenance[path] = {
+                    "rule_id": rule_id,
+                    "priority": priority,
+                    "ruleset": selection.ruleset,
+                    "value": deepcopy(new_value),
+                }
+                if explain["conflicts"] and explain["conflicts"][-1].get("field") == path:
+                    explain["conflicts"][-1]["resolved_value"] = deepcopy(new_value)
+                affected_fields.append(path)
+
+            if rule_type == "exclude_filter":
+                reason = "命中排除规则，更新排除关键词或拒绝源集合"
+            elif rule_type == "include_filter":
+                reason = "命中包含规则，扩展关键词集合"
+            else:
+                reason = "命中规则并更新决策字段"
+
+            explain["applied_rules"].append(
+                {
+                    "ruleset": selection.ruleset,
+                    "rule_id": rule_id,
+                    "type": rule_type,
+                    "priority": priority,
+                    "merge_strategy": merge_strategy,
+                    "affected_fields": affected_fields,
+                    "reason": reason,
+                }
+            )
+
+    def build_decision(
+        self,
+        profile: str,
+        *,
+        conflict_strategy: str = "priority_last_match",
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
+        email, content = self.load_pair(
+            email_profile=profile,
+            content_profile=profile,
+            fallback_on_missing=False,
+        )
+
+        default_merge = "last_match"
+        if conflict_strategy == "priority_append":
+            default_merge = "append"
+        if conflict_strategy == "priority_merge":
+            default_merge = "merge"
+
+        content_decision = self._base_content_decision(content)
+        email_decision = self._base_email_decision(email)
+
+        explain_obj: dict[str, Any] = {
+            "run_id": run_id or uuid.uuid4().hex[:12],
+            "profile": profile,
+            "conflict_strategy": conflict_strategy,
+            "applied_rules": [],
+            "skipped_rules": [],
+            "conflicts": [],
+        }
+
+        provenance: dict[str, dict[str, Any]] = {}
+        self._resolve_rules(
+            content,
+            content_decision,
+            default_merge=default_merge,
+            explain=explain_obj,
+            provenance=provenance,
+        )
+        self._resolve_rules(
+            email,
+            email_decision,
+            default_merge=default_merge,
+            explain=explain_obj,
+            provenance=provenance,
+        )
+
+        explain_obj["summary"] = {
+            "applied_count": len(explain_obj["applied_rules"]),
+            "skipped_count": len(explain_obj["skipped_rules"]),
+            "conflict_count": len(explain_obj["conflicts"]),
+            "why_included": [
+                r["rule_id"]
+                for r in explain_obj["applied_rules"]
+                if r.get("type") in ("include_filter", "source_priority")
+            ],
+            "why_excluded": [
+                r["rule_id"] for r in explain_obj["applied_rules"] if r.get("type") == "exclude_filter"
+            ],
+        }
+
+        return {
+            "run_id": explain_obj["run_id"],
+            "profile": profile,
+            "rules_version": {
+                "email": email.version,
+                "content": content.version,
+            },
+            "conflict_strategy": conflict_strategy,
+            "content_decision": content_decision,
+            "email_decision": email_decision,
+            "explain": explain_obj,
+        }

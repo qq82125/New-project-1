@@ -3,63 +3,66 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import uuid
-from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
-from app.adapters.email_rules_adapter import to_email_runtime
 from app.rules.engine import RuleEngine
 
 
-def _today_str(tz_name: str) -> str:
-    return datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%d")
+def _to_bool(v: bool | str | None, default: bool = False) -> bool:
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return default
+    s = str(v).strip().lower()
+    if s in ("1", "true", "yes", "y", "on"):
+        return True
+    if s in ("0", "false", "no", "n", "off"):
+        return False
+    return default
 
 
 def run_replay(
-    replay_date: str | None = None,
-    run_id: str | None = None,
-    send: bool = False,
-    email_profile: str | None = None,
-    content_profile: str | None = None,
+    run_id: str,
+    send: bool | str = False,
+    profile: str | None = None,
 ) -> dict:
+    if not run_id:
+        raise ValueError("run_id is required")
+
     engine = RuleEngine()
-    email_rule, content_rule = engine.load_pair(email_profile, content_profile)
-    email_runtime = to_email_runtime(email_rule)
-    tz_name = email_runtime.get("date_tz", "Asia/Shanghai")
-    replay_date = replay_date or _today_str(tz_name)
-    run_id = run_id or f"replay-{uuid.uuid4().hex[:10]}"
-
     project_root = engine.project_root
-    reports_dir = project_root / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    out_file = reports_dir / f"ivd_morning_{replay_date}_replay.txt"
-    source_file = reports_dir / f"ivd_morning_{replay_date}.txt"
+    artifacts_dir = project_root / "artifacts" / run_id
+    explain_file = artifacts_dir / "run_id.json"
+    preview_file = artifacts_dir / "newsletter_preview.md"
+    items_file = artifacts_dir / "items.json"
 
-    env = os.environ.copy()
-    env["REPORT_TZ"] = tz_name
-    env["REPORT_DATE"] = replay_date
-    env["RUN_ID"] = run_id
-    env["RULES_EMAIL_PROFILE"] = email_rule.profile
-    env["RULES_CONTENT_PROFILE"] = content_rule.profile
-    env["RULES_EMAIL_VERSION"] = email_rule.version
-    env["RULES_CONTENT_VERSION"] = content_rule.version
+    if not explain_file.exists() or not preview_file.exists() or not items_file.exists():
+        raise FileNotFoundError(f"replay artifacts not complete: {artifacts_dir}")
 
-    replay_source = "generated_now"
-    if source_file.exists():
-        out_file.write_text(source_file.read_text(encoding="utf-8"), encoding="utf-8")
-        replay_source = "existing_report_snapshot"
-    else:
-        gen_cmd = ["python3", "scripts/generate_ivd_report.py"]
-        with out_file.open("w", encoding="utf-8") as f:
-            subprocess.run(gen_cmd, cwd=project_root, env=env, check=True, stdout=f)
+    explain = json.loads(explain_file.read_text(encoding="utf-8"))
+    items = json.loads(items_file.read_text(encoding="utf-8"))
 
+    profile = profile or str(explain.get("profile", "legacy"))
+    decision = engine.build_decision(profile=profile)
+
+    out_dir = project_root / "reports"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / f"ivd_morning_replay_{run_id}.txt"
+    out_file.write_text(preview_file.read_text(encoding="utf-8"), encoding="utf-8")
+
+    do_send = _to_bool(send, default=False)
     sent = False
-    send_cmd = None
-    if send:
-        subject = email_runtime.get("subject_template", "全球IVD晨报 - {{date}}").replace(
-            "{{date}}", replay_date
-        )
+    send_cmd: list[str] | None = None
+
+    if do_send:
+        schedule = decision.get("email_decision", {}).get("schedule", {})
+        tz_name = str(schedule.get("timezone", "Asia/Shanghai"))
+        subject_tpl = str(decision.get("email_decision", {}).get("subject_template", "全球IVD晨报 - {{date}}"))
+        replay_date = str(explain.get("date") or "")
+        subject = subject_tpl.replace("{{date}}", replay_date or "REPLAY")
+
+        env = os.environ.copy()
+        env["REPORT_TZ"] = tz_name
         to_email = env.get("TO_EMAIL", "qq82125@gmail.com")
         send_cmd = ["./send_mail_icloud.sh", to_email, subject, str(out_file)]
         subprocess.run(send_cmd, cwd=project_root, env=env, check=True)
@@ -68,35 +71,21 @@ def run_replay(
     return {
         "run_id": run_id,
         "mode": "replay",
-        "replay_date": replay_date,
-        "profile": {
-            "email": email_rule.profile,
-            "content": content_rule.profile,
-        },
-        "rules_version": {
-            "email": email_rule.version,
-            "content": content_rule.version,
-        },
+        "profile": profile,
+        "replay_source": "artifacts_only",
+        "network_fetch": False,
         "output_file": str(out_file),
-        "replay_source": replay_source,
+        "items_count": len(items) if isinstance(items, list) else 0,
         "sent": sent,
         "send_cmd": send_cmd,
+        "artifacts": {
+            "explain": str(explain_file),
+            "preview": str(preview_file),
+            "items": str(items_file),
+        },
     }
 
 
-def main(
-    replay_date: str | None = None,
-    run_id: str | None = None,
-    send: bool = False,
-    email_profile: str | None = None,
-    content_profile: str | None = None,
-) -> int:
-    result = run_replay(
-        replay_date=replay_date,
-        run_id=run_id,
-        send=send,
-        email_profile=email_profile,
-        content_profile=content_profile,
-    )
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+def main(run_id: str, send: bool | str = False, profile: str | None = None) -> int:
+    print(json.dumps(run_replay(run_id=run_id, send=send, profile=profile), ensure_ascii=False, indent=2))
     return 0

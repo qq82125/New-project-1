@@ -19,8 +19,14 @@ def _get_opt(argv: list[str], key: str) -> str | None:
     return argv[idx + 1]
 
 
-def cmd_rules_validate() -> int:
+def cmd_rules_validate(argv: list[str]) -> int:
     engine = RuleEngine()
+    profile = _get_opt(argv, "--profile")
+    if profile:
+        result = engine.validate_profile_pair(profile)
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
+        return 0
+
     validated: list[dict[str, str]] = []
     for ruleset in ("email_rules", "content_rules"):
         rules_dir = engine.rules_root / ruleset
@@ -38,25 +44,41 @@ def cmd_rules_validate() -> int:
     return 0
 
 
+def cmd_rules_print(argv: list[str]) -> int:
+    profile = _get_opt(argv, "--profile") or "legacy"
+    strategy = _get_opt(argv, "--strategy") or "priority_last_match"
+    engine = RuleEngine()
+    result = engine.build_decision(profile=profile, conflict_strategy=strategy)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_rules_dryrun(argv: list[str]) -> int:
+    profile = _get_opt(argv, "--profile")
+    report_date = _get_opt(argv, "--date")
+
+    # Backward-compatible options
     email_profile = _get_opt(argv, "--email-profile")
     content_profile = _get_opt(argv, "--content-profile")
-    return dryrun_main(email_profile=email_profile, content_profile=content_profile)
+    if not profile and email_profile and content_profile and email_profile == content_profile:
+        profile = email_profile
+
+    return dryrun_main(profile=profile or "legacy", report_date=report_date)
 
 
 def cmd_rules_replay(argv: list[str]) -> int:
-    replay_date = _get_opt(argv, "--date")
     run_id = _get_opt(argv, "--run-id")
-    email_profile = _get_opt(argv, "--email-profile")
-    content_profile = _get_opt(argv, "--content-profile")
-    send = "--send" in argv
-    return replay_main(
-        replay_date=replay_date,
-        run_id=run_id,
-        send=send,
-        email_profile=email_profile,
-        content_profile=content_profile,
-    )
+    send_opt = _get_opt(argv, "--send")
+    profile = _get_opt(argv, "--profile")
+
+    # Backward-compatible behavior: presence-only --send means true
+    send_value: bool | str = send_opt if send_opt is not None else ("--send" in argv)
+
+    if not run_id:
+        print("--run-id is required for rules:replay", file=sys.stderr)
+        return 2
+
+    return replay_main(run_id=run_id, send=send_value, profile=profile)
 
 
 def main() -> int:
@@ -64,7 +86,7 @@ def main() -> int:
     if not argv:
         print(
             "Usage: python -m app.workers.cli "
-            "rules:validate|rules:dryrun|rules:replay [options]",
+            "rules:validate|rules:print|rules:dryrun|rules:replay [options]",
             file=sys.stderr,
         )
         return 2
@@ -73,7 +95,9 @@ def main() -> int:
     tail = argv[1:]
     try:
         if cmd == "rules:validate":
-            return cmd_rules_validate()
+            return cmd_rules_validate(tail)
+        if cmd == "rules:print":
+            return cmd_rules_print(tail)
         if cmd == "rules:dryrun":
             return cmd_rules_dryrun(tail)
         if cmd == "rules:replay":

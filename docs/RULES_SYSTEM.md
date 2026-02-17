@@ -48,16 +48,49 @@ rules/
 ## 如何验证
 ```bash
 python3 -m app.workers.cli rules:validate
+python3 -m app.workers.cli rules:validate --profile legacy
+python3 -m app.workers.cli rules:validate --profile enhanced
 ```
 说明：该命令会读取 `rules/email_rules/*.yaml` 与 `rules/content_rules/*.yaml`，并按 `rules/schemas/*.json` 校验。
+
+## 如何打印最终决策对象
+```bash
+python3 -m app.workers.cli rules:print --profile legacy
+python3 -m app.workers.cli rules:print --profile enhanced
+python3 -m app.workers.cli rules:print --profile enhanced --strategy priority_merge
+```
+说明：输出统一 JSON 决策对象，包含：
+- `content_decision`（allow/deny sources、keyword_sets、categories_map、dedupe_window 等）
+- `email_decision`（subject_template、sections、recipients、schedule、thresholds 等）
+- `explain`（为何命中/为何排除/冲突如何解决）
+
+## 冲突策略
+当同一决策字段被多条规则命中时：
+- 基础顺序：按 `priority` 升序执行（高优先级后执行），同优先级按规则出现顺序（last_match）。
+- 默认策略：`priority_last_match`（后命中覆盖先命中）。
+- 可选策略：
+  - `priority_append`：列表字段追加去重。
+  - `priority_merge`：字典字段深度合并。
+- 规则可显式指定 `merge_strategy`（`last_match|append|merge`）覆盖全局策略。
 
 ## 如何 dry-run
 ```bash
 python3 -m app.workers.cli rules:dryrun
-python3 -m app.workers.cli rules:dryrun --email-profile legacy --content-profile legacy
-python3 -m app.workers.cli rules:dryrun --email-profile enhanced --content-profile enhanced
+python3 -m app.workers.cli rules:dryrun --profile legacy --date 2026-02-16
+python3 -m app.workers.cli rules:dryrun --profile enhanced --date 2026-02-16
 ```
-说明：dry-run 只输出“将如何采集/如何发信”，不发信、不落库。
+说明：dry-run 会执行“采集->过滤->汇总->生成邮件预览”，但不发信、不写库。产物写入 `artifacts/<run_id>/`：
+- `run_id.json`（explain）
+- `newsletter_preview.md`
+- `items.json`
+
+## 如何 replay（只读复现）
+```bash
+python3 -m app.workers.cli rules:replay --run-id dryrun-xxxx --send false
+```
+说明：
+- replay 仅从 `artifacts/<run_id>/` 读取已落地数据复现，不重新抓取网络，避免结果漂移。
+- `--send` 默认 `false`；只有明确传 `true` 才会触发发信。
 
 ## 示例
 

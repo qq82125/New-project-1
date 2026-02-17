@@ -10,6 +10,113 @@ from app.rules.engine import RuleEngine
 from app.rules.errors import RuleEngineError
 
 
+def _minimal_email(profile: str = "legacy", rules: list[dict] | None = None) -> dict:
+    return {
+        "ruleset": "email_rules",
+        "version": "1.0.0",
+        "profile": profile,
+        "defaults": {
+            "timezone": "Asia/Shanghai",
+            "subject_template": "全球IVD晨报 - {{date}}",
+            "recipient": "qq82125@gmail.com",
+            "sender_env": "SMTP_FROM",
+            "send_window": {"hour": 8, "minute": 30},
+            "retry": {"max_retries": 3, "connect_timeout_sec": 10, "max_time_sec": 60},
+        },
+        "overrides": {
+            "enabled": False,
+            "on_weekend": "same",
+            "subject_prefix": "",
+            "dedupe_window_hours": 24,
+        },
+        "rules": rules
+        or [
+            {
+                "id": "subject-default",
+                "enabled": True,
+                "priority": 10,
+                "type": "subject_template",
+                "params": {"template": "全球IVD晨报 - {{date}}"},
+            }
+        ],
+        "output": {
+            "format": "plain_text",
+            "sections": ["A", "B", "C", "D", "E", "F", "G"],
+            "summary_max_chars": 200,
+            "charts_enabled": False,
+            "chart_types": [],
+        },
+    }
+
+
+def _minimal_content(profile: str = "legacy", rules: list[dict] | None = None) -> dict:
+    return {
+        "ruleset": "content_rules",
+        "version": "1.0.0",
+        "profile": profile,
+        "defaults": {
+            "timezone": "Asia/Shanghai",
+            "time_window": {"primary_hours": 24, "fallback_days": 7},
+            "item_limit": {"min": 8, "max": 15, "topup_if_24h_lt": 10},
+            "sources": {
+                "media_global": [
+                    {
+                        "name": "Fierce Biotech",
+                        "url": "https://www.fiercebiotech.com/rss/xml",
+                        "region": "北美",
+                        "trust_tier": "A",
+                    }
+                ],
+                "regulatory_cn": [
+                    {
+                        "name": "NMPA",
+                        "url": "https://www.nmpa.gov.cn/",
+                        "region": "中国",
+                        "trust_tier": "A",
+                    }
+                ],
+                "regulatory_apac": [
+                    {
+                        "name": "TGA",
+                        "url": "https://www.tga.gov.au/feeds/alert/safety-alerts.xml",
+                        "region": "亚太",
+                        "trust_tier": "A",
+                    }
+                ],
+            },
+            "coverage_tracks": ["肿瘤检测", "感染检测", "生殖与遗传检测", "其他"],
+            "region_filter": {
+                "apac_min_share": 0.4,
+                "china_min_share": 0.0,
+                "allowed_regions": ["北美", "欧洲", "亚太", "中国"],
+            },
+        },
+        "overrides": {
+            "enabled": True,
+            "keywords_pack": ["ivd_core"],
+            "exclude_terms": [],
+            "min_confidence": 0.0,
+        },
+        "rules": rules
+        or [
+            {
+                "id": "include-default",
+                "enabled": True,
+                "priority": 10,
+                "type": "include_filter",
+                "params": {"include_keywords": ["diagnostic"]},
+            }
+        ],
+        "output": {
+            "format": "plain_text",
+            "sections": ["A", "B", "C", "D", "E", "F", "G"],
+            "quality_audit_at_end": True,
+            "per_item_summary_sentences": 2,
+            "max_items": 15,
+        },
+    }
+
+
 class RuleEngineTests(unittest.TestCase):
     def test_load_pair_defaults_backward_compatible(self) -> None:
         engine = RuleEngine()
@@ -56,48 +163,95 @@ class RuleEngineTests(unittest.TestCase):
                 root / "rules" / "schemas" / "content_rules.schema.json",
             )
 
-            bad = {
-                "ruleset": "content_rules",
-                "version": "1.0.0",
-                "profile": "bad.v1",
-                "feature_flags": {"enable_new_content_rules": False},
-                "compatibility": {
-                    "backward_compatible": True,
-                    "fallback_to_legacy_on_error": True,
-                },
-                "collection": {
-                    "date_tz": "Asia/Shanghai",
-                    "primary_window_hours": 24,
-                    "fallback_window_days": 7,
-                    "min_items": 8,
-                    "max_items": 15,
-                    "topup_if_24h_lt": 10,
-                },
-                "coverage": {
-                    "tracks": ["x"],
-                    "platforms": ["x"],
-                    "event_types": ["x"],
-                    "region_targets": {"apac_min_share": 0.4},
-                },
-                "quality_gates": {
-                    "dedupe": {
-                        "daily_max_repeat_rate": 0.25,
-                        "recent_7d_max_repeat_rate": 0.4,
-                    },
-                    "source_requirements": {"must_check": ["NMPA"]},
-                },
-                "sources": {"feed_timeout_sec": 10},
-                "output": {"sections": ["A"], "quality_section_only_at_end": True},
-            }
-            (root / "rules" / "email_rules" / "bad.v1.json").write_text(
+            bad = _minimal_content(profile="legacy")
+            bad["ruleset"] = "content_rules"
+            (root / "rules" / "email_rules" / "legacy.json").write_text(
                 json.dumps(bad),
                 encoding="utf-8",
             )
 
             engine = RuleEngine(project_root=root)
             with self.assertRaises(RuleEngineError) as ctx:
-                engine.load("email_rules", "bad.v1")
+                engine.load("email_rules", "legacy")
             self.assertEqual(ctx.exception.err.code, "RULES_003_RULESET_MISMATCH")
+
+    def test_validate_profile_pair(self) -> None:
+        engine = RuleEngine()
+        out = engine.validate_profile_pair("legacy")
+        self.assertEqual(out["profile"], "legacy")
+        self.assertEqual(len(out["validated"]), 2)
+
+    def test_build_decision_contains_unified_objects(self) -> None:
+        engine = RuleEngine()
+        out = engine.build_decision("enhanced")
+        self.assertIn("content_decision", out)
+        self.assertIn("email_decision", out)
+        self.assertIn("explain", out)
+        self.assertIn("allow_sources", out["content_decision"])
+        self.assertIn("subject_template", out["email_decision"])
+
+    def test_conflict_merge_and_explain(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "rules" / "email_rules").mkdir(parents=True, exist_ok=True)
+            (root / "rules" / "content_rules").mkdir(parents=True, exist_ok=True)
+            (root / "rules" / "schemas").mkdir(parents=True, exist_ok=True)
+
+            repo_root = Path(__file__).resolve().parents[1]
+            shutil.copy(
+                repo_root / "rules" / "schemas" / "email_rules.schema.json",
+                root / "rules" / "schemas" / "email_rules.schema.json",
+            )
+            shutil.copy(
+                repo_root / "rules" / "schemas" / "content_rules.schema.json",
+                root / "rules" / "schemas" / "content_rules.schema.json",
+            )
+
+            email_data = _minimal_email(profile="legacy")
+            content_data = _minimal_content(
+                profile="legacy",
+                rules=[
+                    {
+                        "id": "include-1",
+                        "enabled": True,
+                        "priority": 10,
+                        "type": "include_filter",
+                        "params": {"include_keywords": ["diagnostic"]},
+                    },
+                    {
+                        "id": "include-2",
+                        "enabled": True,
+                        "priority": 20,
+                        "type": "include_filter",
+                        "merge_strategy": "append",
+                        "params": {"include_keywords": ["pcr"]},
+                    },
+                    {
+                        "id": "exclude-1",
+                        "enabled": True,
+                        "priority": 30,
+                        "type": "exclude_filter",
+                        "params": {"exclude_keywords": ["earnings"]},
+                    },
+                ],
+            )
+
+            (root / "rules" / "email_rules" / "legacy.json").write_text(
+                json.dumps(email_data),
+                encoding="utf-8",
+            )
+            (root / "rules" / "content_rules" / "legacy.json").write_text(
+                json.dumps(content_data),
+                encoding="utf-8",
+            )
+
+            engine = RuleEngine(project_root=root)
+            out = engine.build_decision("legacy")
+
+            self.assertIn("diagnostic", out["content_decision"]["keyword_sets"]["include_keywords"])
+            self.assertIn("pcr", out["content_decision"]["keyword_sets"]["include_keywords"])
+            self.assertGreaterEqual(out["explain"]["summary"]["conflict_count"], 1)
+            self.assertIn("exclude-1", out["explain"]["summary"]["why_excluded"])
 
 
 if __name__ == "__main__":
