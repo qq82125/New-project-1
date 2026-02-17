@@ -1,11 +1,13 @@
 # RULES_SYSTEM
 
 ## 概念
-本项目规则系统分为两套互不影响的配置：
+本项目规则系统拆为四套互不影响的规则（彼此有清晰边界）：
 - `email_rules`：定义发信行为（主题、收件人、重试、栏目输出偏好等）。
-- `content_rules`：定义采集与内容行为（来源、关键词、过滤、分类、阈值、输出结构等）。
+- `content_rules`：定义“入选候选集合”（来源选择、过滤、分类、去重、可信度分层、摘要素材）。
+- `qc_rules`：定义“质量评估 + 可选补齐/降级策略”（不得改邮件模板结构，不得重新抓网）。
+- `output_rules`：定义“如何渲染输出 A–G”（不得改变 content 入选集合，最多裁剪展示）。
 
-当前阶段仅交付规则文件、Schema、文档草案。默认执行链路保持原样，不自动切换新规则。
+默认执行链路保持原样，`profile=legacy` 保持现有行为；仅当显式启用 `profile=enhanced` 时，增强规则才生效，并且可回退。
 
 ## 目录结构
 ```text
@@ -20,9 +22,17 @@ rules/
     enhanced.yaml
     default.v1.yaml
     strict.v2.yaml
+  qc_rules/
+    legacy.yaml
+    enhanced.yaml
+  output_rules/
+    legacy.yaml
+    enhanced.yaml
   schemas/
     email_rules.schema.json
     content_rules.schema.json
+    qc_rules.schema.json
+    output_rules.schema.json
 ```
 
 ## Profile 与版本
@@ -45,13 +55,21 @@ rules/
 
 同时保留 `ruleset`（`email_rules` / `content_rules`）用于校验与路由。
 
+## 四套规则的边界（必须遵守）
+- `content_rules` 只允许影响：来源选择、过滤、分类、去重、可信度分层、摘要素材。
+- `qc_rules` 只允许影响：质量评估、指标审计、补齐/降级策略（补齐只能从本次候选池选择，不得重新抓网）。
+- `output_rules` 只允许影响：A–G 结构开关与排序、每段条数、摘要长度、标签展示、是否展示 other_sources、趋势/缺口条数、热力图策略；不得改变候选集合。
+- `email_rules` 只允许影响：收件人、主题模板、发信策略、栏目结构（投递侧）；不得反向影响候选集合。
+
+代码层通过边界断言防耦合：当规则越界时触发 `RULES_BOUNDARY_VIOLATION`，并对该 ruleset 自动回退 `legacy`（不全局崩）。
+
 ## 如何验证
 ```bash
 python3 -m app.workers.cli rules:validate
 python3 -m app.workers.cli rules:validate --profile legacy
 python3 -m app.workers.cli rules:validate --profile enhanced
 ```
-说明：该命令会读取 `rules/email_rules/*.yaml` 与 `rules/content_rules/*.yaml`，并按 `rules/schemas/*.json` 校验。
+说明：该命令会校验规则与 sources registry（若已启用）。
 
 ## 如何打印最终决策对象
 ```bash
@@ -61,6 +79,8 @@ python3 -m app.workers.cli rules:print --profile enhanced --strategy priority_me
 ```
 说明：输出统一 JSON 决策对象，包含：
 - `content_decision`（allow/deny sources、keyword_sets、categories_map、dedupe_window 等）
+- `qc_decision`（min_24h_items、share targets、repeat-rate、required_sources、fail_policy 等）
+- `output_decision`（A–G rendering knobs + constraints）
 - `email_decision`（subject_template、sections、recipients、schedule、thresholds 等）
 - `explain`（为何命中/为何排除/冲突如何解决）
 
@@ -79,10 +99,20 @@ python3 -m app.workers.cli rules:dryrun
 python3 -m app.workers.cli rules:dryrun --profile legacy --date 2026-02-16
 python3 -m app.workers.cli rules:dryrun --profile enhanced --date 2026-02-16
 ```
-说明：dry-run 会执行“采集->过滤->汇总->生成邮件预览”，但不发信、不写库。产物写入 `artifacts/<run_id>/`：
+说明：dry-run 会执行“采集->过滤->QC->渲染->生成邮件预览”，但不发信、不写库。产物写入 `artifacts/<run_id>/`：
 - `run_id.json`（explain）
 - `newsletter_preview.md`
 - `items.json`
+- `qc_report.json`
+- `output_render.json`
+- `run_meta.json`（四套 ruleset 的版本号）
+
+如启用故事级聚合，还会生成：
+- `clustered_items.json`（含 `story_id/other_sources`）
+- `cluster_explain.json`
+
+如启用事件类型判定 explain，会生成：
+- `event_type_explain.json`（每条 event_type 判定依据）
 
 ## 如何 replay（只读复现）
 ```bash
@@ -218,6 +248,64 @@ rules:
 - `canonical_url`：低误合并、低召回（部分站点无 canonical）。
 - `normalized_url_host_path`：低误合并，适合同站去重。
 - `title_fingerprint_v1`：高召回，需配合 `window_hours` 控制误合并。
+
+## QC Rules（质控规则）示例
+`qc_rules` 用于评估质量并给出动作策略（仅 dry-run 生效，不影响线上定时触发本身）：
+
+示例片段（enhanced）：
+```yaml
+ruleset: qc_rules
+profile: enhanced
+defaults:
+  min_24h_items: 10
+  apac_min_share: 0.40
+  daily_repeat_rate_max: 0.25
+  recent_7d_repeat_rate_max: 0.40
+  quality_policy:
+    required_sources_checklist: [NMPA, CMDE, CCGP, TGA, PMDA/MHLW]
+    event_groups:
+      regulatory: [监管审批与指南]
+      commercial: [并购融资/IPO与合作, 注册上市, 产品发布, 临床与科研证据, 支付与招采, 政策与市场动态]
+  fail_policy:
+    mode: only_warn   # 或 auto_topup / degrade_output_legacy / require_manual_review
+```
+
+## Output Rules（渲染规则）示例
+`output_rules` 只决定 A–G 的渲染，不改变候选集合：
+
+示例片段（enhanced）：
+```yaml
+ruleset: output_rules
+profile: enhanced
+defaults:
+  sections: [{id:A,enabled:true},{id:B,enabled:true},{id:C,enabled:true},{id:D,enabled:true},{id:E,enabled:true},{id:F,enabled:true},{id:G,enabled:true}]
+  A:
+    items_range: {min: 8, max: 15}
+    summary_sentences: {min: 2, max: 3}
+    show_other_sources: true
+  constraints:
+    g_must_be_last: true
+    a_to_f_must_not_include_quality_metrics: true
+output:
+  sections_order: [A,B,C,D,E,F,G]
+```
+
+## 常见问题（FAQ）
+1) QC fail 时怎么处理？
+- 推荐流程：先查看 `/admin/qc` 的 QC 面板与 `fail_reasons`，再调整：信源、关键词、区域纠偏目标或 fail_policy。
+- `fail_policy.mode=only_warn`：只提示，不自动补齐。
+- `auto_topup`：只允许从本次候选池内的“7天补充”条目回补，不重新抓网，保证可复现。
+- `degrade_output_legacy`：渲染降级为 legacy 输出（内容候选不变）。
+- `require_manual_review`：标记需要人工复核（依赖运维流程）。
+
+2) 为什么 G 必须在末尾？
+- 合规与可读性：A–F 是业务正文，G 是质量审计，必须分离。
+- 可测试性：系统有断言/单测确保 “A–F 禁止质量指标字段，G 必须置尾”，避免误把指标写进正文。
+
+3) 去重聚合如何选主来源？
+- `content_rules.defaults.source_priority` 定义来源优先级（数值越大越优先）。
+- `dedupe_cluster.primary_select` 定义比较顺序（默认：`source_priority -> evidence_grade -> published_at_earliest`）。
+- 被聚合的其他来源会挂载到 primary 的 `other_sources[]`，并在 explain 中记录原因。
 
 enhanced 示例片段：
 ```yaml

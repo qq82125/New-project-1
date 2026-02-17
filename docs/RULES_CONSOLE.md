@@ -4,14 +4,17 @@
 在不影响现有脚本（如 `send_mail_icloud.sh`、GitHub Actions）前提下，提供一套可鉴权的规则管理 API：
 - 邮件规则：查看 active / 提交 draft / 发布 / 回滚
 - 采集规则：查看 active / 提交 draft / 发布 / 回滚
+- 质控规则：查看 active / 提交 draft / 发布 / 回滚
+- 输出规则：查看 active / 提交 draft / 发布 / 回滚
 - 信源管理：查询 / 新增或编辑 / 启停 / 测试抓取
 
 服务入口：`app/web/rules_admin_api.py`
 
 ## 启动方式
+最小启动命令（本地）：
 ```bash
 cd "/Users/GY/Documents/New project 1"
-python3 -m app.web.rules_admin_api
+ADMIN_USER=admin ADMIN_PASS='your_strong_password' python3 -m app.web.rules_admin_api
 ```
 
 默认监听：
@@ -51,6 +54,8 @@ export ADMIN_PASS="your_strong_password"
 ### 管理页面（轻前端）
 - `GET /admin/email`
 - `GET /admin/content`
+- `GET /admin/qc`
+- `GET /admin/output`
 - `GET /admin/sources`
 - `GET /admin/versions`
 
@@ -62,6 +67,7 @@ export ADMIN_PASS="your_strong_password"
 右侧预览：
 - Email 页面：dry-run 预览生成的邮件内容。
 - Content 页面：dry-run 预览候选条数、去重后条数、top clusters。
+- QC/Output 页面：dry-run 预览 QC 面板 + A–G 邮件预览（不发信）。
 
 ### Email Rules
 - `GET /admin/api/email_rules/active?profile=enhanced`
@@ -77,9 +83,23 @@ export ADMIN_PASS="your_strong_password"
 - `POST /admin/api/content_rules/rollback`
 - `POST /admin/api/content_rules/dryrun`
 
+### QC Rules
+- `GET /admin/api/qc_rules/active?profile=enhanced`
+- `POST /admin/api/qc_rules/draft`
+- `POST /admin/api/qc_rules/publish`
+- `POST /admin/api/qc_rules/rollback`
+- `POST /admin/api/qc_rules/dryrun`（可选：只返回 qc_report）
+
+### Output Rules
+- `GET /admin/api/output_rules/active?profile=enhanced`
+- `POST /admin/api/output_rules/draft`
+- `POST /admin/api/output_rules/publish`
+- `POST /admin/api/output_rules/rollback`
+- `POST /admin/api/output_rules/dryrun`（可选：只返回 output_render）
+
 ### Unified Dry-run（推荐）
 - `POST /admin/api/dryrun?date=YYYY-MM-DD&profile=enhanced`
-  - 返回：`items_before/items_after`、`preview_text/preview_html`、`clustered_items`、`explain`（以及 artifacts 路径），适合“一键预览 + 审计”。
+  - 返回：`items_before/items_after`、`preview_text/preview_html`、`qc_report`、`output_render`、`run_meta`、`explain`（以及 artifacts 路径），适合“一键预览 + 审计”。
 
 ### Sources
 - `GET /admin/api/sources`
@@ -90,6 +110,13 @@ export ADMIN_PASS="your_strong_password"
 ### Versions
 - `GET /admin/api/versions?profile=enhanced`
 - `GET /admin/api/versions/diff?ruleset=email_rules&profile=enhanced&from_version=...&to_version=...`
+
+## 运营流程（推荐）
+1) 改规则（页面表单）
+2) 保存草稿（draft 校验）
+3) dry-run 预览（不发信）
+4) publish 发布生效（active 指针切换）
+5) 版本回滚（rollback 到上一版本）
 
 ## Draft -> Publish -> Rollback 示例
 ### 1) 提交 draft（email_rules）
@@ -136,6 +163,19 @@ curl -u admin:your_pass \
   -d '{"profile":"enhanced"}'
 ```
 
+## QC/Output 最小 curl 示例
+### 读取 active（qc_rules）
+```bash
+curl -u admin:your_pass \
+  "http://127.0.0.1:8789/admin/api/qc_rules/active?profile=enhanced"
+```
+
+### 读取 active（output_rules）
+```bash
+curl -u admin:your_pass \
+  "http://127.0.0.1:8789/admin/api/output_rules/active?profile=enhanced"
+```
+
 ## Sources 示例
 ### 新增/编辑 source
 ```bash
@@ -174,6 +214,17 @@ curl -u admin:your_pass \
 curl -u admin:your_pass \
   -X POST "http://127.0.0.1:8789/admin/api/dryrun?profile=enhanced&date=2026-02-16" | python3 -m json.tool
 ```
+
+## 常见问题（FAQ）
+1) QC fail 时怎么处理？
+- 先看 dry-run 返回的 `qc_report.fail_reasons` 与 `qc_report.panel`（区域占比、重复率、必查信源缺口、event mix 等）。
+- 再决定改动点：信源（/admin/sources）、采集过滤（/admin/content）、阈值/策略（/admin/qc）、渲染降级（/admin/output）。
+
+2) 为什么 G 必须在末尾？
+- A–F 是业务正文，G 是质量审计；系统强约束并有单测保证 “A–F 不含质量指标字段，G 置尾”。
+
+3) 去重聚合如何选主来源？
+- 由 `content_rules` 的 `source_priority` + `dedupe_cluster.primary_select` 决定；其他来源保留在 primary 的 `other_sources[]`，并在聚合 explain 中可审计。
 
 ## 错误结构
 校验失败时返回结构化错误：
