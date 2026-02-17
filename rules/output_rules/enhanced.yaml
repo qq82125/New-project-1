@@ -1,0 +1,126 @@
+ruleset: output_rules
+version: "2.0.0"
+profile: enhanced
+
+defaults:
+  format: plain_text
+
+  # Sections configuration: enabled + order. G must be last.
+  sections:
+    - id: A
+      enabled: true
+    - id: B
+      enabled: true
+    - id: C
+      enabled: true
+    - id: D
+      enabled: true
+    - id: E
+      enabled: true
+    - id: F
+      enabled: true
+    - id: G
+      enabled: true
+
+  # A section settings
+  A:
+    items_range:
+      min: 8
+      max: 15
+    sort_by: importance
+    # Summary requirements (render-side): 2-3 sentences, with max chars.
+    summary_sentences:
+      min: 2
+      max: 3
+    summary_max_chars: 260
+    show_source_link: true
+    show_tags: true
+    show_other_sources: true
+
+  # E/F section sizes
+  E:
+    trends_count: 3
+  F:
+    gaps_count:
+      min: 3
+      max: 5
+
+  # D heatmap output
+  D:
+    heatmap_regions:
+      - 北美
+      - 欧洲
+      - 亚太
+      - 中国
+
+  # Hard constraints for compliance.
+  constraints:
+    g_must_be_last: true
+    a_to_f_must_not_include_quality_metrics: true
+
+overrides:
+  enabled: true
+
+rules:
+  - id: sections-enabled-order
+    enabled: true
+    priority: 90
+    type: sections
+    description: A-G 开关与顺序（G 置尾）
+    params:
+      order: [A, B, C, D, E, F, G]
+      enabled:
+        A: true
+        B: true
+        C: true
+        D: true
+        E: true
+        F: true
+        G: true
+
+  - id: render-a-config
+    enabled: true
+    priority: 80
+    type: section_a
+    description: A 段条数/排序/摘要与标签展示
+    params:
+      items_min: 8
+      items_max: 15
+      sort_by: importance
+      summary_sentences_min: 2
+      summary_sentences_max: 3
+      summary_max_chars: 260
+      show_tags: true
+      show_other_sources: true
+      show_source_link: true
+
+  - id: render-e-f-config
+    enabled: true
+    priority: 70
+    type: section_sizes
+    description: 趋势判断与缺口清单条数
+    params:
+      trends_count: 3
+      gaps_min: 3
+      gaps_max: 5
+
+  - id: render-heatmap
+    enabled: true
+    priority: 60
+    type: heatmap
+    description: 区域热力图输出区域集合
+    params:
+      regions: [北美, 欧洲, 亚太, 中国]
+
+  - id: render-constraints
+    enabled: true
+    priority: 50
+    type: constraints
+    description: 强约束：G 置尾 + A-F 禁止质量指标字段
+    params:
+      g_must_be_last: true
+      a_to_f_must_not_include_quality_metrics: true
+
+output:
+  # Renderer should enforce this order and place QC panel only in G.
+  sections_order: [A, B, C, D, E, F, G]

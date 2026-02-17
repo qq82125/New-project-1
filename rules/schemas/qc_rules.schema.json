@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/qc_rules.schema.json",
+  "title": "QC Rules Schema",
+  "type": "object",
+  "required": ["ruleset", "version", "profile", "defaults", "overrides", "rules", "output"],
+  "properties": {
+    "ruleset": { "type": "string", "const": "qc_rules" },
+    "version": { "type": "string", "minLength": 3 },
+    "profile": { "type": "string", "enum": ["legacy", "enhanced", "default.v1", "strict.v2"] },
+    "defaults": {
+      "type": "object",
+      "required": ["timezone"],
+      "properties": {
+        "timezone": { "type": "string", "minLength": 3 },
+        "min_24h_items": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "fallback_days": { "type": "integer", "minimum": 1, "maximum": 14 },
+        "7d_topup_limit": { "type": "integer", "minimum": 0, "maximum": 200 },
+        "apac_min_share": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "china_min_share": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "daily_repeat_rate_max": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "recent_7d_repeat_rate_max": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "regulatory_vs_commercial_mix": { "$ref": "#/$defs/mixTargets" },
+        "required_sources_checklist": {
+          "type": "array",
+          "minItems": 0,
+          "items": { "type": "string", "minLength": 2 }
+        },
+        "rumor_policy": { "$ref": "#/$defs/rumorPolicy" },
+        "fail_policy": { "$ref": "#/$defs/failPolicy" }
+      },
+      "additionalProperties": true
+    },
+    "overrides": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "required": ["id", "enabled", "priority", "type", "params"],
+        "properties": {
+          "id": { "type": "string", "minLength": 3 },
+          "enabled": { "type": "boolean" },
+          "priority": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "type": {
+            "type": "string",
+            "enum": ["qc_thresholds", "required_sources", "rumor_policy", "fail_policy", "mix_targets"]
+          },
+          "description": { "type": "string", "minLength": 0 },
+          "merge_strategy": { "type": "string", "enum": ["last_match", "append", "merge"] },
+          "params": { "type": "object" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["format"],
+      "properties": {
+        "format": { "type": "string", "enum": ["json"] },
+        "panel_enabled": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "mixTargets": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "regulatory_min": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "commercial_min": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+      },
+      "additionalProperties": true
+    },
+    "rumorPolicy": {
+      "type": "object",
+      "required": ["enabled", "trigger_terms", "label"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "trigger_terms": {
+          "type": "array",
+          "minItems": 0,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "label": { "type": "string", "minLength": 2, "maxLength": 50 }
+      },
+      "additionalProperties": true
+    },
+    "failPolicy": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["only_warn", "auto_topup", "degrade_output_legacy", "require_manual_review"]
+        },
+        "topup_prefer": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 2 }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

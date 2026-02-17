@@ -1,0 +1,15 @@
+ruleset: qc_rules
+version: "1.0.0"
+profile: legacy
+
+defaults:
+  # Legacy: keep minimal QC config explicit without changing behavior.
+  timezone: Asia/Shanghai
+
+overrides:
+  enabled: false
+
+rules: []
+
+output:
+  format: json

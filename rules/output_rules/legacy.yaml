@@ -1,0 +1,38 @@
+ruleset: output_rules
+version: "1.0.0"
+profile: legacy
+
+defaults:
+  format: plain_text
+  # Legacy output keeps A-G in order, with G at end.
+  sections:
+    - id: A
+      enabled: true
+    - id: B
+      enabled: true
+    - id: C
+      enabled: true
+    - id: D
+      enabled: true
+    - id: E
+      enabled: true
+    - id: F
+      enabled: true
+    - id: G
+      enabled: true
+
+overrides:
+  enabled: false
+
+rules: []
+
+output:
+  # Rendering contract only (actual implementation is handled in pipeline).
+  sections_order:
+    - A
+    - B
+    - C
+    - D
+    - E
+    - F
+    - G

@@ -1,0 +1,125 @@
+ruleset: qc_rules
+version: "2.0.0"
+profile: enhanced
+
+defaults:
+  timezone: Asia/Shanghai
+
+  # Window + top-up expectations (used by QC evaluation and any "top-up" policy).
+  min_24h_items: 10
+  fallback_days: 7
+  7d_topup_limit: 20
+
+  # Region share targets (ratios 0..1)
+  apac_min_share: 0.40
+  china_min_share: 0.20
+
+  # Repeat-rate thresholds
+  daily_repeat_rate_max: 0.25
+  recent_7d_repeat_rate_max: 0.40
+
+  # Optional mix targets (ratios 0..1). Use null to disable checks.
+  regulatory_vs_commercial_mix:
+    enabled: false
+    regulatory_min: 0.25
+    commercial_min: 0.35
+
+  # Required source hits checklist (names for audit panel; match is implemented later).
+  required_sources_checklist:
+    - NMPA
+    - CMDE
+    - UDI数据库
+    - CCGP
+    - 中国招采网
+    - TGA
+    - HSA
+    - PMDA/MHLW
+    - MFDS
+    - GenomeWeb
+    - Reuters Healthcare
+
+  rumor_policy:
+    enabled: true
+    # If any of these terms appear, mark item as "rumor" (label only; not excluding by default).
+    trigger_terms:
+      - rumor
+      - unconfirmed
+      - 据传
+      - 传闻
+      - 小道消息
+    label: 传闻（未确认）
+
+  fail_policy:
+    # One of: only_warn | auto_topup | degrade_output_legacy | require_manual_review
+    mode: only_warn
+    # For auto_topup: prefer these groups (if supported by content pipeline).
+    topup_prefer:
+      - regulatory_cn
+      - regulatory_apac
+      - procurement_cn
+
+overrides:
+  enabled: true
+
+rules:
+  - id: qc-thresholds
+    enabled: true
+    priority: 90
+    type: qc_thresholds
+    description: 质控门槛（条数/占比/重复率/必查信源等）
+    params:
+      min_24h_items: 10
+      fallback_days: 7
+      7d_topup_limit: 20
+      apac_min_share: 0.40
+      china_min_share: 0.20
+      daily_repeat_rate_max: 0.25
+      recent_7d_repeat_rate_max: 0.40
+
+  - id: qc-required-sources
+    enabled: true
+    priority: 80
+    type: required_sources
+    description: 必查信源命中清单
+    params:
+      required_sources_checklist:
+        - NMPA
+        - CMDE
+        - UDI数据库
+        - CCGP
+        - 中国招采网
+        - TGA
+        - HSA
+        - PMDA/MHLW
+        - MFDS
+
+  - id: qc-rumor-policy
+    enabled: true
+    priority: 70
+    type: rumor_policy
+    description: 传闻标记策略（仅标记，不强制剔除）
+    params:
+      enabled: true
+      trigger_terms:
+        - rumor
+        - unconfirmed
+        - 据传
+        - 传闻
+        - 小道消息
+      label: 传闻（未确认）
+
+  - id: qc-fail-policy
+    enabled: true
+    priority: 60
+    type: fail_policy
+    description: QC 不达标时的处理策略
+    params:
+      mode: only_warn
+      topup_prefer:
+        - regulatory_cn
+        - regulatory_apac
+
+output:
+  format: json
+  # QC results are displayed as a separate panel; do not inject into A-F text.
+  panel_enabled: true
