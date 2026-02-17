@@ -105,7 +105,15 @@ def _workspace_schemas(project_root: Path) -> Path:
 
 
 def _load_rules_schema(project_root: Path, ruleset: str) -> dict[str, Any]:
-    name = "email_rules.schema.json" if ruleset == "email_rules" else "content_rules.schema.json"
+    name_map = {
+        "email_rules": "email_rules.schema.json",
+        "content_rules": "content_rules.schema.json",
+        "qc_rules": "qc_rules.schema.json",
+        "output_rules": "output_rules.schema.json",
+    }
+    name = name_map.get(ruleset, "")
+    if not name:
+        raise RuntimeError(f"unsupported ruleset: {ruleset}")
     p = _workspace_schemas(project_root) / name
     if not p.exists():
         p = project_root / "rules" / "schemas" / name
@@ -264,11 +272,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         return JSONResponse(status_code=exc.status_code, content=payload, headers=exc.headers)
 
     def _active_rules(ruleset: str, profile: str) -> dict[str, Any]:
-        data = (
-            store.get_active_email_rules(profile)
-            if ruleset == "email_rules"
-            else store.get_active_content_rules(profile)
-        )
+        data = store.get_active_rules(ruleset, profile)
         if data is not None:
             meta = data.pop("_store_meta", {})
             return {"source": "db", "config_json": data, "meta": meta}
@@ -285,6 +289,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           <div class="brand">规则控制台</div>
           <a class="nav" href="/admin/email">邮件规则</a>
           <a class="nav" href="/admin/content">采集规则</a>
+          <a class="nav" href="/admin/qc">质控规则</a>
+          <a class="nav" href="/admin/output">输出规则</a>
           <a class="nav" href="/admin/sources">信源管理</a>
           <a class="nav" href="/admin/versions">版本与回滚</a>
           <div class="sidehint">必须先通过草稿校验，才允许发布生效</div>
@@ -431,11 +437,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 
     def _version_rows(ruleset: str, profile: str) -> list[dict[str, Any]]:
         rows = store.list_versions(ruleset, profile=profile)
-        active = (
-            store.get_active_email_rules(profile)
-            if ruleset == "email_rules"
-            else store.get_active_content_rules(profile)
-        )
+        active = store.get_active_rules(ruleset, profile)
         active_ver = ""
         if isinstance(active, dict):
             m = active.get("_store_meta", {})
@@ -446,7 +448,15 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         return rows
 
     def _config_for_version(ruleset: str, profile: str, version: str) -> dict[str, Any] | None:
-        table = "email_rules_versions" if ruleset == "email_rules" else "content_rules_versions"
+        table_map = {
+            "email_rules": "email_rules_versions",
+            "content_rules": "content_rules_versions",
+            "qc_rules": "qc_rules_versions",
+            "output_rules": "output_rules_versions",
+        }
+        table = table_map.get(ruleset, "")
+        if not table:
+            return None
         with store._connect() as conn:  # noqa: SLF001
             row = conn.execute(
                 f"SELECT config_json FROM {table} WHERE profile = ? AND version = ? LIMIT 1",
@@ -535,6 +545,20 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return {"ok": True, "ruleset": "content_rules", "profile": profile, **_active_rules("content_rules", profile)}
 
+    @app.get("/admin/api/qc_rules/active")
+    def qc_rules_active(
+        profile: str = "enhanced",
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        return {"ok": True, "ruleset": "qc_rules", "profile": profile, **_active_rules("qc_rules", profile)}
+
+    @app.get("/admin/api/output_rules/active")
+    def output_rules_active(
+        profile: str = "enhanced",
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        return {"ok": True, "ruleset": "output_rules", "profile": profile, **_active_rules("output_rules", profile)}
+
     @app.post("/admin/api/email_rules/dryrun")
     def email_rules_dryrun(
         payload: dict[str, Any],
@@ -572,6 +596,32 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "top_clusters": out.get("top_clusters", []),
             "artifacts_dir": out.get("artifacts_dir"),
         }
+
+    @app.post("/admin/api/qc_rules/dryrun")
+    def qc_rules_dryrun(
+        payload: dict[str, Any],
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        profile = str(payload.get("profile", "enhanced"))
+        date = str(payload.get("date", "") or "")
+        out = run_dryrun(profile=profile, report_date=date or None)
+        artifacts = out.get("artifacts", {}) if isinstance(out.get("artifacts"), dict) else {}
+        qc_path = Path(str(artifacts.get("qc_report", "")))
+        qc_report = json.loads(qc_path.read_text(encoding="utf-8")) if qc_path.exists() else {}
+        return {"ok": True, "run_id": out.get("run_id"), "profile": profile, "qc_report": qc_report}
+
+    @app.post("/admin/api/output_rules/dryrun")
+    def output_rules_dryrun(
+        payload: dict[str, Any],
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        profile = str(payload.get("profile", "enhanced"))
+        date = str(payload.get("date", "") or "")
+        out = run_dryrun(profile=profile, report_date=date or None)
+        artifacts = out.get("artifacts", {}) if isinstance(out.get("artifacts"), dict) else {}
+        out_path = Path(str(artifacts.get("output_render", "")))
+        output_render = json.loads(out_path.read_text(encoding="utf-8")) if out_path.exists() else {}
+        return {"ok": True, "run_id": out.get("run_id"), "profile": profile, "output_render": output_render}
 
     @app.post("/admin/api/dryrun")
     def unified_dryrun(
@@ -616,6 +666,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "items_after": int(out.get("items_after_count") or 0),
             "preview_text": preview_text,
             "preview_html": preview_html,
+            "qc_report": _read_json(str(artifacts.get("qc_report", ""))) or {},
+            "output_render": _read_json(str(artifacts.get("output_render", ""))) or {},
+            "run_meta": _read_json(str(artifacts.get("run_meta", ""))) or {},
             "clustered_items": _read_json(str(artifacts.get("clustered_items", ""))),
             "explain": _read_json(str(artifacts.get("explain", ""))),
             "explain_cluster": _read_json(str(artifacts.get("cluster_explain", ""))),
@@ -651,6 +704,64 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         _: dict[str, str] = Depends(_auth_guard),
     ) -> dict[str, Any]:
         return store.rollback("content_rules", profile=payload.profile)
+
+    @app.post("/admin/api/qc_rules/draft")
+    def qc_rules_draft(
+        payload: RulesDraftPayload,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        errors = _draft_validate("qc_rules", payload.profile, payload.config_json)
+        draft = store.create_draft(
+            ruleset="qc_rules",
+            profile=payload.profile,
+            config=payload.config_json,
+            created_by=payload.created_by,
+            validation_errors=errors,
+        )
+        return {"ok": len(errors) == 0, "draft": draft}
+
+    @app.post("/admin/api/qc_rules/publish")
+    def qc_rules_publish(
+        payload: RulesPublishPayload,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        return _publish_from_draft("qc_rules", payload)
+
+    @app.post("/admin/api/qc_rules/rollback")
+    def qc_rules_rollback(
+        payload: RulesRollbackPayload,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        return store.rollback("qc_rules", profile=payload.profile)
+
+    @app.post("/admin/api/output_rules/draft")
+    def output_rules_draft(
+        payload: RulesDraftPayload,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        errors = _draft_validate("output_rules", payload.profile, payload.config_json)
+        draft = store.create_draft(
+            ruleset="output_rules",
+            profile=payload.profile,
+            config=payload.config_json,
+            created_by=payload.created_by,
+            validation_errors=errors,
+        )
+        return {"ok": len(errors) == 0, "draft": draft}
+
+    @app.post("/admin/api/output_rules/publish")
+    def output_rules_publish(
+        payload: RulesPublishPayload,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        return _publish_from_draft("output_rules", payload)
+
+    @app.post("/admin/api/output_rules/rollback")
+    def output_rules_rollback(
+        payload: RulesRollbackPayload,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        return store.rollback("output_rules", profile=payload.profile)
 
     @app.get("/admin/api/sources")
     def sources_list(_: dict[str, str] = Depends(_auth_guard)) -> dict[str, Any]:
@@ -703,6 +814,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "profile": profile,
             "email_rules": _version_rows("email_rules", profile),
             "content_rules": _version_rows("content_rules", profile),
+            "qc_rules": _version_rows("qc_rules", profile),
+            "output_rules": _version_rows("output_rules", profile),
         }
 
     @app.get("/admin/api/versions/diff")
@@ -742,8 +855,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         to_version: str,
         _: dict[str, str] = Depends(_auth_guard),
     ) -> dict[str, Any]:
-        if ruleset not in {"email_rules", "content_rules"}:
-            raise HTTPException(status_code=400, detail="ruleset must be email_rules|content_rules")
+        if ruleset not in {"email_rules", "content_rules", "qc_rules", "output_rules"}:
+            raise HTTPException(status_code=400, detail="ruleset must be email_rules|content_rules|qc_rules|output_rules")
         left = _config_for_version(ruleset, profile, from_version)
         right = _config_for_version(ruleset, profile, to_version)
         if left is None or right is None:
@@ -1181,6 +1294,343 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         """
         return _page_shell("采集规则", body, js)
 
+    @app.get("/admin/qc", response_class=HTMLResponse)
+    def page_qc(_: dict[str, str] = Depends(_auth_guard)) -> str:
+        body = """
+        <div class="layout">
+          <div class="card">
+            <label>规则 Profile</label>
+            <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
+            <label>启用开关</label><select id="enabled"><option value="true">true</option><option value="false">false</option></select>
+
+            <label>24小时内最低条数（min_24h_items）</label><input id="min_24h_items" type="number" min="0" max="50"/>
+            <label>回补天数（fallback_days）</label><input id="fallback_days" type="number" min="1" max="14"/>
+            <label>7天回补上限（7d_topup_limit）</label><input id="topup_limit" type="number" min="0" max="200"/>
+
+            <label>亚太占比目标（apac_min_share, 0-1）</label><input id="apac_min_share" type="number" step="0.01" min="0" max="1"/>
+            <label>中国占比目标（china_min_share, 0-1）</label><input id="china_min_share" type="number" step="0.01" min="0" max="1"/>
+
+            <label>昨日报重复率上限（daily_repeat_rate_max, 0-1）</label><input id="daily_repeat_rate_max" type="number" step="0.01" min="0" max="1"/>
+            <label>近7日峰值重复率上限（recent_7d_repeat_rate_max, 0-1）</label><input id="recent_7d_repeat_rate_max" type="number" step="0.01" min="0" max="1"/>
+
+            <label>必查信源清单（逗号分隔）</label><input id="required_sources" placeholder="NMPA,CMDE,UDI数据库,CCGP,TGA,HSA,PMDA/MHLW,MFDS"/>
+
+            <label>传闻标记开关（rumor_policy.enabled）</label><select id="rumor_enabled"><option value="true">true</option><option value="false">false</option></select>
+            <label>传闻触发词（rumor_policy.trigger_terms，逗号分隔）</label><input id="rumor_terms" placeholder="rumor,unconfirmed,据传,传闻"/>
+            <label>传闻标签（rumor_policy.label）</label><input id="rumor_label" placeholder="传闻（未确认）"/>
+
+            <label>QC fail 策略（fail_policy.mode）</label>
+            <select id="fail_mode">
+              <option value="only_warn">only_warn（仅提示）</option>
+              <option value="auto_topup">auto_topup（自动补齐）</option>
+              <option value="degrade_output_legacy">degrade_output_legacy（降级输出）</option>
+              <option value="require_manual_review">require_manual_review（标记人工复核）</option>
+            </select>
+
+            <label>操作人</label><input id="created_by" value="rules-admin-ui"/>
+            <div>
+              <button onclick="saveDraft()">保存草稿并校验</button>
+              <button id="btnPublish" onclick="publishDraft()" disabled>发布生效</button>
+              <span class="pill" id="verPill">生效版本: -</span>
+            </div>
+            <p id="status"></p>
+            <details class="help">
+              <summary>字段说明/用法</summary>
+              <div class="box">
+                <ul>
+                  <li><b>min_24h_items</b>：过去24小时有效条目不足时视为 QC 风险。</li>
+                  <li><b>fallback_days / 7d_topup_limit</b>：回补窗口与回补上限（回补仅从本次候选池选择，不重新抓网）。</li>
+                  <li><b>required_sources_checklist</b>：必查信源命中审计项（G 段展示）。</li>
+                  <li><b>fail_policy.mode</b>：QC 未达标时的动作策略（仅 dry-run 生效，不影响线上定时）。</li>
+                </ul>
+              </div>
+            </details>
+          </div>
+          <div class="card">
+            <label>试跑日期(可选, YYYY-MM-DD)</label><input id="dryrun_date" />
+            <div class="row">
+              <button onclick="preview()">试跑预览(不发信)</button>
+              <button onclick="copyPreview()">复制预览</button>
+            </div>
+            <h4>QC 面板</h4>
+            <pre id="qcPanel"></pre>
+            <h4>A–G 预览</h4>
+            <pre id="preview"></pre>
+          </div>
+        </div>
+        """
+        js = """
+        let currentConfig = null;
+        let currentDraftId = null;
+        function splitCsv(s){ return (s||'').split(',').map(x=>x.trim()).filter(Boolean); }
+
+        async function loadActive(){
+          const profile = document.getElementById('profile').value;
+          const j = await api(`/admin/api/qc_rules/active?profile=${encodeURIComponent(profile)}`);
+          if(!j||!j.ok){ document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
+          currentConfig = j.config_json;
+          document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
+          document.getElementById('enabled').value = String(!!(currentConfig.overrides||{}).enabled);
+          const d = currentConfig.defaults||{};
+          document.getElementById('min_24h_items').value = d.min_24h_items ?? 10;
+          document.getElementById('fallback_days').value = d.fallback_days ?? 7;
+          document.getElementById('topup_limit').value = d['7d_topup_limit'] ?? 20;
+          document.getElementById('apac_min_share').value = d.apac_min_share ?? 0.4;
+          document.getElementById('china_min_share').value = d.china_min_share ?? 0.2;
+          document.getElementById('daily_repeat_rate_max').value = d.daily_repeat_rate_max ?? 0.25;
+          document.getElementById('recent_7d_repeat_rate_max').value = d.recent_7d_repeat_rate_max ?? 0.4;
+          document.getElementById('required_sources').value = (d.required_sources_checklist||[]).join(',');
+          const rp = d.rumor_policy||{};
+          document.getElementById('rumor_enabled').value = String(!!rp.enabled);
+          document.getElementById('rumor_terms').value = (rp.trigger_terms||[]).join(',');
+          document.getElementById('rumor_label').value = rp.label || '传闻（未确认）';
+          const fp = d.fail_policy||{};
+          document.getElementById('fail_mode').value = fp.mode || 'only_warn';
+          document.getElementById('btnPublish').disabled = true;
+          currentDraftId = null;
+          document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
+        }
+
+        function buildConfig(){
+          const cfg = JSON.parse(JSON.stringify(currentConfig||{}));
+          if(!cfg.defaults) cfg.defaults = {};
+          if(!cfg.overrides) cfg.overrides = {};
+          cfg.ruleset = 'qc_rules';
+          cfg.profile = document.getElementById('profile').value;
+          cfg.overrides.enabled = document.getElementById('enabled').value === 'true';
+          cfg.defaults.timezone = cfg.defaults.timezone || 'Asia/Shanghai';
+          cfg.defaults.min_24h_items = Number(document.getElementById('min_24h_items').value||10);
+          cfg.defaults.fallback_days = Number(document.getElementById('fallback_days').value||7);
+          cfg.defaults['7d_topup_limit'] = Number(document.getElementById('topup_limit').value||20);
+          cfg.defaults.apac_min_share = Number(document.getElementById('apac_min_share').value||0.4);
+          cfg.defaults.china_min_share = Number(document.getElementById('china_min_share').value||0.2);
+          cfg.defaults.daily_repeat_rate_max = Number(document.getElementById('daily_repeat_rate_max').value||0.25);
+          cfg.defaults.recent_7d_repeat_rate_max = Number(document.getElementById('recent_7d_repeat_rate_max').value||0.4);
+          cfg.defaults.required_sources_checklist = splitCsv(document.getElementById('required_sources').value);
+          cfg.defaults.rumor_policy = {
+            enabled: document.getElementById('rumor_enabled').value === 'true',
+            trigger_terms: splitCsv(document.getElementById('rumor_terms').value),
+            label: document.getElementById('rumor_label').value.trim() || '传闻（未确认）',
+          };
+          cfg.defaults.fail_policy = { mode: document.getElementById('fail_mode').value };
+          cfg.output = cfg.output || { format: 'json', panel_enabled: true };
+          cfg.rules = cfg.rules || [];
+          return cfg;
+        }
+
+        async function saveDraft(){
+          const profile = document.getElementById('profile').value;
+          const created_by = document.getElementById('created_by').value || 'rules-admin-ui';
+          const j = await api('/admin/api/qc_rules/draft','POST',{ profile, created_by, config_json: buildConfig() });
+          currentDraftId = j.draft?.id || null;
+          const errs = j.draft?.validation_errors || [];
+          if(j.ok){
+            document.getElementById('status').innerHTML = `<span class="ok">草稿校验通过（draft_id=${currentDraftId}）</span>`;
+            document.getElementById('btnPublish').disabled = false;
+            toast('ok','草稿校验通过',`draft_id=${currentDraftId}`);
+          } else {
+            document.getElementById('status').innerHTML = `<span class="err">草稿校验失败</span>\\n${JSON.stringify(errs,null,2)}`;
+            document.getElementById('btnPublish').disabled = true;
+            toast('err','草稿校验失败', `${errs.length} 处错误`);
+          }
+        }
+
+        async function publishDraft(){
+          const profile = document.getElementById('profile').value;
+          const created_by = document.getElementById('created_by').value || 'rules-admin-ui';
+          const j = await api('/admin/api/qc_rules/publish','POST',{ profile, draft_id: currentDraftId, created_by });
+          if(j && j.ok){
+            document.getElementById('status').innerHTML = `<span class="ok">已生效版本号：${j.version}</span>`;
+            document.getElementById('btnPublish').disabled = true;
+            toast('ok','发布成功', `version=${j.version}`);
+            await loadActive();
+          } else {
+            document.getElementById('status').innerHTML = `<span class="err">发布失败</span>\\n${JSON.stringify(j,null,2)}`;
+            toast('err','发布失败', JSON.stringify(j?.errors||j?.error||j));
+          }
+        }
+
+        async function preview(){
+          const profile = document.getElementById('profile').value;
+          const date = document.getElementById('dryrun_date').value.trim();
+          const j = await api(`/admin/api/dryrun?profile=${encodeURIComponent(profile)}&date=${encodeURIComponent(date)}`,'POST',null);
+          if(!j||!j.ok){ document.getElementById('preview').textContent = JSON.stringify(j,null,2); return; }
+          document.getElementById('qcPanel').textContent = JSON.stringify(j.qc_report||{}, null, 2);
+          document.getElementById('preview').textContent = j.preview_text || '';
+          toast('ok','试跑完成', `运行ID=${j.run_id}`);
+        }
+        async function copyPreview(){
+          const txt = document.getElementById('preview').textContent || '';
+          try { await navigator.clipboard.writeText(txt||''); toast('ok','已复制','预览已复制到剪贴板'); }
+          catch(e){ toast('err','复制失败', String(e)); }
+        }
+
+        document.getElementById('profile').addEventListener('change', loadActive);
+        loadActive();
+        """
+        return _page_shell("质控规则", body, js)
+
+    @app.get("/admin/output", response_class=HTMLResponse)
+    def page_output(_: dict[str, str] = Depends(_auth_guard)) -> str:
+        body = """
+        <div class="layout">
+          <div class="card">
+            <label>规则 Profile</label>
+            <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
+            <label>启用开关</label><select id="enabled"><option value="true">true</option><option value="false">false</option></select>
+
+            <label>栏目顺序（A..G，逗号分隔，G 必须最后）</label>
+            <input id="sections_order" placeholder="A,B,C,D,E,F,G"/>
+            <label>A 段条数最小/最大</label>
+            <div class="row"><input id="a_min" type="number" min="1" max="30"/><input id="a_max" type="number" min="1" max="30"/></div>
+            <label>A 段摘要句数（min/max）</label>
+            <div class="row"><input id="sum_min" type="number" min="1" max="5"/><input id="sum_max" type="number" min="1" max="5"/></div>
+            <label>A 段摘要最大字数</label><input id="sum_chars" type="number" min="50" max="2000"/>
+
+            <label>展示标签（show_tags）</label><select id="show_tags"><option value="true">true</option><option value="false">false</option></select>
+            <label>展示 other_sources（show_other_sources）</label><select id="show_other_sources"><option value="true">true</option><option value="false">false</option></select>
+            <label>展示来源链接（show_source_link）</label><select id="show_source_link"><option value="true">true</option><option value="false">false</option></select>
+
+            <label>趋势判断条数（trends_count）</label><input id="trends_count" type="number" min="1" max="10"/>
+            <label>缺口清单条数（gaps_count min/max）</label>
+            <div class="row"><input id="gaps_min" type="number" min="1" max="10"/><input id="gaps_max" type="number" min="1" max="10"/></div>
+            <label>热力图区域（heatmap_regions，逗号分隔）</label>
+            <input id="heatmap_regions" placeholder="北美,欧洲,亚太,中国"/>
+
+            <label>操作人</label><input id="created_by" value="rules-admin-ui"/>
+            <div>
+              <button onclick="saveDraft()">保存草稿并校验</button>
+              <button id="btnPublish" onclick="publishDraft()" disabled>发布生效</button>
+              <span class="pill" id="verPill">生效版本: -</span>
+            </div>
+            <p id="status"></p>
+          </div>
+          <div class="card">
+            <label>试跑日期(可选, YYYY-MM-DD)</label><input id="dryrun_date" />
+            <div class="row">
+              <button onclick="preview()">试跑预览(不发信)</button>
+              <button onclick="copyPreview()">复制预览</button>
+            </div>
+            <h4>QC 面板</h4>
+            <pre id="qcPanel"></pre>
+            <h4>A–G 预览</h4>
+            <pre id="preview"></pre>
+          </div>
+        </div>
+        """
+        js = """
+        let currentConfig = null;
+        let currentDraftId = null;
+        function splitCsv(s){ return (s||'').split(',').map(x=>x.trim()).filter(Boolean); }
+
+        async function loadActive(){
+          const profile = document.getElementById('profile').value;
+          const j = await api(`/admin/api/output_rules/active?profile=${encodeURIComponent(profile)}`);
+          if(!j||!j.ok){ document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
+          currentConfig = j.config_json;
+          document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
+          document.getElementById('enabled').value = String(!!(currentConfig.overrides||{}).enabled);
+          const d = currentConfig.defaults||{};
+          const order = (currentConfig.output && currentConfig.output.sections_order) ? currentConfig.output.sections_order : ['A','B','C','D','E','F','G'];
+          document.getElementById('sections_order').value = (order||[]).join(',');
+          const A = d.A||{};
+          document.getElementById('a_min').value = (A.items_range||{}).min ?? 8;
+          document.getElementById('a_max').value = (A.items_range||{}).max ?? 15;
+          document.getElementById('sum_min').value = (A.summary_sentences||{}).min ?? 2;
+          document.getElementById('sum_max').value = (A.summary_sentences||{}).max ?? 3;
+          document.getElementById('sum_chars').value = A.summary_max_chars ?? 260;
+          document.getElementById('show_tags').value = String(!!A.show_tags);
+          document.getElementById('show_other_sources').value = String(!!A.show_other_sources);
+          document.getElementById('show_source_link').value = String(!!A.show_source_link);
+          document.getElementById('trends_count').value = (d.E||{}).trends_count ?? 3;
+          const gc = ((d.F||{}).gaps_count)||{};
+          document.getElementById('gaps_min').value = gc.min ?? 3;
+          document.getElementById('gaps_max').value = gc.max ?? 5;
+          document.getElementById('heatmap_regions').value = ((d.D||{}).heatmap_regions||['北美','欧洲','亚太','中国']).join(',');
+          document.getElementById('btnPublish').disabled = true;
+          currentDraftId = null;
+          document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
+        }
+
+        function buildConfig(){
+          const cfg = JSON.parse(JSON.stringify(currentConfig||{}));
+          if(!cfg.defaults) cfg.defaults = {};
+          if(!cfg.overrides) cfg.overrides = {};
+          cfg.ruleset = 'output_rules';
+          cfg.profile = document.getElementById('profile').value;
+          cfg.overrides.enabled = document.getElementById('enabled').value === 'true';
+          cfg.defaults.format = cfg.defaults.format || 'plain_text';
+          cfg.output = cfg.output || {};
+          cfg.output.sections_order = splitCsv(document.getElementById('sections_order').value);
+          cfg.defaults.sections = (cfg.output.sections_order||[]).map(id=>({id, enabled:true}));
+          cfg.defaults.A = cfg.defaults.A || {};
+          cfg.defaults.A.items_range = { min: Number(document.getElementById('a_min').value||8), max: Number(document.getElementById('a_max').value||15) };
+          cfg.defaults.A.sort_by = 'importance';
+          cfg.defaults.A.summary_sentences = { min: Number(document.getElementById('sum_min').value||2), max: Number(document.getElementById('sum_max').value||3) };
+          cfg.defaults.A.summary_max_chars = Number(document.getElementById('sum_chars').value||260);
+          cfg.defaults.A.show_tags = document.getElementById('show_tags').value === 'true';
+          cfg.defaults.A.show_other_sources = document.getElementById('show_other_sources').value === 'true';
+          cfg.defaults.A.show_source_link = document.getElementById('show_source_link').value === 'true';
+          cfg.defaults.E = { trends_count: Number(document.getElementById('trends_count').value||3) };
+          cfg.defaults.F = { gaps_count: { min: Number(document.getElementById('gaps_min').value||3), max: Number(document.getElementById('gaps_max').value||5) } };
+          cfg.defaults.D = { heatmap_regions: splitCsv(document.getElementById('heatmap_regions').value) };
+          cfg.defaults.constraints = { g_must_be_last: true, a_to_f_must_not_include_quality_metrics: true };
+          cfg.rules = cfg.rules || [];
+          return cfg;
+        }
+
+        async function saveDraft(){
+          const profile = document.getElementById('profile').value;
+          const created_by = document.getElementById('created_by').value || 'rules-admin-ui';
+          const j = await api('/admin/api/output_rules/draft','POST',{ profile, created_by, config_json: buildConfig() });
+          currentDraftId = j.draft?.id || null;
+          const errs = j.draft?.validation_errors || [];
+          if(j.ok){
+            document.getElementById('status').innerHTML = `<span class="ok">草稿校验通过（draft_id=${currentDraftId}）</span>`;
+            document.getElementById('btnPublish').disabled = false;
+            toast('ok','草稿校验通过',`draft_id=${currentDraftId}`);
+          } else {
+            document.getElementById('status').innerHTML = `<span class="err">草稿校验失败</span>\\n${JSON.stringify(errs,null,2)}`;
+            document.getElementById('btnPublish').disabled = true;
+            toast('err','草稿校验失败', `${errs.length} 处错误`);
+          }
+        }
+
+        async function publishDraft(){
+          const profile = document.getElementById('profile').value;
+          const created_by = document.getElementById('created_by').value || 'rules-admin-ui';
+          const j = await api('/admin/api/output_rules/publish','POST',{ profile, draft_id: currentDraftId, created_by });
+          if(j && j.ok){
+            document.getElementById('status').innerHTML = `<span class="ok">已生效版本号：${j.version}</span>`;
+            document.getElementById('btnPublish').disabled = true;
+            toast('ok','发布成功', `version=${j.version}`);
+            await loadActive();
+          } else {
+            document.getElementById('status').innerHTML = `<span class="err">发布失败</span>\\n${JSON.stringify(j,null,2)}`;
+            toast('err','发布失败', JSON.stringify(j?.errors||j?.error||j));
+          }
+        }
+
+        async function preview(){
+          const profile = document.getElementById('profile').value;
+          const date = document.getElementById('dryrun_date').value.trim();
+          const j = await api(`/admin/api/dryrun?profile=${encodeURIComponent(profile)}&date=${encodeURIComponent(date)}`,'POST',null);
+          if(!j||!j.ok){ document.getElementById('preview').textContent = JSON.stringify(j,null,2); return; }
+          document.getElementById('qcPanel').textContent = JSON.stringify(j.qc_report||{}, null, 2);
+          document.getElementById('preview').textContent = j.preview_text || '';
+          toast('ok','试跑完成', `运行ID=${j.run_id}`);
+        }
+        async function copyPreview(){
+          const txt = document.getElementById('preview').textContent || '';
+          try { await navigator.clipboard.writeText(txt||''); toast('ok','已复制','预览已复制到剪贴板'); }
+          catch(e){ toast('err','复制失败', String(e)); }
+        }
+
+        document.getElementById('profile').addEventListener('change', loadActive);
+        loadActive();
+        """
+        return _page_shell("输出规则", body, js)
+
     @app.get("/admin/sources", response_class=HTMLResponse)
     def page_sources(_: dict[str, str] = Depends(_auth_guard)) -> str:
         style = """
@@ -1398,14 +1848,24 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               <button onclick="loadVersions()">刷新版本</button>
               <button onclick="rollbackEmail()">回滚邮件规则</button>
               <button onclick="rollbackContent()">回滚采集规则</button>
+              <button onclick="rollbackQc()">回滚质控规则</button>
+              <button onclick="rollbackOutput()">回滚输出规则</button>
             </div>
           </div>
           <div class="versionsGrid" style="margin-top:12px">
             <div><h4>邮件规则版本</h4><div id="emailTable"></div></div>
             <div><h4>采集规则版本</h4><div id="contentTable"></div></div>
+            <div><h4>质控规则版本</h4><div id="qcTable"></div></div>
+            <div><h4>输出规则版本</h4><div id="outputTable"></div></div>
           </div>
           <h4>版本差异对比</h4>
-          <label>规则集（ruleset）</label><select id="diff_ruleset"><option>email_rules</option><option>content_rules</option></select>
+          <label>规则集（ruleset）</label>
+          <select id="diff_ruleset">
+            <option>email_rules</option>
+            <option>content_rules</option>
+            <option>qc_rules</option>
+            <option>output_rules</option>
+          </select>
           <label>对比起点版本（from_version）</label><input id="from_version" list="versions_datalist" placeholder="点击上方版本号，或在此选择/输入版本号"/>
           <label>对比终点版本（to_version）</label><input id="to_version" list="versions_datalist" placeholder="点击上方版本号，或在此选择/输入版本号"/>
           <datalist id="versions_datalist"></datalist>
@@ -1420,7 +1880,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               <ul>
                 <li><b>规则 Profile</b>：规则灰度/配置档位。通常用 <code>legacy</code> 保持原行为，用 <code>enhanced</code> 启用增强规则。</li>
                 <li><b>版本号</b>：发布时生成的 DB 版本标识。点击版本号会自动填入 from/to。</li>
-                <li><b>规则集（ruleset）</b>：<code>email_rules</code> 为邮件规则，<code>content_rules</code> 为采集规则。</li>
+                <li><b>规则集（ruleset）</b>：<code>email_rules</code> 邮件规则，<code>content_rules</code> 采集规则，<code>qc_rules</code> 质控规则，<code>output_rules</code> 输出渲染规则。</li>
                 <li><b>from/to</b>：选择两个版本做差异对比，下面会列出字段级变更（新增/移除/变更）。</li>
                 <li><b>回滚</b>：将当前生效版本（active）切回上一个版本（同 profile）。建议回滚前先做试跑预览验证。</li>
               </ul>
@@ -1472,9 +1932,16 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           const profile = document.getElementById('profile').value;
           const j = await api(`/admin/api/versions?profile=${encodeURIComponent(profile)}`);
           if(!j||!j.ok){ document.getElementById('diffOut').textContent = JSON.stringify(j,null,2); return; }
-          window._versions = { email_rules: j.email_rules || [], content_rules: j.content_rules || [] };
+          window._versions = {
+            email_rules: j.email_rules || [],
+            content_rules: j.content_rules || [],
+            qc_rules: j.qc_rules || [],
+            output_rules: j.output_rules || []
+          };
           document.getElementById('emailTable').innerHTML = render(j.email_rules);
           document.getElementById('contentTable').innerHTML = render(j.content_rules);
+          document.getElementById('qcTable').innerHTML = render(j.qc_rules);
+          document.getElementById('outputTable').innerHTML = render(j.output_rules);
           setDatalistOptions(document.getElementById('diff_ruleset').value);
         }
         async function rollbackEmail(){
@@ -1486,6 +1953,16 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           const profile = document.getElementById('profile').value;
           const j = await api('/admin/api/content_rules/rollback','POST',{profile});
           toast(j&&j.ok?'ok':'err','回滚采集规则', JSON.stringify(j)); loadVersions();
+        }
+        async function rollbackQc(){
+          const profile = document.getElementById('profile').value;
+          const j = await api('/admin/api/qc_rules/rollback','POST',{profile});
+          toast(j&&j.ok?'ok':'err','回滚质控规则', JSON.stringify(j)); loadVersions();
+        }
+        async function rollbackOutput(){
+          const profile = document.getElementById('profile').value;
+          const j = await api('/admin/api/output_rules/rollback','POST',{profile});
+          toast(j&&j.ok?'ok':'err','回滚输出规则', JSON.stringify(j)); loadVersions();
         }
         async function showDiff(){
           const profile = document.getElementById('profile').value;

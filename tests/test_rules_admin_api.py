@@ -71,6 +71,57 @@ def _content_cfg(profile: str, version: str) -> dict:
         "output": {"format": "plain_text", "sections": ["A", "B", "C", "D", "E", "F", "G"], "quality_audit_at_end": True},
     }
 
+def _qc_cfg(profile: str, version: str) -> dict:
+    return {
+        "ruleset": "qc_rules",
+        "version": version,
+        "profile": profile,
+        "defaults": {
+            "timezone": "Asia/Shanghai",
+            "min_24h_items": 10,
+            "fallback_days": 7,
+            "7d_topup_limit": 20,
+            "apac_min_share": 0.4,
+            "china_min_share": 0.2,
+            "daily_repeat_rate_max": 0.25,
+            "recent_7d_repeat_rate_max": 0.4,
+            "required_sources_checklist": ["NMPA"],
+            "rumor_policy": {"enabled": True, "trigger_terms": ["rumor"], "label": "传闻（未确认）"},
+            "fail_policy": {"mode": "only_warn"},
+        },
+        "overrides": {"enabled": True},
+        "rules": [],
+        "output": {"format": "json", "panel_enabled": True},
+    }
+
+
+def _output_cfg(profile: str, version: str) -> dict:
+    return {
+        "ruleset": "output_rules",
+        "version": version,
+        "profile": profile,
+        "defaults": {
+            "format": "plain_text",
+            "sections": [{"id": "A", "enabled": True}, {"id": "G", "enabled": True}],
+            "A": {
+                "items_range": {"min": 8, "max": 15},
+                "sort_by": "importance",
+                "summary_sentences": {"min": 2, "max": 3},
+                "summary_max_chars": 260,
+                "show_tags": True,
+                "show_other_sources": True,
+                "show_source_link": True,
+            },
+            "D": {"heatmap_regions": ["北美", "欧洲", "亚太", "中国"]},
+            "E": {"trends_count": 3},
+            "F": {"gaps_count": {"min": 3, "max": 5}},
+            "constraints": {"g_must_be_last": True, "a_to_f_must_not_include_quality_metrics": True},
+        },
+        "overrides": {"enabled": True},
+        "rules": [],
+        "output": {"sections_order": ["A", "G"]},
+    }
+
 
 class RulesAdminApiTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -85,6 +136,14 @@ class RulesAdminApiTests(unittest.TestCase):
         shutil.copy(
             repo_root / "rules" / "schemas" / "content_rules.schema.json",
             self.root / "rules" / "schemas" / "content_rules.schema.json",
+        )
+        shutil.copy(
+            repo_root / "rules" / "schemas" / "qc_rules.schema.json",
+            self.root / "rules" / "schemas" / "qc_rules.schema.json",
+        )
+        shutil.copy(
+            repo_root / "rules" / "schemas" / "output_rules.schema.json",
+            self.root / "rules" / "schemas" / "output_rules.schema.json",
         )
 
         self.store = RulesStore(self.root)
@@ -101,6 +160,22 @@ class RulesAdminApiTests(unittest.TestCase):
             profile="enhanced",
             version="v0001",
             config=_content_cfg("enhanced", "2.0.0"),
+            created_by="seed",
+            activate=True,
+        )
+        self.store.create_version(
+            "qc_rules",
+            profile="enhanced",
+            version="v0001",
+            config=_qc_cfg("enhanced", "2.0.0"),
+            created_by="seed",
+            activate=True,
+        )
+        self.store.create_version(
+            "output_rules",
+            profile="enhanced",
+            version="v0001",
+            config=_output_cfg("enhanced", "2.0.0"),
             created_by="seed",
             activate=True,
         )
@@ -122,6 +197,14 @@ class RulesAdminApiTests(unittest.TestCase):
         r2 = self.client.get("/admin/api/email_rules/active?profile=enhanced", auth=("admin", "pass123"))
         self.assertEqual(r2.status_code, 200)
         self.assertTrue(r2.json()["ok"])
+
+        r3 = self.client.get("/admin/api/qc_rules/active?profile=enhanced", auth=("admin", "pass123"))
+        self.assertEqual(r3.status_code, 200)
+        self.assertTrue(r3.json()["ok"])
+
+        r4 = self.client.get("/admin/api/output_rules/active?profile=enhanced", auth=("admin", "pass123"))
+        self.assertEqual(r4.status_code, 200)
+        self.assertTrue(r4.json()["ok"])
 
     def test_draft_publish_and_rollback(self) -> None:
         draft_payload = {
@@ -204,6 +287,9 @@ class RulesAdminApiTests(unittest.TestCase):
         (artifacts_dir / "clustered_items.json").write_text(json.dumps([{"title": "t", "story_id": "s1"}]), encoding="utf-8")
         (artifacts_dir / "cluster_explain.json").write_text(json.dumps({"items_before_count": 3, "items_after_count": 1}), encoding="utf-8")
         (artifacts_dir / "run_id.json").write_text(json.dumps({"run_id": run_id, "decision_explain": {}}), encoding="utf-8")
+        (artifacts_dir / "qc_report.json").write_text(json.dumps({"pass": True}), encoding="utf-8")
+        (artifacts_dir / "output_render.json").write_text(json.dumps({"sections_order": ["A","G"]}), encoding="utf-8")
+        (artifacts_dir / "run_meta.json").write_text(json.dumps({"rules_version": {"email":"x"}}), encoding="utf-8")
 
         fake = {
             "run_id": run_id,
@@ -217,6 +303,9 @@ class RulesAdminApiTests(unittest.TestCase):
                 "clustered_items": str(artifacts_dir / "clustered_items.json"),
                 "cluster_explain": str(artifacts_dir / "cluster_explain.json"),
                 "explain": str(artifacts_dir / "run_id.json"),
+                "qc_report": str(artifacts_dir / "qc_report.json"),
+                "output_render": str(artifacts_dir / "output_render.json"),
+                "run_meta": str(artifacts_dir / "run_meta.json"),
             },
         }
 
@@ -230,6 +319,9 @@ class RulesAdminApiTests(unittest.TestCase):
         self.assertEqual(body["items_after"], 1)
         self.assertIn("preview_text", body)
         self.assertIn("preview_html", body)
+        self.assertIsInstance(body["qc_report"], dict)
+        self.assertIsInstance(body["output_render"], dict)
+        self.assertIsInstance(body["run_meta"], dict)
         self.assertIsInstance(body["items"], list)
         self.assertIsInstance(body["clustered_items"], list)
         self.assertIsInstance(body["explain"], dict)
