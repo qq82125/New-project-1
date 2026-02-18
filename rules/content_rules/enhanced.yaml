@@ -153,6 +153,31 @@ rules:
         - 体外诊断
         - IVD
         - 诊断
+        - 诊断试剂
+        - 检测
+        - 检测试剂
+        - 试剂
+        - 仪器
+        - 分析仪
+        - 检验
+        - 实验室
+        - 检验科
+        - 化学发光
+        - 免疫荧光
+        - 免疫层析
+        - 胶体金
+        - 侧向层析
+        - POCT
+        - 分子POCT
+        - 核酸
+        - PCR
+        - qPCR
+        - RT-PCR
+        - ddPCR
+        - dPCR
+        - NGS
+        - WES
+        - WGS
         - diagnostic
         - diagnostics
         - assay
@@ -160,11 +185,22 @@ rules:
         - test
         - testing
         - pcr
+        - qpcr
+        - rt-pcr
+        - ddpcr
+        - dpcr
         - ngs
+        - sequencing
+        - wes
+        - wgs
         - poct
         - immunoassay
         - chemiluminescence
         - elisa
+        - ihc
+        - clia
+        - lateral flow
+        - lfa
         - laboratory
         - lab
         - reagent
@@ -177,6 +213,9 @@ rules:
         - NMPA
         - CMDE
         - UDI
+        - 省药监
+        - 药监局
+        - 医保局
         - 招采
         - 招标
         - 采购
@@ -188,12 +227,21 @@ rules:
         - DIP
         - 目录
         - 注册证
+        - 注册
+        - 备案
+        - 变更
+        - 延续
         - 指导原则
         - 技术审评
         - 受理
         - 批准
+        - 获批
+        - 获证
         - 召回
         - 安全警示
+        - 监督检查
+        - 飞行检查
+        - 质量体系
         - FDA
         - PMDA
         - MFDS
@@ -203,31 +251,56 @@ rules:
         - guidance
         - approval
         - clearance
+        - authorized
+        - granted
         - recall
         - field safety
+        - safety notice
+        - warning letter
+        - inspection
         - tender
         - procurement
         - bid
         - reimbursement
+        - purchasing
       oncology:
         - 肿瘤
         - 癌
+        - 癌症
+        - 肿瘤标志物
+        - 伴随诊断
+        - 液体活检
         - ctDNA
         - MRD
         - PD-L1
         - EGFR
+        - ALK
+        - HER2
         - cancer
         - oncology
         - tumor
         - biomarker
+        - companion diagnostic
+        - liquid biopsy
       infection:
         - 感染
         - 病原
+        - 病原体
+        - 细菌
+        - 真菌
         - 病毒
         - 流感
         - 新冠
+        - 新冠抗原
+        - 新冠核酸
+        - 呼吸道
         - RSV
         - HPV
+        - HBV
+        - HCV
+        - HIV
+        - 登革热
+        - 诺如
         - infect
         - infection
         - pathogen
@@ -269,6 +342,15 @@ rules:
         - 真实世界
         - 论文
         - 发表
+        - 队列
+        - 前瞻
+        - 回顾
+        - 随机
+        - 双盲
+        - meta分析
+        - 系统综述
+        - 共识
+        - 指南
         - clinical
         - study
         - trial
@@ -277,10 +359,27 @@ rules:
         - real-world
         - publication
         - preprint
+        - doi
+        - peer-reviewed
+        - prospective
+        - retrospective
+        - cohort
+        - randomized
+        - meta-analysis
+        - systematic review
+        - guideline
+        - consensus
         - medrxiv
         - biorxiv
+        - pubmed
+        - europe pmc
         - nejm
         - lancet
+        - new england journal of medicine
+        - the lancet
+        - nature medicine
+        - jama
+        - bmj
         - science translational medicine
 
   - id: exclude-noise

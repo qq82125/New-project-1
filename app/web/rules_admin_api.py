@@ -882,6 +882,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "lane_diag": out.get("lane_diag", {}),
             "event_diag": out.get("event_diag", {}),
             "keyword_pack_stats": out.get("keyword_pack_stats", {}),
+            "exclude_diag": out.get("exclude_diag", {}),
             "artifacts_dir": out.get("artifacts_dir"),
         }
 
@@ -1666,6 +1667,13 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                     <pre id="kwPack" style="margin-top:8px"></pre>
                   </div>
                 </details>
+                <details class="help" id="excludeDiagBox" style="margin-top:10px; display:none">
+                  <summary>被排除样例诊断（用于修排除词）</summary>
+                  <div class="box">
+                    <div class="small">展示本次被 exclude 词剔除的数量、被 keep_if 兜底数量，以及最多 15 条样例（命中的排除词）。</div>
+                    <pre id="excludeDiag" style="margin-top:8px"></pre>
+                  </div>
+                </details>
                 <details class="help">
                   <summary>预览说明</summary>
                   <div class="box">
@@ -1964,6 +1972,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           const pdEl = document.getElementById('platformDiag');
           const kwBox = document.getElementById('kwPackBox');
           const kwEl = document.getElementById('kwPack');
+          const exBox = document.getElementById('excludeDiagBox');
+          const exEl = document.getElementById('excludeDiag');
           const ldBox = document.getElementById('laneDiagBox');
           const ldEl = document.getElementById('laneDiag');
           const edBox = document.getElementById('eventDiagBox');
@@ -1974,6 +1984,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           if (pdEl) pdEl.textContent = '';
           if (kwBox) kwBox.style.display = 'none';
           if (kwEl) kwEl.textContent = '';
+          if (exBox) exBox.style.display = 'none';
+          if (exEl) exEl.textContent = '';
           if (ldBox) ldBox.style.display = 'none';
           if (ldEl) ldEl.textContent = '';
           if (edBox) edBox.style.display = 'none';
@@ -2010,6 +2022,11 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               if(kw && typeof kw === 'object' && (kw.candidates_checked || Object.keys(kw.packs||{}).length)){
                 if(kwEl) kwEl.textContent = JSON.stringify(kw, null, 2);
                 if(kwBox) kwBox.style.display = 'block';
+              }
+              const ex = j.exclude_diag || {};
+              if(ex && typeof ex === 'object' && ((ex.excluded_count||0) > 0 || (ex.rescued_count||0) > 0 || (ex.samples||[]).length)){
+                if(exEl) exEl.textContent = JSON.stringify(ex, null, 2);
+                if(exBox) exBox.style.display = 'block';
               }
               const ld = j.lane_diag || {};
               if(ld && typeof ld === 'object' && (ld.other_count || (ld.samples||[]).length)){

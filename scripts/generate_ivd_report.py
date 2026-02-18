@@ -783,6 +783,31 @@ def is_ivd_relevant(text: str) -> bool:
     return score_ivd(text) >= 0
 
 
+def exclusion_reason(text: str) -> dict[str, Any] | None:
+    """
+    If text is excluded by exclude_keywords (and not rescued by keep_if_has_keywords), return why.
+    Used only for dry-run diagnostics (operator visibility).
+    """
+    t = str(text or "").lower()
+    keep_terms = [str(x).strip().lower() for x in RUNTIME_CONTENT.get("keep_if_has_keywords", []) if str(x).strip()]
+    for x in RUNTIME_CONTENT.get("exclude_keywords", []):
+        kw = str(x).strip().lower()
+        if kw and has_term(t, kw):
+            rescued = bool(keep_terms and any(has_term(t, k) for k in keep_terms))
+            if rescued:
+                return {
+                    "excluded": False,
+                    "matched_exclude": kw,
+                    "rescued_by_keep_if": True,
+                }
+            return {
+                "excluded": True,
+                "matched_exclude": kw,
+                "rescued_by_keep_if": False,
+            }
+    return None
+
+
 def matched_keyword_packs(text: str) -> list[str]:
     """
     Return pack ids whose keywords match the given text (case-insensitive).
@@ -1607,6 +1632,12 @@ def main() -> int:
         "matched_any": 0,
         "candidates_checked": 0,
     }
+    exclude_diag: dict[str, Any] = {
+        "excluded_count": 0,
+        "rescued_count": 0,
+        "excluded_by_keyword": {},
+        "samples": [],
+    }
 
     # China official: baseline high-confidence China signal.
     items.extend(collect_nmpa_site_updates(now_utc, tz_name, enhanced=bool(use_enhanced)))
@@ -1705,6 +1736,9 @@ def main() -> int:
                 continue
             fallback_ok = False
             combined = title + " " + row["summary"]
+            exr = exclusion_reason(combined)
+            if exr and exr.get("rescued_by_keep_if"):
+                exclude_diag["rescued_count"] = int(exclude_diag.get("rescued_count", 0)) + 1
 
             # Operability stats: keyword pack hit distribution (dry-run panel).
             keyword_pack_stats["candidates_checked"] += 1
@@ -1719,6 +1753,21 @@ def main() -> int:
                     continue
             else:
                 if not is_ivd_relevant(combined):
+                    if exr and exr.get("excluded"):
+                        k = str(exr.get("matched_exclude", "unknown"))
+                        byk = exclude_diag.setdefault("excluded_by_keyword", {})
+                        byk[k] = int(byk.get(k, 0)) + 1
+                        exclude_diag["excluded_count"] = int(exclude_diag.get("excluded_count", 0)) + 1
+                        samples = exclude_diag.setdefault("samples", [])
+                        if isinstance(samples, list) and len(samples) < 15:
+                            samples.append(
+                                {
+                                    "title": title[:220],
+                                    "url": link[:500],
+                                    "source_id": str(source_id or "")[:120],
+                                    "matched_exclude": k[:80],
+                                }
+                            )
                     # keep as a fallback candidate if it's not obviously pharma-only
                     if not is_relaxed_relevant(combined):
                         continue
@@ -2097,6 +2146,10 @@ def main() -> int:
         )
         (p / "keyword_pack_stats.json").write_text(
             json.dumps(keyword_pack_stats, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        (p / "exclude_diag.json").write_text(
+            json.dumps(exclude_diag, ensure_ascii=False, indent=2, default=str),
             encoding="utf-8",
         )
 
