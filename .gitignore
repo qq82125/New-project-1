@@ -7,6 +7,7 @@ logs/
 .rules_console.env
 .admin_api.env
 .docker.env
+data/
 data/*.db
 artifacts/
 ivd_morning_*.txt

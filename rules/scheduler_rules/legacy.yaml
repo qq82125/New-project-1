@@ -1,5 +1,5 @@
 ruleset: scheduler_rules
-version: "1.0.0"
+version: "1.0.1"
 profile: legacy
 
 defaults:
@@ -19,7 +19,7 @@ defaults:
     misfire_grace_seconds: 600
   run_policies:
     allow_manual_trigger: true
-    pause_switch: true
+    pause_switch: false
   artifacts:
     retain_days: 14
 
