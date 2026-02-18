@@ -1251,7 +1251,6 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "scheduler_rules": _version_rows("scheduler_rules", profile),
         }
 
-    @app.get("/admin/api/versions/diff")
     def _json_diff(left: Any, right: Any, path: str = "$", out: list[dict[str, Any]] | None = None, limit: int = 200) -> list[dict[str, Any]]:
         out = out or []
         if len(out) >= limit:
@@ -1281,6 +1280,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             out.append({"path": path, "op": "changed", "from": left, "to": right})
         return out
 
+    @app.get("/admin/api/versions/diff")
     def versions_diff(
         ruleset: str,
         profile: str,
