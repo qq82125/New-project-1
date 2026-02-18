@@ -541,7 +541,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     def _page_shell(title: str, body_html: str, script_js: str = "") -> str:
         nav = """
         <aside class="sidebar">
-          <div class="brand">规则控制台</div>
+          <div class="brand">IVD全球CBO</div>
           <a class="nav" href="/admin/email">邮件规则</a>
           <a class="nav" href="/admin/content">采集规则</a>
           <a class="nav" href="/admin/qc">质控规则</a>
@@ -879,6 +879,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "items_count": out.get("items_count"),
             "top_clusters": out.get("top_clusters", []),
             "platform_diag": out.get("platform_diag", {}),
+            "lane_diag": out.get("lane_diag", {}),
+            "event_diag": out.get("event_diag", {}),
             "artifacts_dir": out.get("artifacts_dir"),
         }
 
@@ -1563,16 +1565,38 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                         <input id="cluster_max_other_sources" type="number" min="0" max="20"/>
 
                         <label>赛道映射（lane_mapping）</label>
+                        <div class="row">
+                          <button type="button" onclick="fillLaneTemplate()">加载推荐模板</button>
+                        </div>
                         <textarea id="lane_mapping" rows="6" placeholder="示例：\n肿瘤检测: 肿瘤, 癌, oncology, cancer\n感染检测: 感染, 病原, virus, influenza\n生殖与遗传检测: 生殖, 遗传, NIPT, prenatal\n其他: 免疫, 代谢, 心血管"></textarea>
                         <div class="small">格式：每行 “标签: 关键词1,关键词2”。用于自动打标签与分栏汇总。</div>
                         <label>技术平台映射（platform_mapping）</label>
+                        <div class="row">
+                          <button type="button" onclick="fillPlatformTemplate()">加载推荐模板</button>
+                        </div>
                         <textarea id="platform_mapping" rows="6" placeholder="示例：\nNGS: ngs, sequencing, wgs\nPCR: pcr, 核酸\n数字PCR: ddpcr, digital pcr, 数字pcr\n免疫诊断（化学发光/ELISA/IHC等）: 化学发光, immunoassay, elisa\nPOCT/分子POCT: poct, rapid test\n微流控/单分子: microfluidic, single molecule"></textarea>
                         <div class="small">用于技术平台雷达（C 段）与标签展示。</div>
                     <label>事件类型映射（event_mapping）</label>
+                    <div class="row">
+                      <button type="button" onclick="fillEventTemplate()">加载推荐模板</button>
+                    </div>
                     <textarea id="event_mapping" rows="6" placeholder="示例：\n监管审批与指南: NMPA, CMDE, FDA, guideline, approval\n并购融资/IPO与合作: acquisition, financing, IPO, partnership\n注册上市: registration, launch\n产品发布: product, assay, kit\n临床与科研证据: clinical, study, trial\n支付与招采: tender, procurement, 招采, 采购\n政策与市场动态: policy, reimbursement, market"></textarea>
                     <div class="small">用于事件类型判定与 QC 面板统计（regulatory/commercial）。</div>
                         <label>地区过滤（逗号分隔）</label><input id="allowed_regions" placeholder="例如：cn,apac,na,eu"/>
-                    <label>赛道过滤（逗号分隔）</label><input id="tracks" placeholder="例如：肿瘤检测,感染检测"/>
+                    <label>赛道过滤（多选）</label>
+                    <div class="box">
+                      <label class="chk"><input type="checkbox" name="track_sel" value="肿瘤检测"/> 肿瘤检测</label>
+                      <label class="chk"><input type="checkbox" name="track_sel" value="感染检测"/> 感染检测</label>
+                      <label class="chk"><input type="checkbox" name="track_sel" value="生殖与遗传检测"/> 生殖与遗传检测</label>
+                      <label class="chk"><input type="checkbox" name="track_sel" value="其他"/> 其他</label>
+                      <div class="row" style="margin-top:6px">
+                        <button type="button" onclick="selectAllTracks(true)">全选</button>
+                        <button type="button" onclick="selectAllTracks(false)">全不选</button>
+                        <button type="button" onclick="tracksFromLaneMapping()">从赛道映射提取</button>
+                      </div>
+                      <div class="small">提示：这里控制“覆盖赛道集合”（影响分栏统计与候选聚焦）。不选则默认使用规则里的 coverage_tracks。</div>
+                    </div>
+                    <input id="tracks" type="hidden"/>
                     <label>最低可信度（0-1）</label><input id="min_confidence" type="number" step="0.01" min="0" max="1" placeholder="例如：0.6"/>
                     <label>操作人</label><input id="created_by" value="rules-admin-ui"/>
                     <div>
@@ -1613,6 +1637,20 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                     <pre id="platformDiag" style="margin-top:8px"></pre>
                   </div>
                 </details>
+                <details class="help" id="laneDiagBox" style="margin-top:10px; display:none">
+                  <summary>其他赛道诊断（用于补赛道关键词）</summary>
+                  <div class="box">
+                    <div class="small">仅展示“赛道=其他”的原因统计与最多 10 条样例。建议把关键词补到左侧“赛道映射”。</div>
+                    <pre id="laneDiag" style="margin-top:8px"></pre>
+                  </div>
+                </details>
+                <details class="help" id="eventDiagBox" style="margin-top:10px; display:none">
+                  <summary>事件类型诊断（用于补事件关键词）</summary>
+                  <div class="box">
+                    <div class="small">仅展示“未命中映射而走 fallback_heuristic”的统计与最多 10 条样例（说明 event_mapping 覆盖不足或关键词过泛）。</div>
+                    <pre id="eventDiag" style="margin-top:8px"></pre>
+                  </div>
+                </details>
                 <details class="help">
                   <summary>预览说明</summary>
                   <div class="box">
@@ -1646,6 +1684,25 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   }
                   return out;
                 }
+                function selectAllTracks(v){
+                  const vals = v ? ['肿瘤检测','感染检测','生殖与遗传检测','其他'] : [];
+                  setChecks('track_sel', vals);
+                  document.getElementById('tracks').value = vals.join(',');
+                  toast('ok', v ? '已全选赛道' : '已清空赛道', '');
+                }
+                function tracksFromLaneMapping(){
+                  try{
+                    const m = parseMapping(document.getElementById('lane_mapping').value);
+                    const keys = Object.keys(m||{}).map(x=>String(x||'').trim()).filter(Boolean);
+                    if(keys.length){
+                      setChecks('track_sel', keys);
+                      document.getElementById('tracks').value = keys.join(',');
+                      toast('ok','已从赛道映射提取', keys.join(','));
+                      return;
+                    }
+                  }catch(e){}
+                  toast('warn','提取失败','请先确保“赛道映射”按每行“标签: 关键词”格式填写');
+                }
                 function mappingToText(m){
                   if(!m || typeof m !== 'object') return '';
                   const lines = [];
@@ -1658,7 +1715,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               }
               return lines.join('\\n');
             }
-            function parseMapping(text){
+                function parseMapping(text){
               const t = String(text||'').trim();
               if(!t) return {};
               if(t.startsWith('{')){
@@ -1679,8 +1736,44 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 const parts = rhs.split(/[，,;；]/).map(s=>s.trim()).filter(Boolean);
                 if(parts.length) out[label] = parts;
               }
-              return out;
-            }
+                  return out;
+                }
+                function fillLaneTemplate(){
+                  const t = [
+                    '肿瘤检测: 肿瘤, 癌, 癌症, 肿瘤标志物, 伴随诊断, ctDNA, MRD, PD-L1, EGFR, ALK, HER2, oncology, cancer, tumor, biomarker, companion diagnostic, IHC',
+                    '感染检测: 感染, 病原, 病原体, 细菌, 真菌, 病毒, 耐药, 血培养, 呼吸道, 流感, 新冠, RSV, HPV, HBV, HCV, HIV, infection, pathogen, virus, influenza, sepsis, respiratory',
+                    '生殖与遗传检测: 产前, 唐筛, 染色体, CNV, 遗传, 遗传病, 地贫, 不孕不育, 胚胎, PGT, IVF, 新生儿筛查, prenatal, NIPT, fertility, reproductive, genetic, hereditary',
+                    '其他: 心肌, 心衰, 心梗, 凝血, D-二聚体, 糖化, HbA1c, 肝肾功能, 炎症, PCT, CRP, 自免, 免疫, 代谢, 心血管, cardiovascular, metabolic, immunology',
+                  ].join('\\n');
+                  document.getElementById('lane_mapping').value = t;
+                  toast('ok','已加载模板','你可以在此基础上删改关键词');
+                }
+                function fillPlatformTemplate(){
+                  const t = [
+                    'NGS: 测序, 二代测序, 高通量测序, 全外显子, 全基因组, 靶向测序, panel, NGS, sequencing, next-generation sequencing, WES, WGS, whole exome, whole genome, RNA-seq, targeted sequencing',
+                    'PCR: 核酸, 核酸检测, 扩增, 等温扩增, LAMP, PCR, qPCR, RT-PCR, real-time PCR, isothermal, lamp, rt-lamp',
+                    '数字PCR: 数字PCR, 数字pcr, 微滴数字PCR, ddPCR, digital PCR, dPCR, dpcr',
+                    '流式细胞: 流式, 流式细胞术, flow cytometry, cytometry, FACS',
+                    '质谱: 质谱, 串联质谱, LC-MS/MS, MALDI-TOF, mass spec, lc-ms, ms/ms, maldi, maldi-tof',
+                    '免疫诊断（化学发光/ELISA/IHC等）: 化学发光, 免疫, 免疫荧光, ELISA, IHC, CLIA, immunoassay, chemiluminescence, lateral flow immunoassay, LFA, 侧向层析, 免疫层析, 胶体金',
+                    'POCT/分子POCT: POCT, 即时检测, 快检, 自测, rapid test, self-test, point-of-care, cartridge, sample-to-answer',
+                    '微流控/单分子: 微流控, 单分子, 数字免疫, digital immunoassay, microfluidic, lab-on-a-chip, single molecule, Simoa',
+                  ].join('\\n');
+                  document.getElementById('platform_mapping').value = t;
+                  toast('ok','已加载模板','你可以在此基础上删改关键词');
+                }
+                function fillEventTemplate(){
+                  const t = [
+                    '监管审批与指南: 通告, 公告, 指导原则, 技术审评, 审评, 批准, 受理, 注册证, 变更, 延续, 召回, 警戒, 安全警示, 飞检, 体系, GMP, GSP, UDI, 追溯, NMPA, CMDE, FDA, PMDA, MFDS, TGA, HSA, guideline, guidance, approval, cleared, clearance, recall, safety alert, field safety',
+                    '并购融资/IPO与合作: 并购, 收购, 合并, 投资, 融资, 定增, 战略合作, 合作, 联合开发, 渠道合作, 授权, 许可, IPO, 上市辅导, acquisition, acquire, merger, financing, funding, raise, partnership, collaboration, deal, licensing',
+                    '注册上市/产品发布: 获批, 获证, 注册, 上市, 发布, 推出, 新品, 新菜单, 获得认证, CE, 510(k), De Novo, clearance, launch, launched, introduce, new test, new assay, registered, CE mark, FDA clearance',
+                    '临床与科研证据: 研究, 临床, 试验, 队列, 回顾性, 前瞻性, 多中心, 验证, 真实世界, RWD, 论文, 发表, study, clinical, trial, evidence, validation, publication, real-world',
+                    '支付与招采: 招标, 招采, 采购, 中标, 挂网, 集采, 议价, 目录, 医保, 支付, DRG, DIP, tender, procurement, bid, reimbursement, payment, CCGP',
+                    '政策与市场动态: 政策, 市场, 行业, 渠道, 需求, 渗透率, 增长, 价格, 出海, policy, market, guideline, reimbursement, coverage, pricing',
+                  ].join('\\n');
+                  document.getElementById('event_mapping').value = t;
+                  toast('ok','已加载模板','你可以在此基础上删改关键词');
+                }
             function ensureRule(cfg, type, id, priority){
               let r = (cfg.rules||[]).find(x=>x.type===type);
               if(!r){
@@ -1736,7 +1829,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   document.getElementById('platform_mapping').value = mappingToText(platformRule.params||{});
                   document.getElementById('event_mapping').value = mappingToText(eventRule.params||{});
                   document.getElementById('allowed_regions').value = csv((rf.allowed_regions||[]));
-                  document.getElementById('tracks').value = csv((currentConfig.defaults||{}).coverage_tracks||[]);
+                  const cov = (currentConfig.defaults||{}).coverage_tracks||[];
+                  document.getElementById('tracks').value = csv(cov);
+                  setChecks('track_sel', cov && cov.length ? cov : ['肿瘤检测','感染检测','生殖与遗传检测','其他']);
                   document.getElementById('min_confidence').value = Number(((currentConfig.overrides||{}).min_confidence ?? 0));
                   document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
                   document.getElementById('btnPublish').disabled = true;
@@ -1761,7 +1856,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   cfg.defaults.region_filter.apac_min_share = Number(document.getElementById('apac_min_share').value||0.4);
                   cfg.defaults.region_filter.china_min_share = Number(document.getElementById('china_min_share').value||0.2);
                   cfg.defaults.region_filter.eu_na_min_share = Number(document.getElementById('eu_na_min_share').value||0.4);
-                  cfg.defaults.coverage_tracks = arr(document.getElementById('tracks').value);
+                  const selectedTracks = getChecks('track_sel');
+                  cfg.defaults.coverage_tracks = selectedTracks.length ? selectedTracks : arr(document.getElementById('tracks').value);
                   cfg.overrides.min_confidence = Number(document.getElementById('min_confidence').value||0);
                   cfg.overrides.keywords_pack = getChecks('keywords_pack');
                   cfg.defaults.content_sources.min_trust_tier = document.getElementById('min_trust_tier').value || 'C';
@@ -1851,10 +1947,18 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           const clustersEl = document.getElementById('clusters');
           const pdBox = document.getElementById('platformDiagBox');
           const pdEl = document.getElementById('platformDiag');
+          const ldBox = document.getElementById('laneDiagBox');
+          const ldEl = document.getElementById('laneDiag');
+          const edBox = document.getElementById('eventDiagBox');
+          const edEl = document.getElementById('eventDiag');
           if (summaryEl) summaryEl.textContent = '运行中...（不会发信）';
           if (clustersEl) clustersEl.innerHTML = '<div class="small">运行中...</div>';
           if (pdBox) pdBox.style.display = 'none';
           if (pdEl) pdEl.textContent = '';
+          if (ldBox) ldBox.style.display = 'none';
+          if (ldEl) ldEl.textContent = '';
+          if (edBox) edBox.style.display = 'none';
+          if (edEl) edEl.textContent = '';
           const j = await api('/admin/api/content_rules/dryrun','POST',{ profile, date });
           lastDryrun = j;
           if (!j || !j.ok) { document.getElementById('summary').textContent = JSON.stringify(j,null,2); return; }
@@ -1882,6 +1986,16 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               if(pd && typeof pd === 'object' && (pd.unlabeled_count || (pd.samples||[]).length)){
                 if(pdEl) pdEl.textContent = JSON.stringify(pd, null, 2);
                 if(pdBox) pdBox.style.display = 'block';
+              }
+              const ld = j.lane_diag || {};
+              if(ld && typeof ld === 'object' && (ld.other_count || (ld.samples||[]).length)){
+                if(ldEl) ldEl.textContent = JSON.stringify(ld, null, 2);
+                if(ldBox) ldBox.style.display = 'block';
+              }
+              const ed = j.event_diag || {};
+              if(ed && typeof ed === 'object' && (ed.fallback_count || (ed.samples||[]).length)){
+                if(edEl) edEl.textContent = JSON.stringify(ed, null, 2);
+                if(edBox) edBox.style.display = 'block';
               }
               toast('ok','试跑完成', `运行ID=${j.run_id}`);
         }
@@ -2780,11 +2894,24 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 	        function renderRow(s){
 	          const lastFetchRaw = s.last_fetched_at || '';
 	          const lastFetch = esc(fmtTime(lastFetchRaw) || lastFetchRaw || '-');
+	          // Fetch status = worker/scheduler real fetch health (may differ from manual "test").
 	          const st = String(s.last_fetch_status||'').toLowerCase();
-	          const stLabel = st==='ok' ? '成功' : (st==='fail' ? '失败' : (st==='skipped' ? '跳过' : ''));
-	          const stPill = stLabel ? `<span class="pill ${st==='fail'?'err':''}">${esc(stLabel)}</span>` : '';
-	              const err = s.last_fetch_error ? `<span class="pill err" title="${esc(s.last_fetch_error)}">异常</span>` : '';
-	          const hs = s.last_fetch_http_status ? `<span class="pill">${esc(s.last_fetch_http_status)}</span>` : '';
+	          const stLabel = st==='ok' ? '抓取成功' : (st==='fail' ? '抓取失败' : (st==='skipped' ? '抓取跳过' : ''));
+	          const stPill = stLabel ? `<span class="pill ${st==='fail'?'err':''}" title="来源：调度抓取（worker）">${esc(stLabel)}</span>` : '';
+	          const fetchErr = s.last_fetch_error ? `<span class="pill err" title="${esc('抓取异常: '+s.last_fetch_error)}">抓取异常</span>` : '';
+	          const fetchHs = s.last_fetch_http_status ? `<span class="pill" title="抓取 HTTP 状态码">${esc(s.last_fetch_http_status)}</span>` : '';
+
+	          // Test status = admin console "sources:test" result.
+	          const testOk = !!(s.last_success_at && !s.last_error);
+	          const testFail = !!(s.last_error);
+	          const testLabel = testOk ? '测试成功' : (testFail ? '测试失败' : '');
+	          const testTitle = testOk
+	            ? (`来源：手动测试（/sources/{id}/test）\\n时间：${String(s.last_success_at||'')}` + (s.last_http_status ? `\\nHTTP：${String(s.last_http_status)}` : ''))
+	            : (testFail ? (`来源：手动测试（/sources/{id}/test）\\n错误：${String(s.last_error||'')}`) : '');
+	          const testPill = testLabel ? `<span class="pill ${testFail?'err':''}" title="${esc(testTitle)}">${esc(testLabel)}</span>` : '';
+	          const testHs = s.last_http_status ? `<span class="pill" title="测试 HTTP 状态码">${esc(s.last_http_status)}</span>` : '';
+
+	          const statusPills = [stPill, fetchErr, fetchHs, testPill, testHs].filter(Boolean).join(' ');
 	          const urlText = prettyUrl(s.url||'');
 	          const urlCell = s.url ? `<a class="url" href="${esc(s.url)}" target="_blank" title="${esc(s.url)}">${esc(urlText)}</a>` : '';
 	          const toggleLabel = s.enabled ? '停用' : '启用';
@@ -2796,7 +2923,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 	          return `
 	            <tr data-id="${esc(s.id)}">
 	              <td class="nowrap">${s.enabled ? '启用' : '停用'}</td>
-	              <td>${esc(s.name)} ${authPill} ${stPill} ${err} ${hs}</td>
+	              <td>${esc(s.name)} ${authPill} ${statusPills}</td>
 	              <td class="nowrap">${esc(s.connector)}</td>
 	              <td class="urlcol">${urlCell}</td>
 	              <td class="nowrap">${s.priority}</td>

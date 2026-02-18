@@ -182,5 +182,7 @@ def load_runtime_rules(
         "content": content_cfg,
         # Pass-through: used for QC metrics / explainability in offline generators.
         "qc": decision.get("qc_decision", {}) if isinstance(decision.get("qc_decision"), dict) else {},
+        # Pass-through: used by offline generator for section sizing (trends/gaps etc).
+        "output": decision.get("output_decision", {}) if isinstance(decision.get("output_decision"), dict) else {},
         "email": email_cfg,
     }

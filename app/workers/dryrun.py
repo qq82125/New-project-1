@@ -478,6 +478,7 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
     source_stats_file = artifacts_dir / "source_stats.json"
     event_explain_file = artifacts_dir / "event_type_explain.json"
     platform_explain_file = artifacts_dir / "platform_explain.json"
+    lane_explain_file = artifacts_dir / "lane_explain.json"
     platform_diag_file = artifacts_dir / "platform_diag.json"
     cluster_payload = {}
     if cluster_explain_file.exists():
@@ -497,12 +498,105 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             event_explain_payload = json.loads(event_explain_file.read_text(encoding="utf-8"))
         except Exception:
             event_explain_payload = {}
+
+    # Event-type diagnostics: focus on fallback heuristic usage (mapping coverage) and provide samples.
+    event_diag: dict[str, Any] = {"fallback_count": 0, "reasons": {}, "samples": []}
+    try:
+        rows = (
+            event_explain_payload.get("items", [])
+            if isinstance(event_explain_payload, dict)
+            else []
+        )
+        if isinstance(rows, list):
+            reasons: dict[str, int] = {}
+            samples: list[dict[str, str]] = []
+            fallback = 0
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                et = str(r.get("event_type", "")).strip()
+                explain = r.get("explain", {}) if isinstance(r.get("explain"), dict) else {}
+                matched = bool(explain.get("matched", False))
+                if matched:
+                    continue
+                fallback += 1
+                reason = str(explain.get("matched_keyword", "")).strip() or "fallback"
+                reasons[reason] = reasons.get(reason, 0) + 1
+                if len(samples) < 10:
+                    samples.append(
+                        {
+                            "title": str(r.get("title", ""))[:200],
+                            "url": str(r.get("url", ""))[:500],
+                            "event_type": et[:80],
+                            "source_id": str(r.get("source_id", ""))[:120],
+                            "matched_field": str(explain.get("matched_field", ""))[:40],
+                            "reason": reason[:80],
+                        }
+                    )
+            event_diag = {
+                "fallback_count": fallback,
+                "reasons": dict(sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))),
+                "samples": samples,
+                "mapping_source": (
+                    event_explain_payload.get("mapping_source")
+                    if isinstance(event_explain_payload, dict)
+                    else None
+                ),
+            }
+    except Exception:
+        event_diag = {"fallback_count": 0, "reasons": {}, "samples": []}
     platform_explain_payload = {}
     if platform_explain_file.exists():
         try:
             platform_explain_payload = json.loads(platform_explain_file.read_text(encoding="utf-8"))
         except Exception:
             platform_explain_payload = {}
+    lane_explain_payload = {}
+    if lane_explain_file.exists():
+        try:
+            lane_explain_payload = json.loads(lane_explain_file.read_text(encoding="utf-8"))
+        except Exception:
+            lane_explain_payload = {}
+
+    # Lane diagnostics: focus on "其他" cases to improve lane_mapping iteratively.
+    lane_diag: dict[str, Any] = {"other_count": 0, "reasons": {}, "samples": []}
+    try:
+        rows = (
+            lane_explain_payload.get("items", [])
+            if isinstance(lane_explain_payload, dict)
+            else []
+        )
+        if isinstance(rows, list):
+            reasons: dict[str, int] = {}
+            samples: list[dict[str, str]] = []
+            other = 0
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                lane = str(r.get("lane", "")).strip()
+                if lane != "其他":
+                    continue
+                other += 1
+                explain = r.get("explain", {}) if isinstance(r.get("explain"), dict) else {}
+                reason = str(explain.get("reason", "")).strip() or "unknown"
+                reasons[reason] = reasons.get(reason, 0) + 1
+                if len(samples) < 10:
+                    samples.append(
+                        {
+                            "title": str(r.get("title", ""))[:200],
+                            "url": str(r.get("url", ""))[:500],
+                            "event_type": str(r.get("event_type", ""))[:80],
+                            "source_id": str(r.get("source_id", ""))[:120],
+                            "reason": reason[:80],
+                        }
+                    )
+            lane_diag = {
+                "other_count": other,
+                "reasons": dict(sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))),
+                "samples": samples,
+            }
+    except Exception:
+        lane_diag = {"other_count": 0, "reasons": {}, "samples": []}
 
     # UI-friendly diagnostics for platform tagging (focus on "未标注" cases).
     platform_diag: dict[str, Any] = {"unlabeled_count": 0, "reasons": {}, "samples": []}
@@ -684,6 +778,14 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
                 else 0
             ),
         },
+        "lane_classifier": {
+            "artifact": "lane_explain.json" if lane_explain_payload else None,
+            "items_count": (
+                len(lane_explain_payload.get("items", []))
+                if isinstance(lane_explain_payload, dict) and isinstance(lane_explain_payload.get("items"), list)
+                else 0
+            ),
+        },
         "notes": ["Dry-run only: no DB write, no email send."],
     }
     run_meta = {
@@ -751,6 +853,8 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         "top_clusters": cluster_payload.get("top_clusters", []),
         "source_stats": source_payload.get("sources", []),
         "platform_diag": platform_diag,
+        "lane_diag": lane_diag,
+        "event_diag": event_diag,
         "sent": False,
         "qc": qc_report,
         "email_preview": {

@@ -198,20 +198,68 @@ rules:
     description: 增强赛道映射词典
     params:
       肿瘤检测:
+        - 肿瘤
+        - 癌
+        - 癌症
+        - 肿瘤标志物
+        - 伴随诊断
+        - ctDNA
+        - mrd
+        - pd-l1
+        - egfr
+        - alk
+        - her2
         - cancer
         - oncology
         - tumor
-        - pd-l1
+        - biomarker
+        - companion diagnostic
+        - immunohistochemistry
+        - ihc
       感染检测:
+        - 感染
+        - 病原
+        - 病原体
+        - 细菌
+        - 真菌
+        - 病毒
+        - 耐药
+        - 血培养
+        - 呼吸道
+        - 流感
+        - 新冠
+        - rsv
+        - hpv
+        - hbv
+        - hcv
+        - hiv
         - infect
-        - virus
+        - infection
         - pathogen
+        - virus
         - flu
+        - influenza
+        - sepsis
+        - respiratory
       生殖与遗传检测:
+        - 产前
+        - 唐筛
+        - 染色体
+        - cnv
+        - 遗传
+        - 遗传病
+        - 地贫
+        - 不孕不育
+        - 胚胎
+        - pgt
+        - ivf
+        - 新生儿筛查
         - prenatal
         - nipt
         - fertility
+        - reproductive
         - genetic
+        - hereditary
 
   - id: map-platform-enhanced
     enabled: true
@@ -220,6 +268,13 @@ rules:
     description: 增强技术平台映射
     params:
       NGS:
+        - 测序
+        - 二代测序
+        - 高通量测序
+        - 全外显子
+        - 全基因组
+        - 靶向测序
+        - panel
         - ngs
         - sequencing
         - next-generation sequencing
@@ -234,6 +289,11 @@ rules:
         - targeted sequencing
         - panel sequencing
       PCR:
+        - 核酸
+        - 核酸检测
+        - 扩增
+        - 等温扩增
+        - LAMP
         - pcr
         - qpcr
         - q-pcr
@@ -245,16 +305,26 @@ rules:
         - lamp
         - rt-lamp
       数字PCR:
+        - 数字pcr
+        - 数字PCR
+        - 微滴数字pcr
         - digital pcr
         - ddpcr
         - ddpcr
         - dpcr
         - d-pcr
       流式细胞:
+        - 流式
+        - 流式细胞术
         - flow cytometry
         - cytometry
         - facs
       质谱:
+        - 质谱
+        - 串联质谱
+        - lc-ms/ms
+        - LC-MS/MS
+        - MALDI-TOF
         - mass spec
         - lc-ms
         - lc-ms/ms
@@ -262,6 +332,12 @@ rules:
         - maldi
         - maldi-tof
       免疫诊断（化学发光/ELISA/IHC等）:
+        - 化学发光
+        - 免疫
+        - 免疫荧光
+        - 胶体金
+        - 侧向层析
+        - 免疫层析
         - immunoassay
         - clia
         - chemiluminescence
@@ -272,6 +348,11 @@ rules:
         - lfiae
       POCT/分子POCT:
         - poct
+        - POCT
+        - 即时检测
+        - 快检
+        - 自测
+        - poct
         - point-of-care
         - point of care
         - rapid test
@@ -281,6 +362,10 @@ rules:
         - cartridge
         - sample-to-answer
       微流控/单分子:
+        - 微流控
+        - 单分子
+        - 数字免疫
+        - digital immunoassay
         - microfluidic
         - micro-fluidic
         - lab-on-a-chip
@@ -288,6 +373,137 @@ rules:
         - single molecule
         - single-molecule
         - simoa
+
+  - id: map-event-enhanced
+    enabled: true
+    priority: 81
+    type: event_mapping
+    description: 增强事件类型映射（中英关键词）
+    params:
+      监管审批与指南:
+        - 通告
+        - 公告
+        - 指导原则
+        - 技术审评
+        - 审评
+        - 批准
+        - 受理
+        - 注册证
+        - 变更
+        - 延续
+        - 召回
+        - 警戒
+        - 安全警示
+        - 飞检
+        - udi
+        - 追溯
+        - nmpa
+        - cmde
+        - fda
+        - pmda
+        - mfds
+        - tga
+        - hsa
+        - guideline
+        - guidance
+        - approval
+        - clearance
+        - recall
+        - safety alert
+        - field safety
+      并购融资/IPO与合作:
+        - 并购
+        - 收购
+        - 合并
+        - 投资
+        - 融资
+        - 战略合作
+        - 合作
+        - 联合开发
+        - 渠道合作
+        - 授权
+        - 许可
+        - ipo
+        - acquisition
+        - acquire
+        - merger
+        - financing
+        - funding
+        - raise
+        - partnership
+        - collaboration
+        - deal
+        - licensing
+      注册上市/产品发布:
+        - 获批
+        - 获证
+        - 注册
+        - 上市
+        - 发布
+        - 推出
+        - 新品
+        - ce
+        - 510(k)
+        - de novo
+        - launch
+        - launched
+        - introduce
+        - new test
+        - new assay
+        - registered
+        - ce mark
+      临床与科研证据:
+        - 研究
+        - 临床
+        - 试验
+        - 队列
+        - 回顾性
+        - 前瞻性
+        - 多中心
+        - 验证
+        - 真实世界
+        - 论文
+        - 发表
+        - study
+        - clinical
+        - trial
+        - evidence
+        - validation
+        - publication
+        - real-world
+      支付与招采:
+        - 招标
+        - 招采
+        - 采购
+        - 中标
+        - 挂网
+        - 集采
+        - 议价
+        - 目录
+        - 医保
+        - 支付
+        - drg
+        - dip
+        - tender
+        - procurement
+        - bid
+        - reimbursement
+        - payment
+        - ccgp
+      政策与市场动态:
+        - 政策
+        - 市场
+        - 行业
+        - 渠道
+        - 需求
+        - 渗透率
+        - 增长
+        - 价格
+        - 出海
+        - policy
+        - market
+        - coverage
+        - pricing
 
   - id: dedupe-enhanced
     enabled: true

@@ -203,6 +203,75 @@ def cn_lane(text: str) -> str:
     return "其他"
 
 
+def classify_lane(
+    title: str,
+    summary: str,
+    source_group: str,
+    url: str,
+    event_type: str,
+    *,
+    enhanced: bool,
+) -> tuple[str, dict]:
+    """
+    Lane (赛道) tagging v1 (explainable):
+    - Prefer explicit keyword mapping from content_rules.lane_mapping.
+    - If still no signal, keep "其他" with a clear reason for operators to expand mapping.
+    """
+    mapping = (
+        RUNTIME_CONTENT.get("lane_mapping", {})
+        if isinstance(RUNTIME_CONTENT.get("lane_mapping"), dict)
+        else {}
+    )
+    text_lc = (str(title or "") + " " + str(summary or "")).lower()
+    sg_lc = str(source_group or "").lower()
+    url_lc = _url_text(url)
+
+    hits: list[str] = []
+    hit_terms: dict[str, list[str]] = {}
+    for label, kws in mapping.items():
+        if not isinstance(kws, list):
+            continue
+        for kw in kws:
+            k = str(kw).strip().lower()
+            if not k:
+                continue
+            if has_term(text_lc, k):
+                hits.append(str(label))
+                hit_terms.setdefault(str(label), []).append(k)
+                break
+
+    if len(hits) >= 2:
+        # Keep single-lane output for current template; mark ambiguity in explain.
+        return hits[0], {
+            "reason": "multi_lane_hits",
+            "hits": list(dict.fromkeys(hits)),
+            "hit_terms": hit_terms,
+            "source_group": sg_lc,
+            "url": url_lc,
+            "event_type": str(event_type or ""),
+        }
+    if len(hits) == 1:
+        return hits[0], {
+            "reason": "keyword_mapping",
+            "hits": hits,
+            "hit_terms": hit_terms,
+            "source_group": sg_lc,
+            "url": url_lc,
+            "event_type": str(event_type or ""),
+        }
+
+    if enhanced:
+        return "其他", {
+            "reason": "missing_lane_keywords",
+            "hits": [],
+            "hit_terms": {},
+            "source_group": sg_lc,
+            "url": url_lc,
+            "event_type": str(event_type or ""),
+        }
+    return "其他", {"reason": "legacy_default"}
+
+
 def _url_text(url: str) -> str:
     try:
         p = urlparse(str(url or ""))
@@ -1038,6 +1107,17 @@ def collect_nmpa_site_updates(now_utc: dt.datetime, tz_name: str, *, enhanced: b
         else:
             platform = cn_platform(text)
         platform = normalize_platform_label(platform, event_type, enhanced=bool(enhanced))
+        if enhanced:
+            lane, _lex = classify_lane(
+                title,
+                summary,
+                "regulatory_cn",
+                link,
+                event_type,
+                enhanced=True,
+            )
+        else:
+            lane = cn_lane(text)
         out.append(
             Item(
                 title=title,
@@ -1045,7 +1125,7 @@ def collect_nmpa_site_updates(now_utc: dt.datetime, tz_name: str, *, enhanced: b
                 published=pub,
                 source="NMPA",
                 region="中国",
-                lane=cn_lane(text),
+                lane=lane,
                 platform=platform,
                 event_type=event_type,
                 window_tag=window_tag(pub, now_utc),
@@ -1108,6 +1188,17 @@ def collect_pmda_updates(now_utc: dt.datetime, tz_name: str, *, enhanced: bool) 
         else:
             platform = cn_platform(title)
         platform = normalize_platform_label(platform, event_type, enhanced=bool(enhanced))
+        if enhanced:
+            lane, _lex = classify_lane(
+                f"{date_str.strip()} {category}: {title}",
+                summary,
+                "regulatory_apac",
+                link,
+                event_type,
+                enhanced=True,
+            )
+        else:
+            lane = cn_lane(title)
         out.append(
             Item(
                 title=f"{date_str.strip()} {category}: {title}",
@@ -1115,7 +1206,7 @@ def collect_pmda_updates(now_utc: dt.datetime, tz_name: str, *, enhanced: bool) 
                 published=pub,
                 source="PMDA",
                 region="亚太",
-                lane=cn_lane(title),
+                lane=lane,
                 platform=platform,
                 event_type=event_type,
                 window_tag=window_tag(pub, now_utc),
@@ -1370,6 +1461,7 @@ def main() -> int:
     runtime_rules = load_runtime_rules(date_str=date_str, run_id=run_id)
     event_classifier = build_event_classifier(runtime_rules)
     platform_explain_rows: list[dict] = []
+    lane_explain_rows: list[dict] = []
     event_mapping_source = "content_rules"
     try:
         cc = runtime_rules.get("content", {}) if isinstance(runtime_rules.get("content"), dict) else {}
@@ -1594,9 +1686,31 @@ def main() -> int:
 
             wt = window_tag(pub, now_utc)
             region = cn_region(src_name, link) or default_region
-            lane = cn_lane(combined)
             summary = cn_summary(row["entry"]) if row["entry"] is not None else "摘要：该条来自网页源抓取。"
             event_type, et_explain = event_classifier.classify(title, summary, source_group, link)
+            if use_enhanced:
+                lane, lane_explain = classify_lane(
+                    title,
+                    summary,
+                    str(source_group or ""),
+                    link,
+                    event_type,
+                    enhanced=True,
+                )
+            else:
+                lane = cn_lane(combined)
+                lane_explain = {"reason": "legacy_cn_lane"}
+            lane_explain_rows.append(
+                {
+                    "title": title,
+                    "url": link,
+                    "source_id": source_id,
+                    "source_group": str(source_group or ""),
+                    "event_type": event_type,
+                    "lane": lane,
+                    "explain": lane_explain,
+                }
+            )
             if use_enhanced:
                 platform, plat_explain = classify_platform(
                     title,
@@ -1802,17 +1916,59 @@ def main() -> int:
     print(f"- 中国：{regions.get('中国', 0)}")
     print()
 
-    print("E. 三条关键趋势判断（产业与技术各至少1条）")
-    print("1) 产业：并购合作与产品注册更聚焦可快速放量场景，商业化节奏正由渠道与准入共同决定。")
-    print("2) 技术：PCR/NGS/免疫平台继续并行，组合菜单与自动化能力是实验室端的核心竞争变量。")
-    print("3) 监管：亚太监管与中国追溯体系持续强化，跨区域上市正从“单点获批”转向“体系化合规”。")
+    # Output rules: trends/gaps counts (enhanced) should reflect output_rules settings.
+    out_cfg = runtime_rules.get("output", {}) if isinstance(runtime_rules.get("output"), dict) else {}
+    e_cfg = out_cfg.get("E", {}) if isinstance(out_cfg.get("E"), dict) else {}
+    f_cfg = out_cfg.get("F", {}) if isinstance(out_cfg.get("F"), dict) else {}
+    try:
+        trends_count = int(e_cfg.get("trends_count") or out_cfg.get("trends_count") or 3)
+    except Exception:
+        trends_count = 3
+    trends_count = max(1, min(trends_count, 10))
+
+    gaps_cfg = f_cfg.get("gaps_count", {}) if isinstance(f_cfg.get("gaps_count"), dict) else {}
+    try:
+        gaps_max = int(gaps_cfg.get("max") or out_cfg.get("gaps_max") or 5)
+    except Exception:
+        gaps_max = 5
+    gaps_max = max(1, min(gaps_max, 10))
+
+    if trends_count == 3:
+        print("E. 三条关键趋势判断（产业与技术各至少1条）")
+    else:
+        print(f"E. 关键趋势判断（共{trends_count}条，产业与技术各至少1条）")
+    trends_pool = [
+        "产业：并购合作与产品注册更聚焦可快速放量场景，商业化节奏正由渠道与准入共同决定。",
+        "技术：PCR/NGS/免疫平台继续并行，组合菜单与自动化能力是实验室端的核心竞争变量。",
+        "监管：亚太监管与中国追溯体系持续强化，跨区域上市正从“单点获批”转向“体系化合规”。",
+        "产业：检测服务与区域实验室整合加速，医院外送与第三方检验渠道的规模效应更明显。",
+        "技术：多组学与质谱在特定临床路径的渗透提高，样本前处理与自动化决定可复制性。",
+        "市场：招采与支付端更关注“可及性+证据链”，真实世界数据与成本效益分析的重要性上升。",
+        "产品：菜单扩张与一体化平台绑定加深，试剂+仪器+软件的系统化交付成为竞争焦点。",
+        "合规：质量体系、数据可追溯与UDI对供应链协同提出更高要求，跨境业务门槛上移。",
+    ]
+    for idx in range(trends_count):
+        txt = trends_pool[idx] if idx < len(trends_pool) else "趋势：建议结合当日条目分布补充更具体的产业/技术判断。"
+        print(f"{idx+1}) {txt}")
     print()
 
-    print("F. 信息缺口与次日跟踪清单（3-5条）")
-    print("1) 继续补齐中国招采高金额公告（ccgp/省级平台/三甲医院），提升需求侧信号强度。")
-    print("2) 跟踪亚太监管站点（TGA/HSA/PMDA/MFDS）新增审批与召回，避免区域偏置。")
-    print("3) 对并购融资与产品发布条目做二次核验，优先采用公司公告与监管数据库。")
-    print("4) 对未命中的必查信源建立备用抓取路径（网页列表页 + 日期解析）。")
+    if gaps_max == 5:
+        print("F. 信息缺口与次日跟踪清单（3-5条）")
+    else:
+        print(f"F. 信息缺口与次日跟踪清单（共{gaps_max}条）")
+    gaps_pool = [
+        "继续补齐中国招采高金额公告（ccgp/省级平台/三甲医院），提升需求侧信号强度。",
+        "跟踪亚太监管站点（TGA/HSA/PMDA/MFDS）新增审批与召回，避免区域偏置。",
+        "对并购融资与产品发布条目做二次核验，优先采用公司公告与监管数据库。",
+        "对未命中的必查信源建立备用抓取路径（网页列表页 + 日期解析）。",
+        "补齐支付/DRG/DIP/医保目录与检验项目收费动态，识别放量瓶颈与机会。",
+        "扩充“平台关键词映射”与未标注诊断闭环，降低跨平台/未标注占比。",
+        "增强中国监管/NMPA 数据源结构化抓取（公告/技术审评/UDI），提升一手命中率。",
+        "针对重点企业合作/投融资新闻，补充交易条款/估值/产品管线关键信息。",
+    ]
+    for idx in range(gaps_max):
+        txt = gaps_pool[idx] if idx < len(gaps_pool) else "补充：建议根据当日缺口与目标区域/赛道，添加专门跟踪项。"
+        print(f"{idx+1}) {txt}")
     print()
 
     print("G. 质量指标 (Quality Audit)")
@@ -1874,6 +2030,11 @@ def main() -> int:
         # Explainability: per-item platform classification evidence (enhanced-only intent, but safe to write).
         (p / "platform_explain.json").write_text(
             json.dumps({"items": platform_explain_rows}, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        # Explainability: per-item lane classification evidence (enhanced-only intent, but safe to write).
+        (p / "lane_explain.json").write_text(
+            json.dumps({"items": lane_explain_rows}, ensure_ascii=False, indent=2, default=str),
             encoding="utf-8",
         )
 
