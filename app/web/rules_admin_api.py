@@ -2401,6 +2401,20 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         let currentConfig = null;
         let currentDraftId = null;
         function splitCsv(s){ return (s||'').split(',').map(x=>x.trim()).filter(Boolean); }
+        function ensureRule(cfg, type, id, priority){
+          cfg.rules = cfg.rules || [];
+          let r = (cfg.rules||[]).find(x=>x && typeof x==='object' && x.type===type);
+          if(!r){
+            r = { id, enabled:true, priority, type, description:'', params:{} };
+            cfg.rules.push(r);
+          }
+          r.id = r.id || id;
+          r.enabled = (r.enabled !== false);
+          r.priority = Number(r.priority ?? priority);
+          r.type = type;
+          r.params = (r.params && typeof r.params==='object') ? r.params : {};
+          return r;
+        }
         function setChecks(name, values){
           const set = new Set((values||[]).map(String));
           for(const el of document.querySelectorAll(`input[name="${name}"]`)){
@@ -2437,10 +2451,21 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('show_tags').value = String(!!A.show_tags);
           document.getElementById('show_other_sources').value = String(!!A.show_other_sources);
           document.getElementById('show_source_link').value = String(!!A.show_source_link);
-          document.getElementById('trends_count').value = (d.E||{}).trends_count ?? 3;
-          const gc = ((d.F||{}).gaps_count)||{};
-          document.getElementById('gaps_min').value = gc.min ?? 3;
-          document.getElementById('gaps_max').value = gc.max ?? 5;
+          // IMPORTANT: the effective sizes might be overridden by rules[].type=section_sizes.
+          let tc = (d.E||{}).trends_count ?? 3;
+          let gmin = (((d.F||{}).gaps_count)||{}).min ?? 3;
+          let gmax = (((d.F||{}).gaps_count)||{}).max ?? 5;
+          try{
+            const rs = (currentConfig.rules||[]).find(x=>x && typeof x==='object' && x.type==='section_sizes');
+            if(rs && rs.params && typeof rs.params==='object'){
+              if(rs.params.trends_count != null) tc = rs.params.trends_count;
+              if(rs.params.gaps_min != null) gmin = rs.params.gaps_min;
+              if(rs.params.gaps_max != null) gmax = rs.params.gaps_max;
+            }
+          }catch(e){}
+          document.getElementById('trends_count').value = Number(tc||3);
+          document.getElementById('gaps_min').value = Number(gmin||3);
+          document.getElementById('gaps_max').value = Number(gmax||5);
           document.getElementById('heatmap_regions').value = ((d.D||{}).heatmap_regions||['北美','欧洲','亚太','中国']).join(',');
           const st = d.style || {};
           document.getElementById('style_lang').value = st.language || 'zh';
@@ -2471,8 +2496,11 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           cfg.defaults.A.show_tags = document.getElementById('show_tags').value === 'true';
           cfg.defaults.A.show_other_sources = document.getElementById('show_other_sources').value === 'true';
           cfg.defaults.A.show_source_link = document.getElementById('show_source_link').value === 'true';
-          cfg.defaults.E = { trends_count: Number(document.getElementById('trends_count').value||3) };
-          cfg.defaults.F = { gaps_count: { min: Number(document.getElementById('gaps_min').value||3), max: Number(document.getElementById('gaps_max').value||5) } };
+          const tc = Number(document.getElementById('trends_count').value||3);
+          const gmin = Number(document.getElementById('gaps_min').value||3);
+          const gmax = Number(document.getElementById('gaps_max').value||5);
+          cfg.defaults.E = { trends_count: tc };
+          cfg.defaults.F = { gaps_count: { min: gmin, max: gmax } };
           cfg.defaults.D = { heatmap_regions: splitCsv(document.getElementById('heatmap_regions').value) };
           cfg.defaults.style = {
             language: document.getElementById('style_lang').value || 'zh',
@@ -2480,7 +2508,15 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             no_fluff: document.getElementById('style_no_fluff').value === 'true',
           };
           cfg.defaults.constraints = { g_must_be_last: true, a_to_f_must_not_include_quality_metrics: true };
-          cfg.rules = cfg.rules || [];
+
+          // Keep rules in sync with defaults to avoid "rule overrides defaults" surprises.
+          // This is the root cause of "trends_count set to 5 but output still shows 3".
+          const rs = ensureRule(cfg, 'section_sizes', 'render-e-f-config', 70);
+          rs.description = '趋势判断与缺口清单条数';
+          rs.params.trends_count = tc;
+          rs.params.gaps_min = gmin;
+          rs.params.gaps_max = gmax;
+
           return cfg;
         }
 

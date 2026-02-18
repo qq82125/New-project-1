@@ -1870,7 +1870,14 @@ def main() -> int:
     for i in top:
         regions[i.region] = regions.get(i.region, 0) + 1
 
-    print(f"全球IVD晨报 - {date_str}")
+    # First line is used as the preview title line in dry-run and appears at the top of email body.
+    # It should follow email_rules subject template (so operators see the real title).
+    subject_line = (
+        str(runtime_rules.get("email", {}).get("subject", "")).strip()
+        if isinstance(runtime_rules.get("email", {}), dict)
+        else ""
+    )
+    print(subject_line or f"全球IVD晨报 - {date_str}")
     print()
 
     print("A. 今日要点（8-15条，按重要性排序）")
@@ -1960,7 +1967,7 @@ def main() -> int:
         "继续补齐中国招采高金额公告（ccgp/省级平台/三甲医院），提升需求侧信号强度。",
         "跟踪亚太监管站点（TGA/HSA/PMDA/MFDS）新增审批与召回，避免区域偏置。",
         "对并购融资与产品发布条目做二次核验，优先采用公司公告与监管数据库。",
-        "对未命中的必查信源建立备用抓取路径（网页列表页 + 日期解析）。",
+        "对未命中的关键监管/权威信源建立备用抓取路径（网页列表页 + 日期解析）。",
         "补齐支付/DRG/DIP/医保目录与检验项目收费动态，识别放量瓶颈与机会。",
         "扩充“平台关键词映射”与未标注诊断闭环，降低跨平台/未标注占比。",
         "增强中国监管/NMPA 数据源结构化抓取（公告/技术审评/UDI），提升一手命中率。",
