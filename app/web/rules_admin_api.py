@@ -1081,9 +1081,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         body = """
             <div class="layout">
               <div class="card">
-                <label>规则 Profile</label>
-                <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
-                <label>启用开关</label><select id="enabled"><option value="true">true</option><option value="false">false</option></select>
+                <label>规则档位（Profile）</label>
+                <select id="profile"><option value="enhanced">增强（enhanced）</option><option value="legacy">保持现状（legacy）</option></select>
+                <label>启用开关</label><select id="enabled"><option value="true">启用</option><option value="false">停用</option></select>
                 <label>发送时间(小时)</label><input id="hour" type="number" min="0" max="23"/>
                 <label>发送时间(分钟)</label><input id="minute" type="number" min="0" max="59"/>
                 <label>收件人列表(逗号分隔)</label><input id="recipients" placeholder="a@b.com,c@d.com"/>
@@ -1109,13 +1109,13 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 </details>
               </div>
               <div class="card">
-                <label>试跑日期(可选, YYYY-MM-DD)</label><input id="dryrun_date" />
+                <label>试跑日期（可选，YYYY-MM-DD）</label><input id="dryrun_date" placeholder="例如：2026-02-18"/>
                 <div class="row">
                   <button onclick="preview()">试跑预览(不发信)</button>
                   <button onclick="copyPreview()">复制预览</button>
                 </div>
                 <div>
-                  <label>高亮关键词(逗号分隔，留空自动从 content_rules 读取 include/exclude)</label>
+                  <label>高亮关键词（逗号分隔，留空自动从采集规则读取包含/排除词）</label>
                   <input id="highlight_terms" />
                 </div>
                 <pre id="preview"></pre>
@@ -1258,10 +1258,12 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         body = """
                     <div class="layout">
                       <div class="card">
-                        <label>规则 Profile</label>
-                        <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
-                        <label>24小时优先窗口(小时, primary_hours)</label><input id="primary_hours" type="number" min="1" max="72"/>
-                        <label>回补窗口(天, fallback_days)</label><input id="fallback_days" type="number" min="1" max="14"/>
+                        <label>规则档位（Profile）</label>
+                        <select id="profile"><option value="enhanced">增强（enhanced）</option><option value="legacy">保持现状（legacy）</option></select>
+                        <label>24小时优先窗口（primary_hours，小时）</label><input id="primary_hours" type="number" min="1" max="72" placeholder="例如：24"/>
+                        <div class="small">优先选择最近 N 小时发布的信息，通常填 24。</div>
+                        <label>回补窗口（fallback_days，天）</label><input id="fallback_days" type="number" min="1" max="14" placeholder="例如：7"/>
+                        <div class="small">当 24h 条目不足时，从最近 N 天候选池补齐，并标注“7天补充”。</div>
 
                         <label>条目数量目标（min/max）</label>
                         <div class="row">
@@ -1302,39 +1304,42 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                         </div>
                         <input id="recent_7d_max_repeat_rate" type="number" step="0.01" min="0" max="1" placeholder="近7日峰值重复率上限 0.40"/>
 
-                        <label>故事级聚合（Story Clustering）</label>
+                        <label>故事级聚合（多源同事件合并）</label>
                         <div class="row">
                           <label style="margin:0;min-width:140px">启用</label>
-                          <select id="cluster_enabled" style="width:140px"><option value="true">true</option><option value="false">false</option></select>
+                          <select id="cluster_enabled" style="width:140px"><option value="true">启用</option><option value="false">停用</option></select>
                           <label style="margin:0;min-width:140px">窗口(小时)</label>
                           <input id="cluster_window_hours" type="number" min="1" max="720" style="width:140px"/>
                         </div>
                         <div class="box" style="margin-top:8px">
                           <div class="small" style="margin-bottom:6px">聚合键策略（按顺序尝试，命中即用）</div>
-                          <label class="chk"><input type="checkbox" name="cluster_key" value="canonical_url"/> canonical_url</label>
-                          <label class="chk"><input type="checkbox" name="cluster_key" value="normalized_url_host_path"/> normalized_url_host_path</label>
-                          <label class="chk"><input type="checkbox" name="cluster_key" value="title_fingerprint_v1"/> title_fingerprint_v1</label>
+                          <label class="chk"><input type="checkbox" name="cluster_key" value="canonical_url"/> 规范链接（canonical_url）</label>
+                          <label class="chk"><input type="checkbox" name="cluster_key" value="normalized_url_host_path"/> 归一化URL（normalized_url_host_path）</label>
+                          <label class="chk"><input type="checkbox" name="cluster_key" value="title_fingerprint_v1"/> 标题指纹（title_fingerprint_v1）</label>
                         </div>
                         <div class="box" style="margin-top:8px">
                           <div class="small" style="margin-bottom:6px">主条目选择（同一簇内，按顺序比较）</div>
-                          <label class="chk"><input type="checkbox" name="cluster_primary" value="source_priority"/> source_priority</label>
-                          <label class="chk"><input type="checkbox" name="cluster_primary" value="evidence_grade"/> evidence_grade</label>
-                          <label class="chk"><input type="checkbox" name="cluster_primary" value="published_at_earliest"/> published_at_earliest</label>
-                          <label class="chk"><input type="checkbox" name="cluster_primary" value="published_at_latest"/> published_at_latest</label>
-                          <label class="chk"><input type="checkbox" name="cluster_primary" value="first_seen_earliest"/> first_seen_earliest</label>
+                          <label class="chk"><input type="checkbox" name="cluster_primary" value="source_priority"/> 信源优先级（source_priority）</label>
+                          <label class="chk"><input type="checkbox" name="cluster_primary" value="evidence_grade"/> 证据等级（evidence_grade）</label>
+                          <label class="chk"><input type="checkbox" name="cluster_primary" value="published_at_earliest"/> 最早发布日期（published_at_earliest）</label>
+                          <label class="chk"><input type="checkbox" name="cluster_primary" value="published_at_latest"/> 最晚发布日期（published_at_latest）</label>
+                          <label class="chk"><input type="checkbox" name="cluster_primary" value="first_seen_earliest"/> 最早抓取时间（first_seen_earliest）</label>
                         </div>
                         <label>other_sources 最大保留数（max_other_sources）</label>
                         <input id="cluster_max_other_sources" type="number" min="0" max="20"/>
 
                         <label>赛道映射（lane_mapping）</label>
                         <textarea id="lane_mapping" rows="6" placeholder="示例：\n肿瘤检测: 肿瘤, 癌, oncology, cancer\n感染检测: 感染, 病原, virus, influenza\n生殖与遗传检测: 生殖, 遗传, NIPT, prenatal\n其他: 免疫, 代谢, 心血管"></textarea>
+                        <div class="small">格式：每行 “标签: 关键词1,关键词2”。用于自动打标签与分栏汇总。</div>
                         <label>技术平台映射（platform_mapping）</label>
                         <textarea id="platform_mapping" rows="6" placeholder="示例：\nNGS: ngs, sequencing, wgs\nPCR: pcr, 核酸\n数字PCR: ddpcr, digital pcr, 数字pcr\n免疫诊断（化学发光/ELISA/IHC等）: 化学发光, immunoassay, elisa\nPOCT/分子POCT: poct, rapid test\n微流控/单分子: microfluidic, single molecule"></textarea>
+                        <div class="small">用于技术平台雷达（C 段）与标签展示。</div>
                     <label>事件类型映射（event_mapping）</label>
                     <textarea id="event_mapping" rows="6" placeholder="示例：\n监管审批与指南: NMPA, CMDE, FDA, guideline, approval\n并购融资/IPO与合作: acquisition, financing, IPO, partnership\n注册上市: registration, launch\n产品发布: product, assay, kit\n临床与科研证据: clinical, study, trial\n支付与招采: tender, procurement, 招采, 采购\n政策与市场动态: policy, reimbursement, market"></textarea>
-                    <label>地区过滤(逗号分隔)</label><input id="allowed_regions"/>
-                    <label>赛道过滤(逗号分隔)</label><input id="tracks"/>
-                    <label>最低可信度</label><input id="min_confidence" type="number" step="0.01" min="0" max="1"/>
+                    <div class="small">用于事件类型判定与 QC 面板统计（regulatory/commercial）。</div>
+                        <label>地区过滤（逗号分隔）</label><input id="allowed_regions" placeholder="例如：cn,apac,na,eu"/>
+                    <label>赛道过滤（逗号分隔）</label><input id="tracks" placeholder="例如：肿瘤检测,感染检测"/>
+                    <label>最低可信度（0-1）</label><input id="min_confidence" type="number" step="0.01" min="0" max="1" placeholder="例如：0.6"/>
                     <label>操作人</label><input id="created_by" value="rules-admin-ui"/>
                     <div>
                       <button onclick="saveDraft()">保存草稿并校验</button>
@@ -1360,7 +1365,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                         </details>
                   </div>
               <div class="card">
-                <label>试跑日期(可选, YYYY-MM-DD)</label><input id="dryrun_date" />
+              <label>试跑日期（可选，YYYY-MM-DD）</label><input id="dryrun_date" placeholder="例如：2026-02-18"/>
                 <button onclick="preview()">试跑预览(不发信)</button>
                 <div class="drawer" id="summary"></div>
                 <div class="cards" id="clusters"></div>
@@ -1628,9 +1633,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         body = """
         <div class="layout">
           <div class="card">
-            <label>规则 Profile</label>
-            <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
-            <label>启用开关</label><select id="enabled"><option value="true">true</option><option value="false">false</option></select>
+            <label>规则档位（Profile）</label>
+            <select id="profile"><option value="enhanced">增强（enhanced）</option><option value="legacy">保持现状（legacy）</option></select>
+            <label>启用开关</label><select id="enabled"><option value="true">启用</option><option value="false">停用</option></select>
 
             <label>24小时内最低条数（min_24h_items）</label><input id="min_24h_items" type="number" min="0" max="50"/>
             <label>回补天数（fallback_days）</label><input id="fallback_days" type="number" min="1" max="14"/>
@@ -1643,31 +1648,33 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             <label>近7日峰值重复率上限（recent_7d_repeat_rate_max, 0-1）</label><input id="recent_7d_repeat_rate_max" type="number" step="0.01" min="0" max="1"/>
 
             <label>必查信源清单（逗号分隔）</label><input id="required_sources" placeholder="NMPA,CMDE,UDI数据库,CCGP,TGA,HSA,PMDA/MHLW,MFDS"/>
+            <div class="small">用于 G 段审计：当日入选条目中是否命中这些必查信源。</div>
 
-            <label>传闻标记开关（rumor_policy.enabled）</label><select id="rumor_enabled"><option value="true">true</option><option value="false">false</option></select>
+            <label>传闻标记开关（rumor_policy.enabled）</label><select id="rumor_enabled"><option value="true">启用</option><option value="false">停用</option></select>
             <label>传闻触发词（rumor_policy.trigger_terms，逗号分隔）</label><input id="rumor_terms" placeholder="rumor,unconfirmed,据传,传闻"/>
             <label>传闻标签（rumor_policy.label）</label><input id="rumor_label" placeholder="传闻（未确认）"/>
 
             <label>QC fail 策略（fail_policy.mode）</label>
             <select id="fail_mode">
-              <option value="only_warn">only_warn（仅提示）</option>
-              <option value="auto_topup">auto_topup（自动补齐）</option>
-              <option value="degrade_output_legacy">degrade_output_legacy（降级输出）</option>
-              <option value="require_manual_review">require_manual_review（标记人工复核）</option>
+              <option value="only_warn">仅提示（only_warn）</option>
+              <option value="auto_topup">自动补齐（auto_topup）</option>
+              <option value="degrade_output_legacy">降级输出（degrade_output_legacy）</option>
+              <option value="require_manual_review">需要人工复核（require_manual_review）</option>
             </select>
+            <div class="small">建议先 dry-run 看 QC 面板再发布；“自动补齐”只会在候选池内二次选择，不会重新抓网。</div>
             <label>回补偏好（fail_policy.topup_prefer，逗号分隔）</label>
             <input id="topup_prefer" placeholder="regulatory_cn,regulatory_apac,procurement_cn"/>
 
             <label>事件类型结构目标（可选：regulatory_vs_commercial_mix）</label>
             <div class="row">
-              <select id="mix_enabled" style="width:140px"><option value="false">false</option><option value="true">true</option></select>
+              <select id="mix_enabled" style="width:140px"><option value="false">关闭</option><option value="true">启用</option></select>
               <input id="mix_reg_min" type="number" step="0.01" min="0" max="1" placeholder="监管占比下限 0.25"/>
               <input id="mix_com_min" type="number" step="0.01" min="0" max="1" placeholder="商业占比下限 0.35"/>
             </div>
 
             <label>条目字段齐全检查（completeness_policy）</label>
             <div class="row">
-              <select id="comp_enabled" style="width:140px"><option value="true">true</option><option value="false">false</option></select>
+              <select id="comp_enabled" style="width:140px"><option value="true">启用</option><option value="false">停用</option></select>
               <input id="comp_min_share" type="number" step="0.01" min="0" max="1" placeholder="最小合格占比 1.00"/>
             </div>
             <label>必填字段（逗号分隔）</label>
@@ -1699,7 +1706,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             </details>
           </div>
           <div class="card">
-            <label>试跑日期(可选, YYYY-MM-DD)</label><input id="dryrun_date" />
+            <label>试跑日期（可选，YYYY-MM-DD）</label><input id="dryrun_date" placeholder="例如：2026-02-18"/>
             <div class="row">
               <button onclick="preview()">试跑预览(不发信)</button>
               <button onclick="copyPreview()">复制预览</button>
@@ -1862,12 +1869,13 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         body = """
         <div class="layout">
           <div class="card">
-            <label>规则 Profile</label>
-            <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
-            <label>启用开关</label><select id="enabled"><option value="true">true</option><option value="false">false</option></select>
+            <label>规则档位（Profile）</label>
+            <select id="profile"><option value="enhanced">增强（enhanced）</option><option value="legacy">保持现状（legacy）</option></select>
+            <label>启用开关</label><select id="enabled"><option value="true">启用</option><option value="false">停用</option></select>
 
             <label>栏目顺序（A..G，逗号分隔，G 必须最后）</label>
             <input id="sections_order" placeholder="A,B,C,D,E,F,G"/>
+            <div class="small">强约束：G 段必须置尾；A-F 不允许出现质量指标字段。</div>
             <label>栏目开关（sections.enabled）</label>
             <div class="box">
               <label class="chk"><input type="checkbox" name="sec_enabled" value="A"/> A 今日要点</label>
@@ -1885,9 +1893,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             <div class="row"><input id="sum_min" type="number" min="1" max="5"/><input id="sum_max" type="number" min="1" max="5"/></div>
             <label>A 段摘要最大字数</label><input id="sum_chars" type="number" min="50" max="2000"/>
 
-            <label>展示标签（show_tags）</label><select id="show_tags"><option value="true">true</option><option value="false">false</option></select>
-            <label>展示 other_sources（show_other_sources）</label><select id="show_other_sources"><option value="true">true</option><option value="false">false</option></select>
-            <label>展示来源链接（show_source_link）</label><select id="show_source_link"><option value="true">true</option><option value="false">false</option></select>
+            <label>展示标签（show_tags）</label><select id="show_tags"><option value="true">展示</option><option value="false">不展示</option></select>
+            <label>展示 other_sources（show_other_sources）</label><select id="show_other_sources"><option value="true">展示</option><option value="false">不展示</option></select>
+            <label>展示来源链接（show_source_link）</label><select id="show_source_link"><option value="true">展示</option><option value="false">不展示</option></select>
 
             <label>趋势判断条数（trends_count）</label><input id="trends_count" type="number" min="1" max="10"/>
             <label>缺口清单条数（gaps_count min/max）</label>
@@ -1917,7 +1925,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             <p id="status"></p>
           </div>
           <div class="card">
-            <label>试跑日期(可选, YYYY-MM-DD)</label><input id="dryrun_date" />
+            <label>试跑日期（可选，YYYY-MM-DD）</label><input id="dryrun_date" placeholder="例如：2026-02-18"/>
             <div class="row">
               <button onclick="preview()">试跑预览(不发信)</button>
               <button onclick="copyPreview()">复制预览</button>
@@ -2073,24 +2081,27 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         body = """
             <div class="layout">
               <div class="card">
-                <label>规则 Profile</label>
-                <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
-                <label>启用开关 enabled</label><select id="enabled"><option value="true">true</option><option value="false">false</option></select>
-                <label>时区 timezone</label><input id="timezone" placeholder="例如：Asia/Singapore"/>
+                <label>规则档位（Profile）</label>
+                <select id="profile"><option value="enhanced">增强（enhanced）</option><option value="legacy">保持现状（legacy）</option></select>
+                <label>启用开关（enabled）</label><select id="enabled"><option value="true">启用</option><option value="false">停用</option></select>
+                <label>时区（timezone）</label><input id="timezone" placeholder="例如：Asia/Shanghai"/>
+                <div class="small">Cron/Interval 的时间都按该时区计算。若你希望按北京时间出报，建议填 <code>Asia/Shanghai</code>。</div>
 
                 <label>并发（concurrency.max_instances）</label><input id="max_instances" type="number" min="1" max="5"/>
-                <label>合并错过触发（concurrency.coalesce）</label><select id="coalesce"><option value="true">true</option><option value="false">false</option></select>
+                <label>合并错过触发（concurrency.coalesce）</label><select id="coalesce"><option value="true">开启（只补最近一次）</option><option value="false">关闭</option></select>
                 <label>misfire_grace_seconds（容忍延迟秒数）</label><input id="misfire" type="number" min="0" max="86400"/>
+                <div class="small">例如 600 表示触发延迟 10 分钟内仍可补跑（配合 coalesce 使用）。</div>
 
-                <label>暂停开关 pause_switch（true=暂停）</label><select id="pause_switch"><option value="false">false</option><option value="true">true</option></select>
-                <label>允许手动触发 allow_manual_trigger</label><select id="allow_manual"><option value="true">true</option><option value="false">false</option></select>
+                <label>暂停开关（pause_switch）</label><select id="pause_switch"><option value="false">正常运行</option><option value="true">暂停（不跑任何任务）</option></select>
+                <label>允许手动触发（allow_manual_trigger）</label><select id="allow_manual"><option value="true">允许</option><option value="false">不允许</option></select>
 
                 <div class="divider"></div>
                 <h4>任务 schedules</h4>
                 <div class="row">
-                  <button onclick="addCron()">+ Cron</button>
-                  <button onclick="addInterval()">+ Interval</button>
+                  <button onclick="addCron()">+ 定时任务（Cron）</button>
+                  <button onclick="addInterval()">+ 间隔任务（Interval）</button>
                 </div>
+                <div class="small">用途说明：<code>collect</code>=按信源抓取；<code>digest</code>=生成日报并按邮件规则投递。</div>
                 <div id="schedules"></div>
 
                 <label>操作人</label><input id="created_by" value="rules-admin-ui"/>
@@ -2119,8 +2130,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 <div class="row">
                   <button onclick="pauseNow(true)">暂停</button>
                   <button onclick="pauseNow(false)">恢复</button>
-                  <button onclick="triggerNow('collect')">Trigger Now: collect</button>
-                  <button onclick="triggerNow('digest')">Trigger Now: digest</button>
+                  <button onclick="triggerNow('collect')">立即触发：采集（collect）</button>
+                  <button onclick="triggerNow('digest')">立即触发：出日报（digest）</button>
                   <button onclick="loadStatus()">刷新状态</button>
                 </div>
                 <div class="drawer" id="schedStatus"></div>
@@ -2137,28 +2148,28 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         function mkRow(s, idx){
           const isCron = (s.type||'') === 'cron';
           const cronPart = isCron
-            ? `<label>cron</label><input value="${esc(s.cron||'')}" onchange="schedules[${idx}].cron=this.value"/>`
-            : `<label>interval_minutes</label><input type="number" min="1" max="1440" value="${esc(s.interval_minutes??60)}" onchange="schedules[${idx}].interval_minutes=Number(this.value)"/>`;
+            ? `<label>cron 表达式</label><input value="${esc(s.cron||'')}" placeholder="例如：0 9 * * *" onchange="schedules[${idx}].cron=this.value"/>`
+            : `<label>间隔分钟（interval_minutes）</label><input type="number" min="1" max="1440" value="${esc(s.interval_minutes??60)}" onchange="schedules[${idx}].interval_minutes=Number(this.value)"/>`;
           return `
             <div class="box" style="margin-top:8px">
               <div class="row" style="justify-content:space-between">
                 <b>任务 ${idx+1}</b>
                 <button onclick="delSchedule(${idx})">删除</button>
               </div>
-              <label>id</label><input value="${esc(s.id||'')}" onchange="schedules[${idx}].id=this.value"/>
-              <label>type</label>
+              <label>任务ID（id）</label><input value="${esc(s.id||'')}" placeholder="例如：digest_daily_0830" onchange="schedules[${idx}].id=this.value"/>
+              <label>任务类型（type）</label>
               <select onchange="schedules[${idx}].type=this.value; renderSchedules();">
-                <option value="cron" ${isCron?'selected':''}>cron</option>
-                <option value="interval" ${!isCron?'selected':''}>interval</option>
+                <option value="cron" ${isCron?'selected':''}>定时（cron）</option>
+                <option value="interval" ${!isCron?'selected':''}>间隔（interval）</option>
               </select>
               ${cronPart}
-              <label>purpose</label>
+              <label>用途（purpose）</label>
               <select onchange="schedules[${idx}].purpose=this.value;">
-                <option value="collect" ${(s.purpose||'')==='collect'?'selected':''}>collect</option>
-                <option value="digest" ${(s.purpose||'')==='digest'?'selected':''}>digest</option>
+                <option value="collect" ${(s.purpose||'')==='collect'?'selected':''}>采集（collect）</option>
+                <option value="digest" ${(s.purpose||'')==='digest'?'selected':''}>出日报（digest）</option>
               </select>
-              <label>profile</label><input value="${esc(s.profile||'enhanced')}" onchange="schedules[${idx}].profile=this.value"/>
-              <label>jitter_seconds</label><input type="number" min="0" max="300" value="${esc(s.jitter_seconds??0)}" onchange="schedules[${idx}].jitter_seconds=Number(this.value)"/>
+              <label>运行档位（profile）</label><input value="${esc(s.profile||'enhanced')}" placeholder="enhanced 或 legacy" onchange="schedules[${idx}].profile=this.value"/>
+              <label>随机抖动（jitter_seconds）</label><input type="number" min="0" max="300" value="${esc(s.jitter_seconds??0)}" onchange="schedules[${idx}].jitter_seconds=Number(this.value)"/>
             </div>
           `;
         }
@@ -2258,7 +2269,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('schedStatus').innerHTML = `
             <div class="kvs">
               <div>状态</div><b>${esc(enabled)} / ${esc(paused)}</b>
-              <div>Profile</div><b>${esc(st.profile||hb.profile||'')}</b>
+              <div>档位</div><b>${esc(st.profile||hb.profile||'')}</b>
               <div>Active版本</div><b>${esc(st.active_version||hb.active_version||'')}</b>
               <div>心跳</div><b>${esc(hb.ts||'')}</b>
             </div>`;
@@ -2312,7 +2323,12 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             </div>
             <label>信源ID（唯一）</label><input id="id" placeholder="例如：reuters-health-rss"/>
 	            <label>名称</label><input id="name" placeholder="例如：Reuters Healthcare"/>
-	            <label>采集方式</label><select id="connector"><option>rss</option><option>web</option><option>api</option></select>
+	            <label>采集方式</label>
+              <select id="connector">
+                <option value="rss">RSS（rss）</option>
+                <option value="web">网页（web）</option>
+                <option value="api">API（api）</option>
+              </select>
 	            <label>URL（rss/web 必填；api 填 base_url）</label><input id="url" placeholder="https://..."/>
 	            <label>API endpoint（仅 api 需要，如 /v1/news）</label><input id="api_endpoint" placeholder="/v1/news"/>
 
@@ -2570,8 +2586,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         <div class="card">
           <div class="row">
             <div class="grow">
-              <label>规则 Profile</label>
-              <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
+              <label>规则档位（Profile）</label>
+              <select id="profile"><option value="enhanced">增强（enhanced）</option><option value="legacy">保持现状（legacy）</option></select>
             </div>
             <div>
               <button onclick="loadVersions()">刷新版本</button>
@@ -2592,11 +2608,11 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           <h4>版本差异对比</h4>
           <label>规则集（ruleset）</label>
           <select id="diff_ruleset">
-            <option>email_rules</option>
-            <option>content_rules</option>
-            <option>qc_rules</option>
-            <option>output_rules</option>
-            <option>scheduler_rules</option>
+            <option value="email_rules">邮件（email_rules）</option>
+            <option value="content_rules">采集（content_rules）</option>
+            <option value="qc_rules">质控（qc_rules）</option>
+            <option value="output_rules">输出（output_rules）</option>
+            <option value="scheduler_rules">调度（scheduler_rules）</option>
           </select>
           <label>对比起点版本（from_version）</label><input id="from_version" list="versions_datalist" placeholder="点击上方版本号，或在此选择/输入版本号"/>
           <label>对比终点版本（to_version）</label><input id="to_version" list="versions_datalist" placeholder="点击上方版本号，或在此选择/输入版本号"/>
