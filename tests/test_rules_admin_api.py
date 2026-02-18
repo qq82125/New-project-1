@@ -245,12 +245,27 @@ class RulesAdminApiTests(unittest.TestCase):
             "trust_tier": "B",
             "tags": ["demo"],
             "rate_limit": {"rps": 1.0, "burst": 2},
-            "fetch": {"endpoint": "/v1/items", "interval_minutes": 60, "timeout_seconds": 10, "headers_json": {}},
+            "fetch": {
+                "endpoint": "/v1/items",
+                "interval_minutes": 60,
+                "timeout_seconds": 10,
+                "headers_json": {},
+                "auth_ref": "DEMO_API_TOKEN",
+            },
             "parsing": {"parse_profile": "demo_v1"},
         }
-        up = self.client.post("/admin/api/sources", auth=("admin", "pass123"), json=payload)
+        with patch.dict(os.environ, {"DEMO_API_TOKEN": "abc123"}, clear=False):
+            up = self.client.post("/admin/api/sources", auth=("admin", "pass123"), json=payload)
         self.assertEqual(up.status_code, 200)
         self.assertTrue(up.json()["ok"])
+
+        with patch.dict(os.environ, {"DEMO_API_TOKEN": "abc123"}, clear=False):
+            ls = self.client.get("/admin/api/sources", auth=("admin", "pass123"))
+        self.assertEqual(ls.status_code, 200)
+        body = ls.json()
+        self.assertTrue(body["ok"])
+        row = [x for x in body["sources"] if x["id"] == "demo-api-source"][0]
+        self.assertTrue(row.get("auth_configured"))
 
         tg = self.client.post(
             "/admin/api/sources/demo-api-source/toggle",
@@ -268,6 +283,27 @@ class RulesAdminApiTests(unittest.TestCase):
             self.assertEqual(ts.status_code, 200)
             self.assertTrue(ts.json()["ok"])
             self.assertTrue(ts.json()["result"]["ok"])
+
+    def test_sources_auth_ref_validation(self) -> None:
+        payload = {
+            "id": "bad-auth-ref",
+            "name": "Bad",
+            "connector": "api",
+            "url": "https://api.example.com",
+            "enabled": True,
+            "priority": 1,
+            "trust_tier": "B",
+            "tags": [],
+            "rate_limit": {"rps": 1.0, "burst": 2},
+            "fetch": {"endpoint": "/v1/items", "interval_minutes": 60, "timeout_seconds": 10, "auth_ref": "bad-token"},
+            "parsing": {"parse_profile": "demo_v1"},
+        }
+        up = self.client.post("/admin/api/sources", auth=("admin", "pass123"), json=payload)
+        self.assertEqual(up.status_code, 200)
+        body = up.json()
+        self.assertFalse(body["ok"])
+        details = body.get("error", {}).get("details", [])
+        self.assertTrue(any(d.get("path") == "$.fetch.auth_ref" for d in details))
 
     def test_draft_validation_errors_structured(self) -> None:
         bad = _email_cfg("enhanced", "2.0.1")

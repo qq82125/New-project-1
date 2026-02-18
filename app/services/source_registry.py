@@ -235,7 +235,10 @@ def test_source(source: dict[str, Any], limit: int = 3) -> dict[str, Any]:
         token = os.environ.get(auth_ref, "").strip()
         if token:
             headers = dict(headers)
-            headers.setdefault("Authorization", f"Bearer {token}")
+            if "Authorization" not in headers:
+                # Env value is never returned. If env contains a full header value, keep it;
+                # otherwise default to Bearer token.
+                headers["Authorization"] = token if (" " in token) else f"Bearer {token}"
     out = {
         "source_id": sid,
         "connector": connector,

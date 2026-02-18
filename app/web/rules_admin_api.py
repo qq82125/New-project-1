@@ -211,9 +211,13 @@ def _source_errors(source: dict[str, Any], store: RulesStore) -> list[dict[str, 
         headers = f.get("headers_json", {})
         if headers is not None and not isinstance(headers, dict):
             out.append({"path": "$.fetch.headers_json", "message": "headers_json 必须是对象"})
-        auth_ref = f.get("auth_ref")
-        if auth_ref is not None and not isinstance(auth_ref, str):
-            out.append({"path": "$.fetch.auth_ref", "message": "auth_ref 必须是字符串（引用 env/secret 名称）"})
+    auth_ref = f.get("auth_ref")
+    if auth_ref is not None and not isinstance(auth_ref, str):
+        out.append({"path": "$.fetch.auth_ref", "message": "auth_ref 必须是字符串（引用 env/secret 名称）"})
+    if isinstance(auth_ref, str) and auth_ref.strip():
+        # Env var name only (no ${} templates, no lowercase, no spaces).
+        if not re.match(r"^[A-Z][A-Z0-9_]{1,63}$", auth_ref.strip()):
+            out.append({"path": "$.fetch.auth_ref", "message": "auth_ref 必须为环境变量名（例如 NMPA_API_KEY，仅大写字母/数字/_）"})
 
     rl = source.get("rate_limit", {})
     if rl is not None and not isinstance(rl, dict):
@@ -949,7 +953,15 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     @app.get("/admin/api/sources")
     def sources_list(_: dict[str, str] = Depends(_auth_guard)) -> dict[str, Any]:
         rows = store.list_sources()
-        return {"ok": True, "count": len(rows), "sources": rows}
+        out = []
+        for s in rows:
+            src = dict(s)
+            fetch = src.get("fetch", {}) if isinstance(src.get("fetch"), dict) else {}
+            auth_ref = str(fetch.get("auth_ref") or "").strip()
+            if auth_ref:
+                src["auth_configured"] = bool(os.environ.get(auth_ref, "").strip())
+            out.append(src)
+        return {"ok": True, "count": len(out), "sources": out}
 
     @app.post("/admin/api/sources")
     def sources_upsert(
@@ -2307,7 +2319,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 	            <label>采集频率 interval_minutes（1..1440，留空=跟随全局/调度）</label><input id="fetch_interval" type="number" min="1" max="1440" placeholder="例如：60"/>
 	            <label>超时 timeout_seconds（1..120）</label><input id="fetch_timeout" type="number" min="1" max="120" placeholder="例如：20"/>
 	            <label>请求头 headers_json（可选，JSON 对象）</label><textarea id="fetch_headers" rows="3" placeholder='{"User-Agent":"..."}'></textarea>
-	            <label>鉴权引用 auth_ref（可选：env/secret 名称，不存明文）</label><input id="fetch_auth_ref" placeholder="例如：MY_API_TOKEN"/>
+	            <label>鉴权引用 auth_ref（可选：env/secret 名称，不存明文）</label><input id="fetch_auth_ref" placeholder="例如：NMPA_API_KEY"/>
+              <div class="small" id="auth_ref_hint">鉴权状态：-</div>
 
 	            <label>限速 rate_limit（rps 0.1..50 / burst 1..100）</label>
 	            <div class="row">
@@ -2336,7 +2349,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 	                  <li><b>interval_minutes</b>：每个信源的采集频率（分钟）。后续 scheduler 会按该值决定是否抓取该 source。</li>
 	                  <li><b>timeout_seconds</b>：单次抓取超时（秒）。</li>
 	                  <li><b>headers_json</b>：附加请求头（JSON 对象）。</li>
-	                  <li><b>auth_ref</b>：引用环境变量名（例如 <code>MY_API_TOKEN</code>），运行时会用其值拼到 Authorization Bearer（不在 DB 存明文 token）。</li>
+	                  <li><b>auth_ref</b>：只能填写“环境变量名”（例如 <code>NMPA_API_KEY</code>）。运行时会从 env 取值并注入到请求头（默认写入 <code>Authorization</code>，env 若不含空格将按 <code>Bearer &lt;token&gt;</code> 处理）。UI 只显示“是否已配置”，不会展示明文。</li>
 	                  <li><b>rate_limit</b>：每秒请求数与突发上限（用于采集端限速）。</li>
 	                  <li><b>parse_profile</b>：解析模板名（用于网页/接口解析器选择）。</li>
                   <li><b>优先级</b>：用于 story 聚合选“主条目”与排序，数值越大越优先（例如 Reuters > 垂媒 > 泛 RSS）。</li>
@@ -2402,10 +2415,15 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 	          const urlText = prettyUrl(s.url||'');
 	          const urlCell = s.url ? `<a class="url" href="${esc(s.url)}" target="_blank" title="${esc(s.url)}">${esc(urlText)}</a>` : '';
 	          const toggleLabel = s.enabled ? '停用' : '启用';
+            const f = s.fetch || {};
+            const authRef = (f.auth_ref || '').trim();
+            const authPill = authRef
+              ? (s.auth_configured ? `<span class="pill">鉴权✓</span>` : `<span class="pill err" title="未在容器环境变量中找到该 auth_ref">鉴权×</span>`)
+              : '';
 	          return `
 	            <tr data-id="${esc(s.id)}">
 	              <td class="nowrap">${s.enabled ? '启用' : '停用'}</td>
-	              <td>${esc(s.name)} ${stPill} ${err} ${hs}</td>
+	              <td>${esc(s.name)} ${authPill} ${stPill} ${err} ${hs}</td>
 	              <td class="nowrap">${esc(s.connector)}</td>
 	              <td class="urlcol">${urlCell}</td>
 	              <td class="nowrap">${s.priority}</td>
@@ -2447,6 +2465,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('fetch_timeout').value = (f.timeout_seconds ?? '');
           document.getElementById('fetch_headers').value = (f.headers_json && Object.keys(f.headers_json||{}).length) ? JSON.stringify(f.headers_json||{}) : '';
           document.getElementById('fetch_auth_ref').value = f.auth_ref||'';
+          const ar = (f.auth_ref||'').trim();
+          document.getElementById('auth_ref_hint').textContent = ar ? (`鉴权状态：` + (s.auth_configured ? '已配置' : '未配置')) : '鉴权状态：未设置';
           const rl = s.rate_limit||{};
           document.getElementById('rl_rps').value = (rl.rps ?? '');
           document.getElementById('rl_burst').value = (rl.burst ?? '');
@@ -2468,6 +2488,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('fetch_timeout').value = '';
           document.getElementById('fetch_headers').value = '';
           document.getElementById('fetch_auth_ref').value = '';
+          document.getElementById('auth_ref_hint').textContent = '鉴权状态：未设置';
           document.getElementById('rl_rps').value = '';
           document.getElementById('rl_burst').value = '';
           document.getElementById('parse_profile').value = '';

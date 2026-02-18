@@ -195,6 +195,25 @@ curl -u admin:your_pass \
   }'
 ```
 
+## Secret / auth_ref（不存明文）
+Sources 支持通过 `fetch.auth_ref` 引用环境变量名，用于请求鉴权：
+- `auth_ref` 只能是环境变量名（例如 `NMPA_API_KEY`），不会把密钥明文写入 DB。
+- 运行时会从 env 读取该变量并注入到请求头（默认写入 `Authorization`）。
+  - 若 env 值包含空格（例如 `Bearer xxx` / `Basic yyy`），将原样写入。
+  - 若 env 值不含空格（例如纯 token），将按 `Bearer <token>` 写入。
+- 控制台 UI 只显示“鉴权✓/鉴权×”（是否已配置），不会展示明文。
+
+### Docker Compose 里配置 env（推荐）
+本项目默认用 `docker-compose.yml` 加载 `.docker.env`：
+1) 在 `.docker.env` 增加一行（示例）：
+```bash
+NMPA_API_KEY=your_real_secret_here
+```
+2) 重启容器让 env 生效（env 变化需要重启进程才能读取到）：
+```bash
+docker compose up -d
+```
+
 ### 启停 source
 ```bash
 curl -u admin:your_pass \
