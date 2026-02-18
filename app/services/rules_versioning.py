@@ -70,6 +70,21 @@ def _iter_rule_profiles(rules_root: Path, ruleset: str) -> list[tuple[str, dict[
 
 
 def _load_sources_registry_docs(rules_root: Path) -> list[dict[str, Any]]:
+    unified = rules_root / "sources_registry.v1.yaml"
+    if unified.exists():
+        doc = _load_rule_doc(unified)
+        raw = doc.get("sources", []) if isinstance(doc, dict) else []
+        out_u: list[dict[str, Any]] = []
+        if isinstance(raw, list):
+            for s in raw:
+                if isinstance(s, dict):
+                    ss = dict(s)
+                    # keep backward-compatible field for DB rows/collector
+                    if "connector" not in ss and "fetcher" in ss:
+                        ss["connector"] = ss.get("fetcher")
+                    out_u.append(ss)
+        return out_u
+
     out: list[dict[str, Any]] = []
     src_root = rules_root / "sources"
     if not src_root.exists():
@@ -116,6 +131,10 @@ def _copy_rules_tree(src_rules_root: Path, dst_rules_root: Path) -> None:
         dst = dst_rules_root / d
         if src.exists() and src.is_dir():
             shutil.copytree(src, dst)
+    # Optional unified sources registry file.
+    src_registry = src_rules_root / "sources_registry.v1.yaml"
+    if src_registry.exists() and src_registry.is_file():
+        shutil.copy2(src_registry, dst_rules_root / "sources_registry.v1.yaml")
 
 
 def _next_version_id(versions_root: Path) -> str:

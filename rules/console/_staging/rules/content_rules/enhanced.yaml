@@ -9,20 +9,7 @@ defaults:
     include_tags:
       - media
       - regulatory
-      - journal
-      - preprint
-      - company
-      - market_research
-      - thinktank
     exclude_tags: []
-    include_groups:
-      - media_global
-      - regulatory
-      - journals
-      - preprints
-      - market_research_thinktank
-      - company_major
-    exclude_groups: []
     include_source_ids: []
     exclude_source_ids: []
     default_enabled_only: true
@@ -33,12 +20,101 @@ defaults:
     min: 10
     max: 15
     topup_if_24h_lt: 10
-  # Legacy schema-compatible placeholders only.
-  # Real source registry is resolved from rules/sources_registry.v1.yaml + groups + overrides.
   sources:
-    media_global: []
-    regulatory_cn: []
-    regulatory_apac: []
+    media_global:
+      - name: GenomeWeb
+        url: https://www.genomeweb.com/rss.xml
+        region: 北美
+        trust_tier: A
+      - name: 360Dx
+        url: https://www.360dx.com/rss.xml
+        region: 北美
+        trust_tier: A
+      - name: Reuters Healthcare
+        url: https://www.reutersagency.com/feed/?best-topics=healthcare-pharmaceuticals
+        region: 北美
+        trust_tier: B
+      - name: Fierce Biotech
+        url: https://www.fiercebiotech.com/rss/xml
+        region: 北美
+        trust_tier: B
+      - name: MedTech Dive
+        url: https://www.medtechdive.com/feeds/news/
+        region: 北美
+        trust_tier: B
+      - name: BioPharma Dive
+        url: https://www.biopharmadive.com/feeds/news/
+        region: 北美
+        trust_tier: B
+    regulatory_cn:
+      - name: NMPA
+        url: https://www.nmpa.gov.cn/
+        region: 中国
+        trust_tier: A
+      - name: CMDE
+        url: https://www.cmde.org.cn/
+        region: 中国
+        trust_tier: A
+      - name: CCGP
+        url: https://www.ccgp.gov.cn/
+        region: 中国
+        trust_tier: A
+    regulatory_apac:
+      - name: TGA
+        url: https://www.tga.gov.au/feeds/alert/safety-alerts.xml
+        region: 亚太
+        trust_tier: A
+      - name: HSA
+        url: https://www.hsa.gov.sg/announcements
+        region: 亚太
+        trust_tier: A
+      - name: PMDA
+        url: https://www.pmda.go.jp/
+        region: 亚太
+        trust_tier: A
+      - name: MFDS
+        url: https://www.mfds.go.kr/
+        region: 亚太
+        trust_tier: A
+    regulatory_us_eu:
+      - name: FDA MedWatch
+        url: https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/medwatch/rss.xml
+        region: 北美
+        trust_tier: A
+      - name: FDA Medical Device Recalls
+        url: https://www.fda.gov/medical-devices/medical-device-recalls/rss.xml
+        region: 北美
+        trust_tier: A
+      - name: MHRA Alerts
+        url: https://www.gov.uk/drug-device-alerts.atom
+        region: 欧洲
+        trust_tier: A
+      - name: EU Medical Devices (MDCG/MDR)
+        url: https://health.ec.europa.eu/medical-devices-sector_en
+        region: 欧洲
+        trust_tier: A
+    journals_preprints:
+      - name: Nature
+        url: https://www.nature.com/nature.rss
+        region: 全球
+        trust_tier: A
+      - name: NEJM
+        url: https://www.nejm.org/action/showFeed?jc=nejm&type=etoc&feed=rss
+        region: 全球
+        trust_tier: A
+      - name: The Lancet
+        url: https://www.thelancet.com/rssfeed/lancet_current.xml
+        region: 全球
+        trust_tier: A
+      - name: medRxiv
+        url: https://connect.medrxiv.org/medrxiv_xml.php?subject=all
+        region: 全球
+        trust_tier: B
+      - name: bioRxiv
+        url: https://connect.biorxiv.org/biorxiv_xml.php?subject=all
+        region: 全球
+        trust_tier: B
+    procurement_global: []
   source_priority:
     nmpa: 110
     cmde: 108
@@ -59,11 +135,6 @@ defaults:
     regulatory_cn: 102
     regulatory_apac: 101
     regulatory_us_eu: 101
-    regulatory: 102
-    journals: 99
-    preprints: 97
-    market_research_thinktank: 90
-    company_major: 88
     journals_preprints: 98
     media_global: 80
     statnews: 85

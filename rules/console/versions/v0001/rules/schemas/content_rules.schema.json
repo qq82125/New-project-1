@@ -144,6 +144,7 @@
             "type": "string",
             "enum": [
               "ivd_core",
+              "diagnostic_tech_products",
               "regulatory_procurement",
               "oncology",
               "infection",

@@ -156,28 +156,29 @@ rules:
 ### 示例2：新增一个数据源
 目标：新增亚太监管源。
 
-1. 修改 `rules/content_rules/enhanced.yaml`
-2. 在 `defaults.sources.regulatory_apac` 新增源对象
-3. 如需更高权重，在 `rules` 中配置 `source_priority`
+1. 修改 `rules/sources_registry.v1.yaml` 新增 source
+2. 在 `groups.regulatory` 挂入 source id
+3. 在 `rules/content_rules/enhanced.yaml` 的 `defaults.content_sources.include_groups` 引用该 group
+4. 如需更高权重，在 `defaults.source_priority` 配置组或来源优先级
 
 示例片段：
 ```yaml
-defaults:
-  sources:
-    regulatory_apac:
-      - name: HSA News
-        url: https://www.hsa.gov.sg/announcements
-        region: 亚太
-        trust_tier: A
-
-rules:
-  - id: source-priority-reg-apac
+version: 1
+sources:
+  - id: hsa_news
+    name: HSA News
+    url: https://www.hsa.gov.sg/announcements
+    region: 亚太
+    trust_tier: A
+    tags: [regulatory, apac]
     enabled: true
-    priority: 85
-    type: source_priority
-    description: 亚太监管优先
-    params:
-      groups: ["regulatory_cn", "regulatory_apac"]
+    fetcher: html
+groups:
+  regulatory: [hsa_news]
+
+defaults:
+  content_sources:
+    include_groups: [media_global, regulatory, journals, preprints, market_research_thinktank, company_major]
 ```
 
 ### 示例3：新增一个过滤条件
@@ -360,18 +361,25 @@ docker compose exec admin-api python3 -m app.workers.cli rules:dryrun --profile 
 - `scheduler-worker` 默认会按 `scheduler_rules(enhanced)` 注册任务；若容器内要实际发信，需要提供 `TO_EMAIL` 与 SMTP 环境（参见 `send_mail_icloud.sh` 读取的 `.mail.env` 变量）。
 
 ## 信源管理（可运营化）
-信源与采集规则解耦，统一放在：
-- `rules/sources/rss.yaml`
-- `rules/sources/web.yaml`
-- `rules/sources/api.yaml`
+信源与采集规则解耦，统一注册表放在：
+- `rules/sources_registry.v1.yaml`
+- `rules/sources_registry.schema.json`（兼容读取 `rules/schemas/sources_registry.schema.json`）
+- 覆盖层（运行态开关，不改基础文件）：`data/sources_overrides.json`
+
+兼容说明：
+- 旧格式 `rules/sources/rss.yaml|web.yaml|api.yaml` 仍可读取（fallback），用于向后兼容。
+- 新增/编辑建议统一改 `sources_registry.v1.yaml`。
 
 新增信源流程：
-1. 只修改 `rules/sources/rss.yaml`（或 `web.yaml/api.yaml`）新增 source。
-2. 运行 `python -m app.workers.cli sources:validate`。
-3. 运行 `python -m app.workers.cli sources:test --source-id <id> --limit 3`。
-4. 运行 `python -m app.workers.cli rules:dryrun --profile enhanced --date 2026-02-16` 观察入选与统计。
+1. 修改 `rules/sources_registry.v1.yaml` 新增 source（含 `id/name/url/region/trust_tier/tags/enabled/fetcher`）。
+2. `fetcher` 支持：`rss|html|rsshub|google_news`（兼容 `web|api`）。
+3. 若 `fetcher=rsshub`，配置 `fetch.rsshub_route`；运行时读取环境变量 `RSSHUB_BASE_URL`。
+4. 运行 `python -m app.workers.cli sources:validate`。
+5. 运行 `python -m app.workers.cli sources:test --source-id <id> --limit 3`。
+6. 运行 `python -m app.workers.cli rules:dryrun --profile enhanced --date 2026-02-16` 观察入选与统计。
 
 下线信源流程：
+- 控制台 `/admin/sources` 的启用/停用会写入 `data/sources_overrides.json`（overlay），不直接改基础 registry。
 - 推荐保留记录并下线，不硬删：`python -m app.workers.cli sources:retire --source-id <id> --reason \"xxx\"`
 - 这样可减少 replay 漂移风险。
 

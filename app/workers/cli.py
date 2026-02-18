@@ -10,6 +10,7 @@ from app.rules.models import RuleSelection
 from app.services.source_registry import (
     SourceRegistryError,
     diff_sources_for_profiles,
+    effective_source_ids_for_profile,
     list_sources_for_profile,
     load_sources_registry,
     retire_source,
@@ -35,7 +36,18 @@ def cmd_rules_validate(argv: list[str]) -> int:
     profile = _get_opt(argv, "--profile")
     if profile:
         result = engine.validate_profile_pair(profile)
-        print(json.dumps({"ok": True, **result, "sources_registry": source_validate}, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    **result,
+                    "sources_registry": source_validate,
+                    "active_source_ids": effective_source_ids_for_profile(engine.project_root, profile, rules_root=engine.rules_root),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
 
     validated: list[dict[str, str]] = []

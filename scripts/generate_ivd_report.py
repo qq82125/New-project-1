@@ -1597,7 +1597,9 @@ def main() -> int:
             converted = []
             for s in registry_sources:
                 sid = str(s.get("id", ""))
-                conn = str(s.get("connector", "rss"))
+                conn = str(s.get("fetcher") or s.get("connector") or "rss").strip().lower()
+                if conn == "html":
+                    conn = "web"
                 name = str(s.get("name", sid))
                 url = str(s.get("url", ""))
                 region = str(s.get("region", "北美"))
@@ -1605,7 +1607,8 @@ def main() -> int:
                 kind = "regulatory" if "regulatory" in tags else "media"
                 pri = int(s.get("priority", 0))
                 sg = infer_source_group(s)
-                converted.append((sid, conn, name, url, region, kind, pri, sg))
+                fetch_cfg = s.get("fetch", {}) if isinstance(s.get("fetch"), dict) else {}
+                converted.append((sid, conn, name, url, region, kind, pri, sg, fetch_cfg))
             sources = converted
         else:
             # Compatibility fallback: use old inline sources in enhanced when registry is empty.
@@ -1620,7 +1623,7 @@ def main() -> int:
                     sg = "regulatory_cn" if (kind == "regulatory" and region == "中国") else (
                         "regulatory_apac" if (kind == "regulatory" and region == "亚太") else "media_global"
                     )
-                    converted.append((sid, "rss", name, url, region, kind, 50, sg))
+                    converted.append((sid, "rss", name, url, region, kind, 50, sg, {}))
                 if converted:
                     sources = converted
 
@@ -1643,7 +1646,7 @@ def main() -> int:
     items.extend(collect_nmpa_site_updates(now_utc, tz_name, enhanced=bool(use_enhanced)))
     items.extend(collect_pmda_updates(now_utc, tz_name, enhanced=bool(use_enhanced)))
 
-    # Normalize legacy tuples (7 fields) into new form (8 fields).
+    # Normalize legacy tuples (7/8 fields) into new form (9 fields).
     norm_sources = []
     for t in sources:
         if isinstance(t, tuple) and len(t) == 7:
@@ -1651,13 +1654,16 @@ def main() -> int:
             sg = "regulatory_cn" if (kind == "regulatory" and region == "中国") else (
                 "regulatory_apac" if (kind == "regulatory" and region == "亚太") else "media_global"
             )
-            norm_sources.append((sid, conn, name, url, region, kind, pri, sg))
+            norm_sources.append((sid, conn, name, url, region, kind, pri, sg, {}))
+        elif isinstance(t, tuple) and len(t) == 8:
+            sid, conn, name, url, region, kind, pri, sg = t
+            norm_sources.append((sid, conn, name, url, region, kind, pri, sg, {}))
         else:
             norm_sources.append(t)
 
     event_explain_rows: list[dict] = []
 
-    for source_id, connector, src_name, url, default_region, kind, source_priority, source_group in norm_sources:
+    for source_id, connector, src_name, url, default_region, kind, source_priority, source_group, fetch_cfg in norm_sources:
         stat = source_stats.setdefault(
             source_id,
             {
@@ -1667,6 +1673,7 @@ def main() -> int:
                 "fetch_count": 0,
                 "parse_ok": 0,
                 "parse_fail": 0,
+                "items_count": 0,
                 "last_success_at": "",
                 "top_http_status": {},
             },
@@ -1674,7 +1681,7 @@ def main() -> int:
         stat["fetch_count"] += 1
         entries: list[dict] = []
         http_status = 0
-        if connector == "rss":
+        if connector in ("rss", "google_news"):
             data, http_status = fetch_bytes_with_status(url, timeout=15)
             if data:
                 feed = feedparser.parse(data)
@@ -1702,6 +1709,29 @@ def main() -> int:
                                 "entry": None,
                             }
                         )
+        elif connector == "rsshub":
+            base = os.getenv("RSSHUB_BASE_URL", "").strip().rstrip("/")
+            route = str((fetch_cfg or {}).get("rsshub_route", "")).strip()
+            if not base or not route:
+                stat["parse_fail"] += 1
+                continue
+            full = f"{base}{route if route.startswith('/') else '/' + route}"
+            data, http_status = fetch_bytes_with_status(full, timeout=15)
+            if data:
+                feed = feedparser.parse(data)
+                for e in feed.entries[:50]:
+                    entries.append(
+                        {
+                            "title": (getattr(e, "title", "") or "").strip(),
+                            "link": (getattr(e, "link", "") or "").strip(),
+                            "summary": (
+                                getattr(e, "summary", "")
+                                or getattr(e, "description", "")
+                                or ""
+                            ),
+                            "entry": e,
+                        }
+                    )
         elif connector == "web":
             web_entries = fetch_web_entries(url, timeout=15)
             http_status = 200 if web_entries else 0
@@ -1725,6 +1755,7 @@ def main() -> int:
             stat["parse_fail"] += 1
             continue
         stat["parse_ok"] += 1
+        stat["items_count"] += len(entries)
         stat["last_success_at"] = now_utc.isoformat()
 
         for row in entries:

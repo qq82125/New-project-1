@@ -1,0 +1,633 @@
+version: 1
+sources:
+- tags:
+  - media
+  - diagnostics
+  - global
+  - en
+  region: 北美
+  url: https://www.360dx.com/rss.xml
+  name: 360Dx
+  id: 360dx-rss
+  fetcher: rss
+  enabled: true
+  notes: IVD/diagnostics focused media
+  trust_tier: A
+  priority: 80
+- tags:
+  - company
+  - abbott
+  - press
+  - diagnostics
+  region: US
+  url: https://www.abbott.com/corpnewsroom.html
+  name: Abbott Newsroom
+  id: abbott_newsroom
+  fetcher: html
+  enabled: true
+  notes: html抓取，若发现RSS可升级
+  trust_tier: A
+  priority: 84
+- tags:
+  - media
+  - global
+  - en
+  region: 北美
+  url: https://www.biopharmadive.com/feeds/news/
+  name: BioPharma Dive
+  id: biopharma-dive-rss
+  fetcher: rss
+  enabled: true
+  notes: Biopharma and diagnostics adjacent news
+  trust_tier: B
+  priority: 68
+- tags:
+  - preprint
+  - global
+  - en
+  region: 全球
+  url: https://connect.biorxiv.org/biorxiv_xml.php?subject=all
+  name: bioRxiv (All)
+  id: biorxiv-all-rss
+  fetcher: rss
+  enabled: true
+  notes: Preprint all-subject feed, filtered by include keywords
+  trust_tier: B
+  priority: 73
+- tags:
+  - preprint
+  - global
+  - en
+  region: 全球
+  url: https://connect.biorxiv.org/biorxiv_xml.php?subject=genomics+bioinformatics
+  name: bioRxiv (Genomics/Bioinformatics)
+  id: biorxiv-genomics-atom
+  fetcher: rss
+  enabled: true
+  notes: Domain-focused preprint feed
+  trust_tier: B
+  priority: 72
+- tags:
+  - registry
+  - cn
+  - zh
+  region: 中国
+  url: https://www.chictr.org.cn/
+  name: ChiCTR (中国临床试验注册中心)
+  id: chict-home-web
+  fetcher: html
+  enabled: false
+  notes: Placeholder web source
+  trust_tier: A
+  priority: 70
+- tags:
+  - pressrelease
+  - global
+  - en
+  region: 全球
+  url: https://ir.clarivate.com/press-releases
+  name: Clarivate Press Releases
+  id: clarivate-press-web
+  fetcher: html
+  enabled: false
+  notes: Placeholder web source
+  trust_tier: B
+  priority: 60
+- tags:
+  - regulatory
+  - ema
+  - eu
+  region: EU
+  url: https://www.ema.europa.eu/en/news-events/rss-feeds
+  name: EMA RSS Feeds (Index)
+  id: ema_rss_index
+  fetcher: html
+  enabled: true
+  notes: RSS索引页，发现可用feed并用关键词过滤
+  trust_tier: A
+  priority: 92
+- tags:
+  - literature
+  - eu
+  - en
+  region: 欧洲
+  url: https://europepmc.org/
+  name: Europe PMC
+  id: europepmc-home-web
+  fetcher: html
+  enabled: false
+  notes: Placeholder web source
+  trust_tier: A
+  priority: 73
+- tags:
+  - regulatory
+  - us
+  - en
+  region: 北美
+  url: https://www.fda.gov/medical-devices/medical-device-recalls/rss.xml
+  name: FDA Medical Device Recalls
+  id: fda-device-recalls-rss
+  fetcher: rss
+  enabled: true
+  notes: US IVD/device recalls
+  trust_tier: A
+  priority: 89
+- tags:
+  - regulatory
+  - us
+  - en
+  region: 北美
+  url: https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/medwatch/rss.xml
+  name: FDA MedWatch
+  id: fda-medwatch-rss
+  fetcher: rss
+  enabled: true
+  notes: US regulatory alerts
+  trust_tier: A
+  priority: 88
+- tags:
+  - regulatory
+  - fda
+  - devices
+  - ivd
+  region: US
+  url: https://www.fda.gov/medical-devices/medical-devices-news-and-events/cdrh-new-news-and-updates
+  name: FDA CDRH News and Updates
+  id: fda_cdrh_news_updates
+  fetcher: html
+  enabled: true
+  notes: 官方页面，优先发现RSS，无则HTML抓取
+  trust_tier: A
+  priority: 94
+- tags:
+  - regulatory
+  - fda
+  - devices
+  - ivd
+  region: US
+  url: https://www.fda.gov/about-fda/contact-fda/get-email-updates
+  name: FDA RSS - Medical Devices
+  id: fda_rss_medical_devices
+  fetcher: rss
+  enabled: true
+  notes: 索引页，支持RSS auto-discovery
+  trust_tier: A
+  priority: 93
+- tags:
+  - media
+  - global
+  - en
+  - ivd
+  region: 北美
+  url: https://www.fiercebiotech.com/rss/xml
+  name: Fierce Biotech
+  id: fierce-biotech-rss
+  fetcher: rss
+  enabled: true
+  notes: IVD/biotech industry media
+  trust_tier: B
+  priority: 75
+- tags:
+  - media
+  - global
+  - en
+  - ivd
+  region: 北美
+  url: https://www.genomeweb.com/rss.xml
+  name: GenomeWeb
+  id: genomeweb-rss
+  fetcher: rss
+  enabled: true
+  notes: Genomics and diagnostics media
+  trust_tier: A
+  priority: 82
+- tags:
+  - media
+  - pressrelease
+  - global
+  - en
+  region: 全球
+  url: https://www.globenewswire.com/RssFeed/subjectcode/72-Press%20Releases/feedTitle/GlobeNewswire%20-%20Press%20Releases
+  name: GlobeNewswire Press Releases
+  id: globenewswire-press-rss
+  fetcher: rss
+  enabled: true
+  notes: Company press releases
+  trust_tier: B
+  priority: 77
+- tags:
+  - literature
+  - global
+  - en
+  region: 全球
+  url: https://scholar.google.com/
+  name: Google Scholar
+  id: google-scholar-home-web
+  fetcher: html
+  enabled: false
+  notes: Placeholder web source
+  trust_tier: B
+  priority: 50
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?q=IVD+molecular+diagnostics+when:24h
+  name: Google News RSS - IVD + molecular diagnostics (24h)
+  id: google_news_ivd_24h
+  fetcher: google_news
+  enabled: false
+  notes: 噪音高，默认关闭，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - media
+  - cn
+  - zh
+  - ivd
+  region: 中国
+  url: https://www.iivd.net/portal.php?mod=list&catid=17
+  name: iivd.net 资讯
+  id: iivd.rss
+  fetcher: html
+  enabled: true
+  notes: User-owned site source
+  trust_tier: B
+  priority: 74
+- tags:
+  - regulatory
+  - imdrf
+  region: Global
+  url: https://www.imdrf.org/news-events/news.xml
+  name: IMDRF News & Events
+  id: imdrf_news
+  fetcher: rss
+  enabled: true
+  notes: ''
+  trust_tier: A
+  priority: 95
+- tags:
+  - market_research
+  - ivd
+  region: US
+  url: https://kaloramainformation.com/blog/
+  name: Kalorama Information Blog
+  id: kalorama_blog
+  fetcher: rss
+  enabled: true
+  notes: 优先RSS auto-discovery；无则HTML抓取
+  trust_tier: B
+  priority: 70
+- tags:
+  - journal
+  - global
+  - en
+  region: 全球
+  url: https://www.thelancet.com/rssfeed/lancet_current.xml
+  name: The Lancet (Current Issue)
+  id: lancet-current-rss
+  fetcher: rss
+  enabled: true
+  notes: Clinical journal feed
+  trust_tier: A
+  priority: 91
+- tags:
+  - preprint
+  - global
+  - en
+  region: 全球
+  url: https://connect.medrxiv.org/medrxiv_xml.php?subject=all
+  name: medRxiv (All)
+  id: medrxiv-all-rss
+  fetcher: rss
+  enabled: true
+  notes: Preprint all-subject feed, filtered by include keywords
+  trust_tier: B
+  priority: 73
+- tags:
+  - preprint
+  - global
+  - en
+  region: 全球
+  url: https://connect.medrxiv.org/medrxiv_xml.php?subject=infectious+diseases
+  name: medRxiv (Infectious Diseases)
+  id: medrxiv-infectious-atom
+  fetcher: rss
+  enabled: true
+  notes: Domain-focused preprint feed
+  trust_tier: B
+  priority: 72
+- tags:
+  - media
+  - global
+  - en
+  region: 北美
+  url: https://www.medtechdive.com/feeds/news/
+  name: MedTech Dive
+  id: medtech-dive-rss
+  fetcher: rss
+  enabled: true
+  notes: MedTech business news
+  trust_tier: B
+  priority: 70
+- tags:
+  - thinktank
+  - europe
+  - industry
+  region: EU
+  url: https://www.medtecheurope.org/medtech-views/newsletters/
+  name: MedTech Europe Newsletters
+  id: medtech_europe_newsletters
+  fetcher: html
+  enabled: true
+  notes: html 抓取标题/链接/发布日期
+  trust_tier: B
+  priority: 72
+- tags:
+  - regulatory
+  - eu
+  - en
+  region: 欧洲
+  url: https://www.gov.uk/drug-device-alerts.atom
+  name: MHRA Alerts
+  id: mhra-alerts-atom
+  fetcher: rss
+  enabled: true
+  notes: UK safety alerts
+  trust_tier: A
+  priority: 88
+- tags:
+  - journal
+  - global
+  - en
+  region: 全球
+  url: https://www.nature.com/nature.rss
+  name: Nature
+  id: nature-rss
+  fetcher: rss
+  enabled: true
+  notes: Broad journal feed, filtered by include keywords
+  trust_tier: A
+  priority: 92
+- tags:
+  - journal
+  - global
+  - en
+  region: 全球
+  url: https://www.nejm.org/action/showFeed?jc=nejm&type=etoc&feed=rss
+  name: NEJM (eTOC)
+  id: nejm-etoc-rss
+  fetcher: rss
+  enabled: true
+  notes: Clinical journal feed
+  trust_tier: A
+  priority: 92
+- tags:
+  - regulatory
+  - cn
+  - zh
+  region: 中国
+  url: https://www.nmpa.gov.cn/
+  name: NMPA
+  id: nmpa-home-web
+  fetcher: html
+  enabled: true
+  notes: China national regulatory portal
+  trust_tier: A
+  priority: 95
+- tags:
+  - regulatory
+  - apac
+  - en
+  region: 亚太
+  url: https://www.pmda.go.jp/english/index.html
+  name: PMDA
+  id: pmda-home-web
+  fetcher: html
+  enabled: true
+  notes: Japan PMDA portal
+  trust_tier: A
+  priority: 92
+- tags:
+  - media
+  - pressrelease
+  - global
+  - en
+  region: 全球
+  url: https://www.prnewswire.com/rss/news-releases-list.rss
+  name: PR Newswire Press Releases
+  id: prnewswire-press-rss
+  fetcher: rss
+  enabled: true
+  notes: Company press releases
+  trust_tier: B
+  priority: 78
+- tags:
+  - literature
+  - global
+  - en
+  region: 全球
+  url: https://pubmed.ncbi.nlm.nih.gov/
+  name: PubMed
+  id: pubmed-home-web
+  fetcher: html
+  enabled: false
+  notes: Placeholder web source
+  trust_tier: A
+  priority: 75
+- tags:
+  - media
+  - global
+  - en
+  region: 北美
+  url: https://www.reutersagency.com/feed/?best-topics=healthcare-pharmaceuticals
+  name: Reuters Healthcare
+  id: reuters-health-rss
+  fetcher: rss
+  enabled: true
+  notes: High-priority global media
+  trust_tier: A
+  priority: 100
+- tags:
+  - company
+  - roche
+  - press
+  region: EU
+  url: https://www.roche.com/media/subscribe
+  name: Roche Media Subscribe
+  id: roche_media_subscribe
+  fetcher: html
+  enabled: false
+  notes: 订阅页，若已有可用Roche RSS则保持禁用
+  trust_tier: A
+  priority: 65
+- tags:
+  - company
+  - roche
+  - ir
+  region: EU
+  url: https://www.roche.com/investors/subscribe
+  name: Roche Investors Subscribe
+  id: roche_subscribe_investors
+  fetcher: html
+  enabled: false
+  notes: 订阅页，若已有可用Roche RSS则保持禁用
+  trust_tier: A
+  priority: 65
+- tags:
+  - aggregator
+  - rsshub
+  region: Global
+  url: rsshub://
+  name: RSSHub Template (Disabled)
+  id: rsshub_template
+  fetcher: rsshub
+  enabled: false
+  notes: 通过RSSHUB_BASE_URL + route 转换无RSS页面
+  trust_tier: C
+  priority: 20
+  fetch:
+    rsshub_route: /example/path
+- tags:
+  - journal
+  - global
+  - en
+  - translational
+  region: 全球
+  url: https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=stm
+  name: Science Translational Medicine (eTOC)
+  id: science-stm-etoc-rss
+  fetcher: rss
+  enabled: true
+  notes: Translational journal feed
+  trust_tier: A
+  priority: 90
+- tags:
+  - company
+  - siemens
+  - press
+  - diagnostics
+  region: EU
+  url: https://www.siemens-healthineers.com/press
+  name: Siemens Healthineers Press
+  id: siemens_healthineers_press
+  fetcher: html
+  enabled: true
+  notes: 抓取press列表
+  trust_tier: A
+  priority: 84
+- tags:
+  - media
+  - global
+  - en
+  region: 北美
+  url: https://www.statnews.com/feed/
+  name: STAT
+  id: statnews-rss
+  fetcher: rss
+  enabled: true
+  notes: Healthcare media
+  trust_tier: B
+  priority: 85
+- tags:
+  - regulatory
+  - apac
+  - en
+  region: 亚太
+  url: https://www.tga.gov.au/feeds/alert/product-recalls.xml
+  name: TGA Product Recalls
+  id: tga-recall-rss
+  fetcher: rss
+  enabled: true
+  notes: AU recalls
+  trust_tier: A
+  priority: 90
+- tags:
+  - regulatory
+  - apac
+  - en
+  region: 亚太
+  url: https://www.tga.gov.au/feeds/alert/safety-alerts.xml
+  name: TGA Safety Alerts
+  id: tga-safety-rss
+  fetcher: rss
+  enabled: true
+  notes: AU regulatory safety updates
+  trust_tier: A
+  priority: 90
+- tags:
+  - media
+  - clinical_lab
+  - ivd
+  region: Global
+  url: https://www.clinicallab.com/tag/ivd
+  name: Today's Clinical Lab (IVD Tag)
+  id: todays_clinical_lab_ivd
+  fetcher: rss
+  enabled: true
+  notes: 优先走 RSS auto-discovery；若无 RSS 则 html 抓取列表
+  trust_tier: B
+  priority: 72
+- tags:
+  - regulatory
+  - who
+  - prequalification
+  - ivd
+  region: Global
+  url: https://extranet.who.int/prequal/vitro-diagnostics
+  name: WHO Prequalification - In Vitro Diagnostics
+  id: who_prequal_ivd
+  fetcher: html
+  enabled: true
+  notes: 通常无标准RSS，可选rsshub_route转换
+  trust_tier: A
+  priority: 90
+groups:
+  media_global:
+  - 360dx-rss
+  - biopharma-dive-rss
+  - clarivate-press-web
+  - fierce-biotech-rss
+  - genomeweb-rss
+  - globenewswire-press-rss
+  - iivd.rss
+  - medtech-dive-rss
+  - prnewswire-press-rss
+  - reuters-health-rss
+  - statnews-rss
+  - todays_clinical_lab_ivd
+  regulatory:
+  - ema_rss_index
+  - fda-device-recalls-rss
+  - fda-medwatch-rss
+  - fda_cdrh_news_updates
+  - fda_rss_medical_devices
+  - imdrf_news
+  - mhra-alerts-atom
+  - nmpa-home-web
+  - pmda-home-web
+  - tga-recall-rss
+  - tga-safety-rss
+  - who_prequal_ivd
+  journals:
+  - lancet-current-rss
+  - nature-rss
+  - nejm-etoc-rss
+  - science-stm-etoc-rss
+  preprints:
+  - biorxiv-all-rss
+  - biorxiv-genomics-atom
+  - medrxiv-all-rss
+  - medrxiv-infectious-atom
+  company_major:
+  - abbott_newsroom
+  - roche_media_subscribe
+  - roche_subscribe_investors
+  - siemens_healthineers_press
+  market_research_thinktank:
+  - kalorama_blog
+  - medtech_europe_newsletters
+  meta_aggregators:
+  - google_news_ivd_24h
+  - rsshub_template

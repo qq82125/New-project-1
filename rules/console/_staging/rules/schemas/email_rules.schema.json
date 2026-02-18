@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/email_rules.schema.json",
+  "title": "Email Rules Schema",
+  "type": "object",
+  "required": ["ruleset", "version", "profile", "defaults", "overrides", "rules", "output"],
+  "properties": {
+    "ruleset": { "type": "string", "const": "email_rules" },
+    "version": { "type": "string", "minLength": 3 },
+    "profile": { "type": "string", "enum": ["legacy", "enhanced", "default.v1", "strict.v2"] },
+    "defaults": {
+      "type": "object",
+      "required": ["timezone", "subject_template", "recipient", "send_window", "retry"],
+      "properties": {
+        "timezone": { "type": "string", "minLength": 3 },
+        "subject_template": { "type": "string", "minLength": 5 },
+        "recipient": { "type": "string", "minLength": 5 },
+        "sender_env": { "type": "string", "minLength": 3 },
+        "send_window": {
+          "type": "object",
+          "required": ["hour", "minute"],
+          "properties": {
+            "hour": { "type": "integer", "minimum": 0, "maximum": 23 },
+            "minute": { "type": "integer", "minimum": 0, "maximum": 59 }
+          },
+          "additionalProperties": true
+        },
+        "retry": {
+          "type": "object",
+          "required": ["max_retries", "connect_timeout_sec", "max_time_sec"],
+          "properties": {
+            "max_retries": { "type": "integer", "minimum": 0, "maximum": 10 },
+            "connect_timeout_sec": { "type": "integer", "minimum": 1, "maximum": 120 },
+            "max_time_sec": { "type": "integer", "minimum": 5, "maximum": 300 }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "overrides": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "on_weekend": { "type": "string", "enum": ["same", "skip", "delay"] },
+        "subject_prefix": { "type": "string", "minLength": 0 },
+        "dedupe_window_hours": { "type": "integer", "minimum": 0, "maximum": 168 }
+      },
+      "additionalProperties": true
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "enabled", "priority", "type", "params"],
+        "properties": {
+          "id": { "type": "string", "minLength": 3 },
+          "enabled": { "type": "boolean" },
+          "priority": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "type": {
+            "type": "string",
+            "enum": [
+              "subject_template",
+              "recipient_policy",
+              "dedupe",
+              "retry_policy",
+              "backup_policy",
+              "content_format",
+              "charts_toggle"
+            ]
+          },
+          "description": { "type": "string", "minLength": 0 },
+          "params": { "type": "object" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["format", "sections", "summary_max_chars", "charts_enabled"],
+      "properties": {
+        "format": { "type": "string", "enum": ["plain_text", "markdown", "html"] },
+        "sections": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "enum": ["A", "B", "C", "D", "E", "F", "G"] }
+        },
+        "summary_max_chars": { "type": "integer", "minimum": 60, "maximum": 500 },
+        "charts_enabled": { "type": "boolean" },
+        "chart_types": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["region_heatmap", "platform_radar", "event_mix"] }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

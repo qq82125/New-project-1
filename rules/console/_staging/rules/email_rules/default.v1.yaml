@@ -1,0 +1,45 @@
+ruleset: email_rules
+version: "1.0.0"
+profile: default.v1
+
+defaults:
+  timezone: Asia/Shanghai
+  subject_template: "全球IVD晨报 - {{date}}"
+  recipient: "${TO_EMAIL:-qq82125@gmail.com}"
+  sender_env: SMTP_FROM
+  send_window:
+    hour: 8
+    minute: 30
+  retry:
+    max_retries: 5
+    connect_timeout_sec: 10
+    max_time_sec: 60
+
+overrides:
+  enabled: false
+  on_weekend: same
+  subject_prefix: ""
+  dedupe_window_hours: 24
+
+rules:
+  - id: default-subject
+    enabled: true
+    priority: 100
+    type: subject_template
+    description: 默认主题模板
+    params:
+      template: "全球IVD晨报 - {{date}}"
+
+output:
+  format: plain_text
+  sections:
+    - A
+    - B
+    - C
+    - D
+    - E
+    - F
+    - G
+  summary_max_chars: 220
+  charts_enabled: false
+  chart_types: []

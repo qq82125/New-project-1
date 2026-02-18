@@ -1,8 +1,9 @@
 {
-  "active_version": "v0001",
-  "previous_version": null,
+  "active_version": "v0002",
+  "previous_version": "v0001",
   "history": [
-    "v0001"
+    "v0001",
+    "v0002"
   ],
-  "updated_at": "2026-02-17T08:11:53.126015+00:00"
+  "updated_at": "2026-02-18T20:50:26.153603+00:00"
 }

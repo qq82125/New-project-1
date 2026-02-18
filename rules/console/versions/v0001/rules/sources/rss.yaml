@@ -132,3 +132,99 @@ sources:
       - regulatory
       - us
       - en
+
+  - id: fda-device-recalls-rss
+    enabled: true
+    connector: rss
+    url: https://www.fda.gov/medical-devices/medical-device-recalls/rss.xml
+    name: FDA Medical Device Recalls
+    region: 北美
+    trust_tier: A
+    priority: 89
+    tags:
+      - regulatory
+      - us
+      - en
+
+  - id: mhra-alerts-atom
+    enabled: true
+    connector: rss
+    url: https://www.gov.uk/drug-device-alerts.atom
+    name: MHRA Alerts
+    region: 欧洲
+    trust_tier: A
+    priority: 88
+    tags:
+      - regulatory
+      - eu
+      - en
+
+  - id: nature-rss
+    enabled: true
+    connector: rss
+    url: https://www.nature.com/nature.rss
+    name: Nature
+    region: 全球
+    trust_tier: A
+    priority: 92
+    tags:
+      - media
+      - journal
+      - global
+      - en
+
+  - id: nejm-etoc-rss
+    enabled: true
+    connector: rss
+    url: https://www.nejm.org/action/showFeed?jc=nejm&type=etoc&feed=rss
+    name: NEJM (eTOC)
+    region: 全球
+    trust_tier: A
+    priority: 92
+    tags:
+      - media
+      - journal
+      - global
+      - en
+
+  - id: lancet-current-rss
+    enabled: true
+    connector: rss
+    url: https://www.thelancet.com/rssfeed/lancet_current.xml
+    name: The Lancet (Current Issue)
+    region: 全球
+    trust_tier: A
+    priority: 91
+    tags:
+      - media
+      - journal
+      - global
+      - en
+
+  - id: medrxiv-all-rss
+    enabled: true
+    connector: rss
+    url: https://connect.medrxiv.org/medrxiv_xml.php?subject=all
+    name: medRxiv (All)
+    region: 全球
+    trust_tier: B
+    priority: 73
+    tags:
+      - media
+      - preprint
+      - global
+      - en
+
+  - id: biorxiv-all-rss
+    enabled: true
+    connector: rss
+    url: https://connect.biorxiv.org/biorxiv_xml.php?subject=all
+    name: bioRxiv (All)
+    region: 全球
+    trust_tier: B
+    priority: 73
+    tags:
+      - media
+      - preprint
+      - global
+      - en

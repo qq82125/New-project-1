@@ -21,7 +21,12 @@ from pydantic import BaseModel, Field
 from app.rules.engine import RuleEngine
 from app.services.rules_store import RulesStore
 from app.services.rules_versioning import get_workspace_rules_root
-from app.services.source_registry import test_source
+from app.services.source_registry import (
+    load_sources_registry_bundle,
+    set_source_enabled_override,
+    test_source,
+    upsert_source_registry,
+)
 from app.workers.dryrun import run_dryrun
 
 
@@ -159,14 +164,22 @@ def _source_errors(source: dict[str, Any], store: RulesStore) -> list[dict[str, 
     elif not re.match(r"^[a-zA-Z0-9._-]{2,80}$", sid):
         out.append({"path": "$.id", "message": "id 仅允许字母数字._- 且长度 2-80"})
 
-    connector = str(source.get("connector", "")).strip()
-    if connector not in {"rss", "web", "api"}:
-        out.append({"path": "$.connector", "message": "connector 必须为 rss|web|api"})
+    fetcher = str(source.get("fetcher") or source.get("connector") or "").strip()
+    if fetcher == "web":
+        fetcher = "html"
+    if fetcher not in {"rss", "html", "rsshub", "google_news", "api"}:
+        out.append({"path": "$.fetcher", "message": "fetcher 必须为 rss|html|rsshub|google_news|api"})
 
     url = str(source.get("url", "")).strip()
-    if connector in {"rss", "web"} and not _is_valid_url(url):
+    if fetcher in {"rss", "html", "google_news", "api"} and not _is_valid_url(url):
         out.append({"path": "$.url", "message": "url 非法或为空"})
-    if connector == "api":
+    if fetcher == "rsshub":
+        if not (url.startswith("rsshub://") or _is_valid_url(url)):
+            out.append({"path": "$.url", "message": "rsshub url 必须是 rsshub:// 或 http(s) 地址"})
+        fetch = source.get("fetch", {}) if isinstance(source.get("fetch"), dict) else {}
+        if not str(fetch.get("rsshub_route") or "").strip():
+            out.append({"path": "$.fetch.rsshub_route", "message": "rsshub 需要填写 rsshub_route（例如 /newyorktimes/world）"})
+    if fetcher == "api":
         if not _is_valid_url(url):
             out.append({"path": "$.url", "message": "API base_url 非法或为空（请填写 url）"})
         fetch = source.get("fetch", {}) if isinstance(source.get("fetch"), dict) else {}
@@ -270,8 +283,10 @@ class RulesRollbackPayload(BaseModel):
 class SourcePayload(BaseModel):
     id: str
     name: str
-    connector: str
+    connector: str = ""
+    fetcher: str = ""
     url: str = ""
+    region: str = "全球"
     enabled: bool = True
     priority: int = 0
     trust_tier: str
@@ -1189,7 +1204,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 
     @app.get("/admin/api/sources")
     def sources_list(_: dict[str, str] = Depends(_auth_guard)) -> dict[str, Any]:
-        rows = store.list_sources()
+        bundle = load_sources_registry_bundle(root, rules_root=engine.rules_root)
+        rows = bundle.get("sources", []) if isinstance(bundle, dict) else []
         out = []
         for s in rows:
             src = dict(s)
@@ -1198,7 +1214,13 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             if auth_ref:
                 src["auth_configured"] = bool(os.environ.get(auth_ref, "").strip())
             out.append(src)
-        return {"ok": True, "count": len(out), "sources": out}
+        return {
+            "ok": True,
+            "count": len(out),
+            "sources": out,
+            "registry_file": (bundle.get("source_file") if isinstance(bundle, dict) else None),
+            "overrides_file": (bundle.get("overrides_file") if isinstance(bundle, dict) else None),
+        }
 
     @app.post("/admin/api/sources")
     def sources_upsert(
@@ -1206,10 +1228,15 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         _: dict[str, str] = Depends(_auth_guard),
     ) -> dict[str, Any]:
         source = payload.model_dump()
+        if not str(source.get("fetcher", "")).strip():
+            source["fetcher"] = source.get("connector", "")
+        if str(source.get("fetcher", "")).strip() == "web":
+            source["fetcher"] = "html"
+        source["connector"] = "web" if source.get("fetcher") == "html" else source.get("fetcher", "")
         errs = _source_errors(source, store)
         if errs:
             return {"ok": False, "error": {"code": "SOURCE_VALIDATION_FAILED", "details": errs}}
-        return store.upsert_source(source)
+        return upsert_source_registry(root, source, rules_root=engine.rules_root)
 
     @app.post("/admin/api/sources/{source_id}/toggle")
     def sources_toggle(
@@ -1217,12 +1244,14 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         payload: TogglePayload,
         _: dict[str, str] = Depends(_auth_guard),
     ) -> dict[str, Any]:
-        return store.toggle_source(source_id, enabled=payload.enabled)
+        return set_source_enabled_override(root, source_id, enabled=payload.enabled, rules_root=engine.rules_root)
 
     @app.post("/admin/api/sources/{source_id}/test")
     def sources_test(source_id: str, _: dict[str, str] = Depends(_auth_guard)) -> dict[str, Any]:
-        source = store.get_source(source_id)
-        if source is None:
+        bundle = load_sources_registry_bundle(root, rules_root=engine.rules_root)
+        rows = bundle.get("sources", []) if isinstance(bundle, dict) else []
+        source = next((x for x in rows if str(x.get("id", "")).strip() == source_id), None)
+        if not isinstance(source, dict):
             raise HTTPException(status_code=404, detail="source not found")
         result = test_source(source, limit=3)
         try:
@@ -1275,6 +1304,32 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         if isinstance(left, list):
             if left == right:
                 return out
+            # Deep diff for list-of-dict keyed by "id" (e.g. rules arrays).
+            left_id_map = {
+                str(x.get("id")): x
+                for x in left
+                if isinstance(x, dict) and str(x.get("id", "")).strip()
+            }
+            right_id_map = {
+                str(x.get("id")): x
+                for x in right
+                if isinstance(x, dict) and str(x.get("id", "")).strip()
+            }
+            if left_id_map and right_id_map:
+                keys = sorted(set(left_id_map.keys()) | set(right_id_map.keys()))
+                for k in keys:
+                    if len(out) >= limit:
+                        break
+                    p = f"{path}[id={k}]"
+                    if k not in left_id_map:
+                        out.append({"path": p, "op": "added", "to": right_id_map.get(k)})
+                    elif k not in right_id_map:
+                        out.append({"path": p, "op": "removed", "from": left_id_map.get(k)})
+                    else:
+                        _json_diff(left_id_map.get(k), right_id_map.get(k), p, out, limit)
+                # If nothing diffed (e.g., duplicate ids edge case), keep coarse fallback.
+                if out:
+                    return out
             out.append({"path": path, "op": "changed", "from": f"list(len={len(left)})", "to": f"list(len={len(right)})"})
             return out
         if left != right:
@@ -2895,16 +2950,21 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 <option value="enabled">仅启用</option>
                 <option value="disabled">仅停用</option>
               </select>
+              <input id="filter_tag" style="width:160px" placeholder="按标签过滤"/>
+              <input id="filter_region" style="width:140px" placeholder="按地区过滤"/>
             </div>
             <label>信源ID（唯一）</label><input id="id" placeholder="例如：reuters-health-rss"/>
 	            <label>名称</label><input id="name" placeholder="例如：Reuters Healthcare"/>
 	            <label>采集方式</label>
               <select id="connector">
                 <option value="rss">RSS（rss）</option>
-                <option value="web">网页（web）</option>
-                <option value="api">API（api）</option>
+                <option value="html">网页（html）</option>
+                <option value="rsshub">RSSHub（rsshub）</option>
+                <option value="google_news">Google News RSS（google_news）</option>
+                <option value="api">API（api，可选）</option>
               </select>
-	            <label>URL（rss/web 必填；api 填 base_url）</label><input id="url" placeholder="https://..."/>
+	            <label>URL（rss/html/google_news 必填；api 填 base_url）</label><input id="url" placeholder="https://... 或 rsshub://"/>
+	            <label>地区</label><input id="region" placeholder="例如：中国/亚太/北美/欧洲/全球"/>
 	            <label>API endpoint（仅 api 需要，如 /v1/news）</label><input id="api_endpoint" placeholder="/v1/news"/>
 
 	            <label>采集频率 interval_minutes（1..1440，留空=跟随全局/调度）</label><input id="fetch_interval" type="number" min="1" max="1440" placeholder="例如：60"/>
@@ -2936,8 +2996,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               <div class="box">
                 <ul>
                   <li><b>信源ID</b>：全局唯一标识。建议用小写字母/数字/.-_ 组合，例如 <code>reuters-health-rss</code>。后续规则引用、统计、去重聚合都会用到它。</li>
-	                  <li><b>采集方式</b>：<code>rss</code> 适合有 RSS 的媒体/公告；<code>web</code> 适合网页列表页（当前仅做基础 title 抓取/连通性测试）；<code>api</code> 适合 JSON API（需要 base_url + endpoint）。</li>
-	                  <li><b>URL</b>：rss/web 必填。api 时作为 <b>base_url</b> 使用。</li>
+	                  <li><b>采集方式</b>：<code>rss</code> 支持自动发现 feed；<code>html</code> 抓取网页列表；<code>rsshub</code> 用路由转 RSS；<code>google_news</code> 为聚合 RSS（默认建议关闭）；<code>api</code> 适合 JSON API。</li>
+	                  <li><b>URL</b>：rss/html/google_news 必填。api 时作为 <b>base_url</b> 使用。rsshub 可填 <code>rsshub://</code> 占位并配 <code>fetch.rsshub_route</code>。</li>
 	                  <li><b>API endpoint</b>：仅 api 需要，形如 <code>/v1/news</code>。test 会请求 base_url + endpoint。</li>
 	                  <li><b>interval_minutes</b>：每个信源的采集频率（分钟）。后续 scheduler 会按该值决定是否抓取该 source。</li>
 	                  <li><b>timeout_seconds</b>：单次抓取超时（秒）。</li>
@@ -2984,7 +3044,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         }
         function matchQ(s, q){
           if(!q) return true;
-          const t = (s.id+' '+s.name+' '+(s.tags||[]).join(' ')+' '+(s.url||'')).toLowerCase();
+          const t = (s.id+' '+s.name+' '+(s.region||'')+' '+(s.tags||[]).join(' ')+' '+(s.url||'')).toLowerCase();
           return t.includes(q.toLowerCase());
         }
         function showDrawer(title, obj){
@@ -3030,9 +3090,10 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 	            <tr data-id="${esc(s.id)}">
 	              <td class="nowrap">${s.enabled ? '启用' : '停用'}</td>
 	              <td>${esc(s.name)} ${authPill} ${statusPills}</td>
-	              <td class="nowrap">${esc(s.connector)}</td>
+	              <td class="nowrap">${esc(s.fetcher || s.connector)}</td>
 	              <td class="urlcol">${urlCell}</td>
 	              <td class="nowrap">${s.priority}</td>
+	              <td class="nowrap">${esc(s.region||'')}</td>
 	              <td class="tagcol">${esc((s.tags||[]).join(','))}</td>
 	              <td>${lastFetch}</td>
 	              <td class="actionscol">
@@ -3050,21 +3111,32 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           if (!j || !j.ok) { document.getElementById('table').textContent = JSON.stringify(j,null,2); return; }
           const q = (document.getElementById('q').value||'').trim();
           const fe = document.getElementById('filter_enabled').value;
+          const ft = (document.getElementById('filter_tag').value||'').trim().toLowerCase();
+          const fr = (document.getElementById('filter_region').value||'').trim().toLowerCase();
           const filtered = (j.sources||[]).filter(s=>{
             if(fe==='enabled' && !s.enabled) return false;
             if(fe==='disabled' && s.enabled) return false;
+            if(ft){
+              const tags = (s.tags||[]).map(x=>String(x).toLowerCase());
+              if(!tags.some(x=>x.includes(ft))) return false;
+            }
+            if(fr){
+              const rg = String(s.region||'').toLowerCase();
+              if(!rg.includes(fr)) return false;
+            }
             return matchQ(s,q);
           });
           const rows = filtered.map(renderRow).join('');
-	          document.getElementById('table').innerHTML = `<table><thead><tr><th>状态</th><th>名称</th><th>方式</th><th>链接</th><th>优先级</th><th>标签</th><th>最近抓取</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`;
+		          document.getElementById('table').innerHTML = `<table><thead><tr><th>状态</th><th>名称</th><th>方式</th><th>链接</th><th>优先级</th><th>地区</th><th>标签</th><th>最近抓取</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`;
 	          window._sources = j.sources||[];
 	        }
         function editSource(id){
           const s = (window._sources||[]).find(x=>x.id===id); if(!s) return;
           document.getElementById('id').value = s.id||'';
           document.getElementById('name').value = s.name||'';
-          document.getElementById('connector').value = s.connector||'rss';
+          document.getElementById('connector').value = (s.fetcher||s.connector||'rss');
           document.getElementById('url').value = s.url||'';
+          document.getElementById('region').value = s.region||'全球';
           const f = s.fetch||{};
           document.getElementById('api_endpoint').value = f.endpoint||'';
           document.getElementById('fetch_interval').value = (f.interval_minutes ?? '');
@@ -3089,6 +3161,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('name').value = '';
           document.getElementById('connector').value = 'rss';
           document.getElementById('url').value = '';
+          document.getElementById('region').value = '';
           document.getElementById('api_endpoint').value = '';
           document.getElementById('fetch_interval').value = '';
           document.getElementById('fetch_timeout').value = '';
@@ -3113,7 +3186,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             id: document.getElementById('id').value.trim(),
             name: document.getElementById('name').value.trim(),
             connector: document.getElementById('connector').value,
+            fetcher: document.getElementById('connector').value,
             url: document.getElementById('url').value.trim(),
+            region: document.getElementById('region').value.trim() || '全球',
             priority: Number(document.getElementById('priority').value||0),
             trust_tier: document.getElementById('trust_tier').value,
             tags: arr(document.getElementById('tags').value),
@@ -3161,6 +3236,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         }
         document.getElementById('q').addEventListener('input', ()=>{ loadSources(); });
         document.getElementById('filter_enabled').addEventListener('change', ()=>{ loadSources(); });
+        document.getElementById('filter_tag').addEventListener('input', ()=>{ loadSources(); });
+        document.getElementById('filter_region').addEventListener('input', ()=>{ loadSources(); });
         loadSources();
         """
         return _page_shell("信源管理", style + body, js)

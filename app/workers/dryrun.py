@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 
 from app.rules.engine import RuleEngine
+from app.services.source_registry import effective_source_ids_for_profile
 
 
 def _parse_items_from_report(text: str) -> list[dict]:
@@ -446,6 +447,7 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
     decision = engine.build_decision(profile=profile, run_id=run_id)
 
     project_root = engine.project_root
+    active_source_ids = effective_source_ids_for_profile(project_root, profile, rules_root=engine.rules_root)
     artifacts_dir = project_root / "artifacts" / run_id
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -781,6 +783,7 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         "date": report_date,
         "decision_explain": decision.get("explain", {}),
         "rules_version": decision.get("rules_version", {}),
+        "active_source_ids": active_source_ids,
         "event_type_classifier": {
             "artifact": "event_type_explain.json" if event_explain_payload else None,
             "mapping_source": (event_explain_payload.get("mapping_source") if isinstance(event_explain_payload, dict) else None),
@@ -888,6 +891,7 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             "output_decision": output_decision,
             "email_decision": decision.get("email_decision", {}),
         },
+        "active_source_ids": active_source_ids,
     }
 
 

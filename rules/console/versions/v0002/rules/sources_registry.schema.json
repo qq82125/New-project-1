@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/sources_registry.schema.json",
+  "title": "Sources Registry v1",
+  "type": "object",
+  "required": ["version", "sources", "groups"],
+  "properties": {
+    "version": {
+      "oneOf": [
+        { "type": "integer", "minimum": 1, "maximum": 99 },
+        { "type": "string", "minLength": 1 }
+      ]
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "url", "region", "trust_tier", "enabled", "fetcher"],
+        "properties": {
+          "id": { "type": "string", "minLength": 2, "maxLength": 100 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "url": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "region": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "trust_tier": { "type": "string", "enum": ["A", "B", "C"] },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1, "maxLength": 60 }
+          },
+          "enabled": { "type": "boolean" },
+          "fetcher": { "type": "string", "enum": ["rss", "html", "rsshub", "google_news", "web", "api"] },
+          "connector": { "type": "string", "enum": ["rss", "html", "rsshub", "google_news", "web", "api"] },
+          "priority": { "type": "integer", "minimum": 0, "maximum": 1000 },
+          "notes": { "type": "string", "maxLength": 500 },
+          "fetch": {
+            "type": "object",
+            "properties": {
+              "rsshub_route": { "type": "string", "minLength": 1, "maxLength": 300 },
+              "selector_hint": { "type": "string", "maxLength": 200 },
+              "item_regex": { "type": "string", "maxLength": 1000 },
+              "title_regex": { "type": "string", "maxLength": 500 },
+              "link_regex": { "type": "string", "maxLength": 500 }
+            },
+            "additionalProperties": true
+          },
+          "rate_limit": { "type": "object" },
+          "parsing": { "type": "object" },
+          "selectors": { "type": "object" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "groups": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "additionalProperties": true
+}
