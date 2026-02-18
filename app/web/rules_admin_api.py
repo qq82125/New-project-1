@@ -1539,8 +1539,18 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                           <option value="B">B</option>
                           <option value="C">C（最宽松）</option>
                         </select>
-                        <label>关键词包含(逗号分隔)</label><input id="include_keywords"/>
-                        <label>关键词排除(逗号分隔)</label><input id="exclude_keywords"/>
+                        <label>关键词包含(逗号分隔)</label>
+                        <div class="row">
+                          <input id="include_keywords"/>
+                          <button type="button" onclick="fillIncludeTemplate()">加载推荐模板</button>
+                        </div>
+                        <div class="small">用于“补盲”（高精度长词）。主覆盖仍建议靠关键词包（keywords_pack）。</div>
+                        <label>关键词排除(逗号分隔)</label>
+                        <div class="row">
+                          <input id="exclude_keywords"/>
+                          <button type="button" onclick="fillExcludeTemplate()">加载推荐模板</button>
+                        </div>
+                        <div class="small">用于“降噪”（财报/股价/纯药物研发）。避免放过泛短词，防止误伤。</div>
 
                         <label>去重与重复率阈值</label>
                         <div class="row">
@@ -1796,6 +1806,24 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   ].join('\\n');
                   document.getElementById('event_mapping').value = t;
                   toast('ok','已加载模板','你可以在此基础上删改关键词');
+                }
+                function fillIncludeTemplate(){
+                  const kws = [
+                    'digital immunoassay','simoa','maldi-tof','lc-ms/ms','lab-on-a-chip','microfluidic',
+                    '伴随诊断','液体活检','mrd','ctdna','ddpcr','dpcr','rt-pcr','wes','wgs',
+                    '挂网','drg','dip','医保目录','技术审评','注册证',
+                  ];
+                  document.getElementById('include_keywords').value = kws.join(',');
+                  toast('ok','已加载补盲模板','建议保留高精度长词，避免过泛关键词');
+                }
+                function fillExcludeTemplate(){
+                  const kws = [
+                    'earnings','quarterly revenue','eps','dividend','layoff','restructuring',
+                    'lawsuit','class action','stock','shares','guidance raised',
+                    'phase 3 drug','therapy only','vaccine only','glp-1'
+                  ];
+                  document.getElementById('exclude_keywords').value = kws.join(',');
+                  toast('ok','已加载降噪模板','可结合“被排除样例诊断”继续微调');
                 }
             function ensureRule(cfg, type, id, priority){
               let r = (cfg.rules||[]).find(x=>x.type===type);
