@@ -101,10 +101,12 @@ overrides:
   enabled: true
   keywords_pack:
     - ivd_core
+    - regulatory_procurement
     - oncology
     - infection
     - repro_genetics
     - policy_market
+    - papers_clinical
   exclude_terms:
     - quarterly earnings
     - layoff

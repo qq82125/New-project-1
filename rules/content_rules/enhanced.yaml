@@ -114,10 +114,12 @@ overrides:
   enabled: true
   keywords_pack:
     - ivd_core
+    - regulatory_procurement
     - oncology
     - infection
     - repro_genetics
     - policy_market
+    - papers_clinical
   exclude_terms:
     - quarterly earnings
     - layoff
@@ -148,30 +150,138 @@ rules:
     description: 启用关键词包（IVD核心+赛道词）
     params:
       ivd_core:
+        - 体外诊断
+        - IVD
+        - 诊断
         - diagnostic
+        - diagnostics
         - assay
         - ivd
         - test
+        - testing
         - pcr
         - ngs
         - poct
         - immunoassay
+        - chemiluminescence
+        - elisa
+        - laboratory
+        - lab
+        - reagent
+        - analyzer
+        - kit
+        - panel
+        - companion diagnostic
+        - cdx
+      regulatory_procurement:
+        - NMPA
+        - CMDE
+        - UDI
+        - 招采
+        - 招标
+        - 采购
+        - 中标
+        - 挂网
+        - 集采
+        - 医保
+        - DRG
+        - DIP
+        - 目录
+        - 注册证
+        - 指导原则
+        - 技术审评
+        - 受理
+        - 批准
+        - 召回
+        - 安全警示
+        - FDA
+        - PMDA
+        - MFDS
+        - TGA
+        - HSA
+        - guideline
+        - guidance
+        - approval
+        - clearance
+        - recall
+        - field safety
+        - tender
+        - procurement
+        - bid
+        - reimbursement
       oncology:
+        - 肿瘤
+        - 癌
+        - ctDNA
+        - MRD
+        - PD-L1
+        - EGFR
         - cancer
         - oncology
         - tumor
         - biomarker
       infection:
+        - 感染
+        - 病原
+        - 病毒
+        - 流感
+        - 新冠
+        - RSV
+        - HPV
         - infect
+        - infection
         - pathogen
         - virus
         - sepsis
         - respiratory
       repro_genetics:
+        - 产前
+        - NIPT
+        - 遗传
+        - 染色体
+        - CNV
+        - PGT
+        - IVF
         - nipt
         - prenatal
         - fertility
         - hereditary
+      policy_market:
+        - 政策
+        - 市场
+        - 招采
+        - 医保
+        - 支付
+        - DRG
+        - DIP
+        - 渠道
+        - policy
+        - market
+        - pricing
+        - coverage
+        - reimbursement
+      papers_clinical:
+        - 临床
+        - 研究
+        - 试验
+        - 多中心
+        - 验证
+        - 真实世界
+        - 论文
+        - 发表
+        - clinical
+        - study
+        - trial
+        - multicenter
+        - validation
+        - real-world
+        - publication
+        - preprint
+        - medrxiv
+        - biorxiv
+        - nejm
+        - lancet
+        - science translational medicine
 
   - id: exclude-noise
     enabled: true
@@ -182,14 +292,30 @@ rules:
       exclude_keywords:
         - earnings
         - quarterly revenue
+        - eps
+        - dividend
         - layoff
+        - restructuring
+        - lawsuit
+        - class action
         - phase 3 drug
+        - therapy only
+        - vaccine only
+        - glp-1
+        - stock
+        - shares
+        - guidance raised
       keep_if_has_keywords:
         - diagnostic
         - assay
         - test
         - ivd
         - lab
+        - reagent
+        - analyzer
+        - poct
+        - pcr
+        - ngs
 
   - id: map-lane-enhanced
     enabled: true

@@ -480,6 +480,7 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
     platform_explain_file = artifacts_dir / "platform_explain.json"
     lane_explain_file = artifacts_dir / "lane_explain.json"
     platform_diag_file = artifacts_dir / "platform_diag.json"
+    keyword_pack_stats_file = artifacts_dir / "keyword_pack_stats.json"
     cluster_payload = {}
     if cluster_explain_file.exists():
         try:
@@ -557,6 +558,13 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             lane_explain_payload = json.loads(lane_explain_file.read_text(encoding="utf-8"))
         except Exception:
             lane_explain_payload = {}
+
+    keyword_pack_stats: dict[str, Any] = {}
+    if keyword_pack_stats_file.exists():
+        try:
+            keyword_pack_stats = json.loads(keyword_pack_stats_file.read_text(encoding="utf-8"))
+        except Exception:
+            keyword_pack_stats = {}
 
     # Lane diagnostics: focus on "其他" cases to improve lane_mapping iteratively.
     lane_diag: dict[str, Any] = {"other_count": 0, "reasons": {}, "samples": []}
@@ -855,6 +863,7 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         "platform_diag": platform_diag,
         "lane_diag": lane_diag,
         "event_diag": event_diag,
+        "keyword_pack_stats": keyword_pack_stats,
         "sent": False,
         "qc": qc_report,
         "email_preview": {

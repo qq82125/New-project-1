@@ -56,7 +56,9 @@ def _adapt_content(decision: dict[str, Any]) -> dict[str, Any]:
     categories = _safe_get(content, ["categories_map"], {})
 
     include_kw = keyword_sets.get("include_keywords", [])
+    include_kw_by_pack = {}
     if isinstance(include_kw, dict):
+        include_kw_by_pack = deepcopy(include_kw)
         flat: list[str] = []
         for v in include_kw.values():
             if isinstance(v, list):
@@ -73,7 +75,9 @@ def _adapt_content(decision: dict[str, Any]) -> dict[str, Any]:
         "recent_7d_max_repeat_rate": float(dedupe.get("recent_7d_max_repeat_rate", 0.40)),
         "title_similarity_threshold": float(dedupe.get("title_similarity_threshold", 0.78)),
         "include_keywords": [str(x) for x in include_kw if str(x).strip()],
+        "include_keywords_by_pack": include_kw_by_pack if isinstance(include_kw_by_pack, dict) else {},
         "exclude_keywords": [str(x) for x in keyword_sets.get("exclude_keywords", []) if str(x).strip()],
+        "keep_if_has_keywords": [str(x) for x in keyword_sets.get("keep_if_has_keywords", []) if str(x).strip()],
         "lane_mapping": deepcopy(categories.get("lane_mapping", {})),
         "platform_mapping": deepcopy(categories.get("platform_mapping", {})),
         "platform_url_hints": deepcopy(content.get("platform_url_hints", {})),

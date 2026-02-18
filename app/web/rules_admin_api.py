@@ -1523,10 +1523,12 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                         <label>关键词包（keywords_pack，多选）</label>
                         <div class="box">
                           <label class="chk"><input type="checkbox" name="keywords_pack" value="ivd_core"/> IVD核心（ivd_core）</label>
+                          <label class="chk"><input type="checkbox" name="keywords_pack" value="regulatory_procurement"/> 监管/招采（regulatory_procurement）</label>
                           <label class="chk"><input type="checkbox" name="keywords_pack" value="oncology"/> 肿瘤（oncology）</label>
                           <label class="chk"><input type="checkbox" name="keywords_pack" value="infection"/> 感染（infection）</label>
                           <label class="chk"><input type="checkbox" name="keywords_pack" value="repro_genetics"/> 生殖遗传（repro_genetics）</label>
                           <label class="chk"><input type="checkbox" name="keywords_pack" value="policy_market"/> 政策市场（policy_market）</label>
+                          <label class="chk"><input type="checkbox" name="keywords_pack" value="papers_clinical"/> 论文/临床证据（papers_clinical）</label>
                           <div class="small" style="margin-top:6px">提示：关键词包用于“包含过滤器”的默认词库，避免漏抓；可与自定义包含/排除关键词叠加。</div>
                         </div>
                         <label>最低信源可信等级（content_sources.min_trust_tier）</label>
@@ -1654,6 +1656,13 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   <div class="box">
                     <div class="small">仅展示“未命中映射而走 fallback_heuristic”的统计与最多 10 条样例（说明 event_mapping 覆盖不足或关键词过泛）。</div>
                     <pre id="eventDiag" style="margin-top:8px"></pre>
+                  </div>
+                </details>
+                <details class="help" id="kwPackBox" style="margin-top:10px; display:none">
+                  <summary>关键词包命中统计（用于优化抓取漏斗）</summary>
+                  <div class="box">
+                    <div class="small">展示每个关键词包的命中次数（matched）与最终保留次数（kept）。如果某包 matched 很高但 kept 很低，通常说明关键词过泛或被排除词击中较多。</div>
+                    <pre id="kwPack" style="margin-top:8px"></pre>
                   </div>
                 </details>
                 <details class="help">
@@ -1952,6 +1961,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           const clustersEl = document.getElementById('clusters');
           const pdBox = document.getElementById('platformDiagBox');
           const pdEl = document.getElementById('platformDiag');
+          const kwBox = document.getElementById('kwPackBox');
+          const kwEl = document.getElementById('kwPack');
           const ldBox = document.getElementById('laneDiagBox');
           const ldEl = document.getElementById('laneDiag');
           const edBox = document.getElementById('eventDiagBox');
@@ -1960,6 +1971,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           if (clustersEl) clustersEl.innerHTML = '<div class="small">运行中...</div>';
           if (pdBox) pdBox.style.display = 'none';
           if (pdEl) pdEl.textContent = '';
+          if (kwBox) kwBox.style.display = 'none';
+          if (kwEl) kwEl.textContent = '';
           if (ldBox) ldBox.style.display = 'none';
           if (ldEl) ldEl.textContent = '';
           if (edBox) edBox.style.display = 'none';
@@ -1991,6 +2004,11 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               if(pd && typeof pd === 'object' && (pd.unlabeled_count || (pd.samples||[]).length)){
                 if(pdEl) pdEl.textContent = JSON.stringify(pd, null, 2);
                 if(pdBox) pdBox.style.display = 'block';
+              }
+              const kw = j.keyword_pack_stats || {};
+              if(kw && typeof kw === 'object' && (kw.candidates_checked || Object.keys(kw.packs||{}).length)){
+                if(kwEl) kwEl.textContent = JSON.stringify(kw, null, 2);
+                if(kwBox) kwBox.style.display = 'block';
               }
               const ld = j.lane_diag || {};
               if(ld && typeof ld === 'object' && (ld.other_count || (ld.samples||[]).length)){

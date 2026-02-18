@@ -477,6 +477,7 @@ class RuleEngine:
                 "packs": _as_list(overrides.get("keywords_pack")),
                 "include_keywords": [],
                 "exclude_keywords": _as_list(overrides.get("exclude_terms")),
+                "keep_if_has_keywords": [],
             },
             "categories_map": {
                 "tracks": _as_list(defaults.get("coverage_tracks")),
@@ -520,6 +521,39 @@ class RuleEngine:
             ),
             "content_sources": deepcopy(defaults.get("content_sources", {})),
         }
+
+    def _normalize_content_keywords(self, content_decision: dict[str, Any]) -> None:
+        """
+        Normalize keyword packs into effective include/exclude lists.
+
+        Today we store include keywords in one of two forms:
+        - list[str]: already flattened effective list
+        - dict[pack_id, list[str]]: pack registry (what the console edits)
+
+        Operators select packs via overrides.keywords_pack; if include keywords are provided as a dict,
+        we must filter it to the selected packs, otherwise the selection UI becomes a no-op.
+        """
+        try:
+            ks = content_decision.get("keyword_sets", {})
+            if not isinstance(ks, dict):
+                return
+            packs = ks.get("packs", [])
+            packs_sel = [str(x) for x in packs] if isinstance(packs, list) else []
+
+            inc = ks.get("include_keywords", [])
+            if isinstance(inc, dict):
+                # If nothing selected, keep all packs (backward compatible / safe).
+                if packs_sel:
+                    filtered = {k: v for k, v in inc.items() if str(k) in set(packs_sel)}
+                else:
+                    filtered = dict(inc)
+                ks["include_keywords"] = filtered
+                ks["include_keywords_by_pack"] = dict(filtered)
+            else:
+                # List form: best-effort keep a by-pack mirror for downstream stats.
+                ks["include_keywords_by_pack"] = {}
+        except Exception:
+            return
 
     def _base_email_decision(self, email: RuleSelection) -> dict[str, Any]:
         defaults = email.data.get("defaults", {})
@@ -618,6 +652,7 @@ class RuleEngine:
             if rule_type == "exclude_filter":
                 return [
                     ("keyword_sets.exclude_keywords", params.get("exclude_keywords", params)),
+                    ("keyword_sets.keep_if_has_keywords", _as_list(params.get("keep_if_has_keywords"))),
                     ("deny_sources", _as_list(params.get("deny_sources"))),
                 ]
             if rule_type == "lane_mapping":
@@ -925,6 +960,8 @@ class RuleEngine:
             explain=explain_obj,
             provenance=provenance,
         )
+        # Ensure pack selection actually affects effective include keywords.
+        self._normalize_content_keywords(content_decision)
         provenance = {}
         self._resolve_rules(
             qc,

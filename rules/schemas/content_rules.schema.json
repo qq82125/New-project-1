@@ -152,7 +152,18 @@
         "enabled": { "type": "boolean" },
         "keywords_pack": {
           "type": "array",
-          "items": { "type": "string", "enum": ["ivd_core", "oncology", "infection", "repro_genetics", "policy_market"] }
+          "items": {
+            "type": "string",
+            "enum": [
+              "ivd_core",
+              "regulatory_procurement",
+              "oncology",
+              "infection",
+              "repro_genetics",
+              "policy_market",
+              "papers_clinical"
+            ]
+          }
         },
         "exclude_terms": {
           "type": "array",

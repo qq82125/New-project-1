@@ -70,7 +70,9 @@ RUNTIME_CONTENT = {
     "daily_max_repeat_rate": 0.25,
     "recent_7d_max_repeat_rate": 0.40,
     "include_keywords": [],
+    "include_keywords_by_pack": {},
     "exclude_keywords": [],
+    "keep_if_has_keywords": [],
     "lane_mapping": {},
     "platform_mapping": {},
     "event_mapping": {},
@@ -713,9 +715,13 @@ def score_ivd(text: str) -> int:
 
 def is_ivd_relevant(text: str) -> bool:
     t = text.lower()
+    keep_terms = [str(x).strip().lower() for x in RUNTIME_CONTENT.get("keep_if_has_keywords", []) if str(x).strip()]
     for x in RUNTIME_CONTENT.get("exclude_keywords", []):
         kw = str(x).strip().lower()
         if kw and has_term(t, kw):
+            # Keep-if terms act as an override to prevent "hard exclude" from killing important IVD items.
+            if keep_terms and any(has_term(t, k) for k in keep_terms):
+                break
             return False
     # Require at least one anchor term to avoid pharma-only/business-only noise.
     anchors = [
@@ -775,6 +781,30 @@ def is_ivd_relevant(text: str) -> bool:
         return False
     # Keep recall high, rely on dedupe/source caps for noise suppression.
     return score_ivd(text) >= 0
+
+
+def matched_keyword_packs(text: str) -> list[str]:
+    """
+    Return pack ids whose keywords match the given text (case-insensitive).
+    Used for dry-run operability stats (not for selection logic).
+    """
+    try:
+        packs = RUNTIME_CONTENT.get("include_keywords_by_pack", {})
+        if not isinstance(packs, dict) or not packs:
+            return []
+        t = str(text or "").lower()
+        hits: list[str] = []
+        for pid, kws in packs.items():
+            if not isinstance(kws, list):
+                continue
+            for kw in kws:
+                k = str(kw).strip().lower()
+                if k and has_term(t, k):
+                    hits.append(str(pid))
+                    break
+        return hits
+    except Exception:
+        return []
 
 
 def is_regulatory_ivd_relevant(text: str) -> bool:
@@ -1503,7 +1533,9 @@ def main() -> int:
             content_cfg.get("recent_7d_max_repeat_rate", RUNTIME_CONTENT["recent_7d_max_repeat_rate"])
         )
         RUNTIME_CONTENT["include_keywords"] = content_cfg.get("include_keywords", [])
+        RUNTIME_CONTENT["include_keywords_by_pack"] = content_cfg.get("include_keywords_by_pack", {})
         RUNTIME_CONTENT["exclude_keywords"] = content_cfg.get("exclude_keywords", [])
+        RUNTIME_CONTENT["keep_if_has_keywords"] = content_cfg.get("keep_if_has_keywords", [])
         RUNTIME_CONTENT["lane_mapping"] = content_cfg.get("lane_mapping", {})
         RUNTIME_CONTENT["platform_mapping"] = content_cfg.get("platform_mapping", {})
         RUNTIME_CONTENT["platform_url_hints"] = content_cfg.get("platform_url_hints", {})
@@ -1570,6 +1602,11 @@ def main() -> int:
     items: list[Item] = []
     seen_links: set[str] = set()
     relaxed_pool: list[Item] = []
+    keyword_pack_stats: dict[str, Any] = {
+        "packs": {},
+        "matched_any": 0,
+        "candidates_checked": 0,
+    }
 
     # China official: baseline high-confidence China signal.
     items.extend(collect_nmpa_site_updates(now_utc, tz_name, enhanced=bool(use_enhanced)))
@@ -1668,6 +1705,15 @@ def main() -> int:
                 continue
             fallback_ok = False
             combined = title + " " + row["summary"]
+
+            # Operability stats: keyword pack hit distribution (dry-run panel).
+            keyword_pack_stats["candidates_checked"] += 1
+            packs_hit = matched_keyword_packs(combined)
+            if packs_hit:
+                keyword_pack_stats["matched_any"] += 1
+                for pid in packs_hit:
+                    p = keyword_pack_stats["packs"].setdefault(pid, {"matched": 0, "kept": 0})
+                    p["matched"] += 1
             if kind == "regulatory":
                 if not is_regulatory_ivd_relevant(combined):
                     continue
@@ -1677,6 +1723,11 @@ def main() -> int:
                     if not is_relaxed_relevant(combined):
                         continue
                     fallback_ok = True
+                else:
+                    if packs_hit:
+                        for pid in packs_hit:
+                            p = keyword_pack_stats["packs"].setdefault(pid, {"matched": 0, "kept": 0})
+                            p["kept"] += 1
             pub = to_dt(row["entry"]) if row["entry"] is not None else now_utc
             if not pub:
                 continue
@@ -2042,6 +2093,10 @@ def main() -> int:
         # Explainability: per-item lane classification evidence (enhanced-only intent, but safe to write).
         (p / "lane_explain.json").write_text(
             json.dumps({"items": lane_explain_rows}, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        (p / "keyword_pack_stats.json").write_text(
+            json.dumps(keyword_pack_stats, ensure_ascii=False, indent=2, default=str),
             encoding="utf-8",
         )
 
