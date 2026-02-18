@@ -162,6 +162,13 @@ def _source_errors(source: dict[str, Any], store: RulesStore) -> list[dict[str, 
     url = str(source.get("url", "")).strip()
     if connector in {"rss", "web"} and not _is_valid_url(url):
         out.append({"path": "$.url", "message": "url 非法或为空"})
+    if connector == "api":
+        if not _is_valid_url(url):
+            out.append({"path": "$.url", "message": "API base_url 非法或为空（请填写 url）"})
+        fetch = source.get("fetch", {}) if isinstance(source.get("fetch"), dict) else {}
+        endpoint = str(fetch.get("endpoint", "")).strip()
+        if not endpoint:
+            out.append({"path": "$.fetch.endpoint", "message": "API 必须填写 endpoint（如 /v1/news）"})
     if url and sid and store.source_url_exists(url, exclude_id=sid):
         out.append({"path": "$.url", "message": "url 已被其他 source 使用"})
 
@@ -179,6 +186,60 @@ def _source_errors(source: dict[str, Any], store: RulesStore) -> list[dict[str, 
     tags = source.get("tags", [])
     if tags is not None and not isinstance(tags, list):
         out.append({"path": "$.tags", "message": "tags 必须是数组"})
+
+    fetch = source.get("fetch", {})
+    if fetch is not None and not isinstance(fetch, dict):
+        out.append({"path": "$.fetch", "message": "fetch 必须是对象"})
+    else:
+        f = fetch if isinstance(fetch, dict) else {}
+        if "interval_minutes" in f:
+            try:
+                im = int(f.get("interval_minutes") or 0)
+                if im < 1 or im > 1440:
+                    out.append({"path": "$.fetch.interval_minutes", "message": "interval_minutes 超出范围 1..1440"})
+            except Exception:
+                out.append({"path": "$.fetch.interval_minutes", "message": "interval_minutes 必须是整数"})
+        if "timeout_seconds" in f:
+            try:
+                ts = int(f.get("timeout_seconds") or 0)
+                if ts < 1 or ts > 120:
+                    out.append({"path": "$.fetch.timeout_seconds", "message": "timeout_seconds 超出范围 1..120"})
+            except Exception:
+                out.append({"path": "$.fetch.timeout_seconds", "message": "timeout_seconds 必须是整数"})
+        headers = f.get("headers_json", {})
+        if headers is not None and not isinstance(headers, dict):
+            out.append({"path": "$.fetch.headers_json", "message": "headers_json 必须是对象"})
+        auth_ref = f.get("auth_ref")
+        if auth_ref is not None and not isinstance(auth_ref, str):
+            out.append({"path": "$.fetch.auth_ref", "message": "auth_ref 必须是字符串（引用 env/secret 名称）"})
+
+    rl = source.get("rate_limit", {})
+    if rl is not None and not isinstance(rl, dict):
+        out.append({"path": "$.rate_limit", "message": "rate_limit 必须是对象"})
+    else:
+        rld = rl if isinstance(rl, dict) else {}
+        if "rps" in rld:
+            try:
+                rps = float(rld.get("rps") or 0.0)
+                if rps < 0.1 or rps > 50:
+                    out.append({"path": "$.rate_limit.rps", "message": "rps 超出范围 0.1..50"})
+            except Exception:
+                out.append({"path": "$.rate_limit.rps", "message": "rps 必须是数字"})
+        if "burst" in rld:
+            try:
+                b = int(rld.get("burst") or 0)
+                if b < 1 or b > 100:
+                    out.append({"path": "$.rate_limit.burst", "message": "burst 超出范围 1..100"})
+            except Exception:
+                out.append({"path": "$.rate_limit.burst", "message": "burst 必须是整数"})
+
+    parsing = source.get("parsing", {})
+    if parsing is not None and not isinstance(parsing, dict):
+        out.append({"path": "$.parsing", "message": "parsing 必须是对象"})
+    else:
+        pd = parsing if isinstance(parsing, dict) else {}
+        if "parse_profile" in pd and not isinstance(pd.get("parse_profile"), str):
+            out.append({"path": "$.parsing.parse_profile", "message": "parse_profile 必须是字符串"})
     return out
 
 
@@ -208,6 +269,8 @@ class SourcePayload(BaseModel):
     trust_tier: str
     tags: list[str] = Field(default_factory=list)
     rate_limit: dict[str, Any] = Field(default_factory=dict)
+    fetch: dict[str, Any] = Field(default_factory=dict)
+    parsing: dict[str, Any] = Field(default_factory=dict)
 
 
 class TogglePayload(BaseModel):
@@ -1908,12 +1971,26 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               </select>
             </div>
             <label>信源ID（唯一）</label><input id="id" placeholder="例如：reuters-health-rss"/>
-            <label>名称</label><input id="name" placeholder="例如：Reuters Healthcare"/>
-            <label>采集方式</label><select id="connector"><option>rss</option><option>web</option><option>api</option></select>
-            <label>URL（rss/web 必填）</label><input id="url" placeholder="https://..."/>
-            <label>优先级（0-1000，越大越优先）</label><input id="priority" type="number" min="0" max="1000" value="50"/>
-            <label>可信等级</label><select id="trust_tier"><option>A</option><option>B</option><option>C</option></select>
-            <label>标签（逗号分隔）</label><input id="tags" placeholder="media,global,en"/>
+	            <label>名称</label><input id="name" placeholder="例如：Reuters Healthcare"/>
+	            <label>采集方式</label><select id="connector"><option>rss</option><option>web</option><option>api</option></select>
+	            <label>URL（rss/web 必填；api 填 base_url）</label><input id="url" placeholder="https://..."/>
+	            <label>API endpoint（仅 api 需要，如 /v1/news）</label><input id="api_endpoint" placeholder="/v1/news"/>
+
+	            <label>采集频率 interval_minutes（1..1440，留空=跟随全局/调度）</label><input id="fetch_interval" type="number" min="1" max="1440" placeholder="例如：60"/>
+	            <label>超时 timeout_seconds（1..120）</label><input id="fetch_timeout" type="number" min="1" max="120" placeholder="例如：20"/>
+	            <label>请求头 headers_json（可选，JSON 对象）</label><textarea id="fetch_headers" rows="3" placeholder='{"User-Agent":"..."}'></textarea>
+	            <label>鉴权引用 auth_ref（可选：env/secret 名称，不存明文）</label><input id="fetch_auth_ref" placeholder="例如：MY_API_TOKEN"/>
+
+	            <label>限速 rate_limit（rps 0.1..50 / burst 1..100）</label>
+	            <div class="row">
+	              <input id="rl_rps" type="number" min="0.1" max="50" step="0.1" placeholder="rps 1.0"/>
+	              <input id="rl_burst" type="number" min="1" max="100" step="1" placeholder="burst 5"/>
+	            </div>
+
+	            <label>解析配置 parse_profile（可选，用于选择解析器模板）</label><input id="parse_profile" placeholder="例如：pmda_list_v1"/>
+	            <label>优先级（0-1000，越大越优先）</label><input id="priority" type="number" min="0" max="1000" value="50"/>
+	            <label>可信等级</label><select id="trust_tier"><option>A</option><option>B</option><option>C</option></select>
+	            <label>标签（逗号分隔）</label><input id="tags" placeholder="media,global,en"/>
             <label>是否启用</label><select id="enabled"><option value="true">启用</option><option value="false">停用</option></select>
             <div class="row">
               <button onclick="saveSource()">保存</button>
@@ -1925,8 +2002,15 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               <div class="box">
                 <ul>
                   <li><b>信源ID</b>：全局唯一标识。建议用小写字母/数字/.-_ 组合，例如 <code>reuters-health-rss</code>。后续规则引用、统计、去重聚合都会用到它。</li>
-                  <li><b>采集方式</b>：<code>rss</code> 适合有 RSS 的媒体/公告；<code>web</code> 适合网页列表页（当前仅做基础 title 抓取/连通性测试）；<code>api</code> 预留（可先建档用于优先级/聚合主源选择）。</li>
-                  <li><b>URL</b>：rss/web 必填，必须是 http/https。用于抓取与 test。</li>
+	                  <li><b>采集方式</b>：<code>rss</code> 适合有 RSS 的媒体/公告；<code>web</code> 适合网页列表页（当前仅做基础 title 抓取/连通性测试）；<code>api</code> 适合 JSON API（需要 base_url + endpoint）。</li>
+	                  <li><b>URL</b>：rss/web 必填。api 时作为 <b>base_url</b> 使用。</li>
+	                  <li><b>API endpoint</b>：仅 api 需要，形如 <code>/v1/news</code>。test 会请求 base_url + endpoint。</li>
+	                  <li><b>interval_minutes</b>：每个信源的采集频率（分钟）。后续 scheduler 会按该值决定是否抓取该 source。</li>
+	                  <li><b>timeout_seconds</b>：单次抓取超时（秒）。</li>
+	                  <li><b>headers_json</b>：附加请求头（JSON 对象）。</li>
+	                  <li><b>auth_ref</b>：引用环境变量名（例如 <code>MY_API_TOKEN</code>），运行时会用其值拼到 Authorization Bearer（不在 DB 存明文 token）。</li>
+	                  <li><b>rate_limit</b>：每秒请求数与突发上限（用于采集端限速）。</li>
+	                  <li><b>parse_profile</b>：解析模板名（用于网页/接口解析器选择）。</li>
                   <li><b>优先级</b>：用于 story 聚合选“主条目”与排序，数值越大越优先（例如 Reuters > 垂媒 > 泛 RSS）。</li>
                   <li><b>可信等级</b>：A/B/C 用于内容可信度分层与筛选（规则里可用）。</li>
                   <li><b>标签</b>：用于批量 include/exclude（例如 <code>regulatory</code>/<code>cn</code>/<code>apac</code>/<code>en</code>）。</li>
@@ -1946,6 +2030,12 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         js = """
         function arr(v){ return (v||'').split(',').map(s=>s.trim()).filter(Boolean); }
         function esc(s){ return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+        function parseJsonOrEmpty(txt){
+          const t = (txt||'').trim();
+          if(!t) return {};
+          try { const o = JSON.parse(t); return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {}; }
+          catch(e){ return { __parse_error__: String(e) }; }
+        }
         function fmtTime(iso){
           if(!iso) return '';
           try { return new Date(iso).toLocaleString(); } catch(e) { return String(iso); }
@@ -2020,6 +2110,17 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('name').value = s.name||'';
           document.getElementById('connector').value = s.connector||'rss';
           document.getElementById('url').value = s.url||'';
+          const f = s.fetch||{};
+          document.getElementById('api_endpoint').value = f.endpoint||'';
+          document.getElementById('fetch_interval').value = (f.interval_minutes ?? '');
+          document.getElementById('fetch_timeout').value = (f.timeout_seconds ?? '');
+          document.getElementById('fetch_headers').value = (f.headers_json && Object.keys(f.headers_json||{}).length) ? JSON.stringify(f.headers_json||{}) : '';
+          document.getElementById('fetch_auth_ref').value = f.auth_ref||'';
+          const rl = s.rate_limit||{};
+          document.getElementById('rl_rps').value = (rl.rps ?? '');
+          document.getElementById('rl_burst').value = (rl.burst ?? '');
+          const p = s.parsing||{};
+          document.getElementById('parse_profile').value = p.parse_profile||'';
           document.getElementById('priority').value = s.priority??0;
           document.getElementById('trust_tier').value = s.trust_tier||'B';
           document.getElementById('tags').value = (s.tags||[]).join(',');
@@ -2031,12 +2132,25 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('name').value = '';
           document.getElementById('connector').value = 'rss';
           document.getElementById('url').value = '';
+          document.getElementById('api_endpoint').value = '';
+          document.getElementById('fetch_interval').value = '';
+          document.getElementById('fetch_timeout').value = '';
+          document.getElementById('fetch_headers').value = '';
+          document.getElementById('fetch_auth_ref').value = '';
+          document.getElementById('rl_rps').value = '';
+          document.getElementById('rl_burst').value = '';
+          document.getElementById('parse_profile').value = '';
           document.getElementById('priority').value = '50';
           document.getElementById('trust_tier').value = 'B';
           document.getElementById('tags').value = '';
           document.getElementById('enabled').value = 'true';
         }
         async function saveSource(){
+          const headersObj = parseJsonOrEmpty(document.getElementById('fetch_headers').value);
+          if(headersObj.__parse_error__){
+            toast('err','headers_json JSON 解析失败', headersObj.__parse_error__);
+            return;
+          }
           const payload = {
             id: document.getElementById('id').value.trim(),
             name: document.getElementById('name').value.trim(),
@@ -2046,7 +2160,20 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             trust_tier: document.getElementById('trust_tier').value,
             tags: arr(document.getElementById('tags').value),
             enabled: document.getElementById('enabled').value === 'true',
-            rate_limit: {}
+            fetch: {
+              interval_minutes: document.getElementById('fetch_interval').value ? Number(document.getElementById('fetch_interval').value) : undefined,
+              timeout_seconds: document.getElementById('fetch_timeout').value ? Number(document.getElementById('fetch_timeout').value) : undefined,
+              headers_json: headersObj,
+              auth_ref: document.getElementById('fetch_auth_ref').value.trim() || undefined,
+              endpoint: document.getElementById('api_endpoint').value.trim() || undefined,
+            },
+            rate_limit: {
+              rps: document.getElementById('rl_rps').value ? Number(document.getElementById('rl_rps').value) : undefined,
+              burst: document.getElementById('rl_burst').value ? Number(document.getElementById('rl_burst').value) : undefined,
+            },
+            parsing: {
+              parse_profile: document.getElementById('parse_profile').value.trim() || undefined
+            }
           };
           const j = await api('/admin/api/sources','POST',payload);
           if(j && j.ok){ document.getElementById('status').innerHTML = '<span class="ok">保存成功</span>'; toast('ok','保存成功',payload.id); loadSources(); }

@@ -108,6 +108,8 @@ class RulesStore:
                     trust_tier TEXT NOT NULL,
                     tags_json TEXT NOT NULL DEFAULT '[]',
                     rate_limit_json TEXT NOT NULL DEFAULT '{}',
+                    fetch_json TEXT NOT NULL DEFAULT '{}',
+                    parsing_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     last_success_at TEXT,
@@ -138,6 +140,10 @@ class RulesStore:
                 conn.execute("ALTER TABLE sources ADD COLUMN last_http_status INTEGER")
             if "last_error" not in cols:
                 conn.execute("ALTER TABLE sources ADD COLUMN last_error TEXT")
+            if "fetch_json" not in cols:
+                conn.execute("ALTER TABLE sources ADD COLUMN fetch_json TEXT NOT NULL DEFAULT '{}'")
+            if "parsing_json" not in cols:
+                conn.execute("ALTER TABLE sources ADD COLUMN parsing_json TEXT NOT NULL DEFAULT '{}'")
             conn.commit()
 
     def _table_name(self, ruleset: str) -> str:
@@ -341,9 +347,9 @@ class RulesStore:
                     """
                     INSERT INTO sources(
                         id, name, connector, url, enabled, priority, trust_tier,
-                        tags_json, rate_limit_json, created_at, updated_at
+                        tags_json, rate_limit_json, fetch_json, parsing_json, created_at, updated_at
                     )
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         name = excluded.name,
                         connector = excluded.connector,
@@ -353,6 +359,8 @@ class RulesStore:
                         trust_tier = excluded.trust_tier,
                         tags_json = excluded.tags_json,
                         rate_limit_json = excluded.rate_limit_json,
+                        fetch_json = excluded.fetch_json,
+                        parsing_json = excluded.parsing_json,
                         updated_at = excluded.updated_at
                     """,
                     (
@@ -365,6 +373,8 @@ class RulesStore:
                         str(src.get("trust_tier", "C")),
                         json.dumps(src.get("tags", []), ensure_ascii=False),
                         json.dumps(src.get("rate_limit", {}), ensure_ascii=False),
+                        json.dumps(src.get("fetch", {}), ensure_ascii=False),
+                        json.dumps(src.get("parsing", {}), ensure_ascii=False),
                         now,
                         now,
                     ),
@@ -394,6 +404,8 @@ class RulesStore:
                         "trust_tier": str(r["trust_tier"]),
                         "tags": json.loads(str(r["tags_json"] or "[]")),
                         "rate_limit": json.loads(str(r["rate_limit_json"] or "{}")),
+                        "fetch": json.loads(str(r["fetch_json"] or "{}")),
+                        "parsing": json.loads(str(r["parsing_json"] or "{}")),
                         "created_at": str(r["created_at"]),
                         "updated_at": str(r["updated_at"]),
                         "last_success_at": str(r["last_success_at"] or ""),
@@ -418,6 +430,8 @@ class RulesStore:
                 "trust_tier": str(r["trust_tier"]),
                 "tags": json.loads(str(r["tags_json"] or "[]")),
                 "rate_limit": json.loads(str(r["rate_limit_json"] or "{}")),
+                "fetch": json.loads(str(r["fetch_json"] or "{}")),
+                "parsing": json.loads(str(r["parsing_json"] or "{}")),
                 "created_at": str(r["created_at"]),
                 "updated_at": str(r["updated_at"]),
                 "last_success_at": str(r["last_success_at"] or ""),
@@ -453,10 +467,10 @@ class RulesStore:
                 """
                 INSERT INTO sources(
                     id, name, connector, url, enabled, priority, trust_tier,
-                    tags_json, rate_limit_json, created_at, updated_at,
+                    tags_json, rate_limit_json, fetch_json, parsing_json, created_at, updated_at,
                     last_success_at, last_http_status, last_error
                 )
-                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
                     connector = excluded.connector,
@@ -466,6 +480,8 @@ class RulesStore:
                     trust_tier = excluded.trust_tier,
                     tags_json = excluded.tags_json,
                     rate_limit_json = excluded.rate_limit_json,
+                    fetch_json = excluded.fetch_json,
+                    parsing_json = excluded.parsing_json,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -478,6 +494,8 @@ class RulesStore:
                     str(source.get("trust_tier", "C")),
                     json.dumps(source.get("tags", []), ensure_ascii=False),
                     json.dumps(source.get("rate_limit", {}), ensure_ascii=False),
+                    json.dumps(source.get("fetch", {}), ensure_ascii=False),
+                    json.dumps(source.get("parsing", {}), ensure_ascii=False),
                     created_at,
                     now,
                     last_success_at or None,

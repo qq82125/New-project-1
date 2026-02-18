@@ -239,12 +239,14 @@ class RulesAdminApiTests(unittest.TestCase):
             "id": "demo-api-source",
             "name": "Demo API",
             "connector": "api",
-            "url": "",
+            "url": "https://api.example.com",
             "enabled": True,
             "priority": 50,
             "trust_tier": "B",
             "tags": ["demo"],
-            "rate_limit": {"rps": 1, "burst": 1},
+            "rate_limit": {"rps": 1.0, "burst": 2},
+            "fetch": {"endpoint": "/v1/items", "interval_minutes": 60, "timeout_seconds": 10, "headers_json": {}},
+            "parsing": {"parse_profile": "demo_v1"},
         }
         up = self.client.post("/admin/api/sources", auth=("admin", "pass123"), json=payload)
         self.assertEqual(up.status_code, 200)
@@ -258,10 +260,14 @@ class RulesAdminApiTests(unittest.TestCase):
         self.assertEqual(tg.status_code, 200)
         self.assertFalse(tg.json()["source"]["enabled"])
 
-        ts = self.client.post("/admin/api/sources/demo-api-source/test", auth=("admin", "pass123"))
-        self.assertEqual(ts.status_code, 200)
-        self.assertTrue(ts.json()["ok"])
-        self.assertTrue(ts.json()["result"]["ok"])
+        with patch(
+            "app.web.rules_admin_api.test_source",
+            return_value={"ok": True, "connector": "api", "url": "https://api.example.com/v1/items", "sample": []},
+        ):
+            ts = self.client.post("/admin/api/sources/demo-api-source/test", auth=("admin", "pass123"))
+            self.assertEqual(ts.status_code, 200)
+            self.assertTrue(ts.json()["ok"])
+            self.assertTrue(ts.json()["result"]["ok"])
 
     def test_draft_validation_errors_structured(self) -> None:
         bad = _email_cfg("enhanced", "2.0.1")

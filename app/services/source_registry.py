@@ -227,6 +227,15 @@ def test_source(source: dict[str, Any], limit: int = 3) -> dict[str, Any]:
     connector = str(source.get("connector", ""))
     url = str(source.get("url", ""))
     sid = str(source.get("id", ""))
+    fetch = source.get("fetch", {}) if isinstance(source.get("fetch"), dict) else {}
+    timeout = int(fetch.get("timeout_seconds") or 20)
+    headers = fetch.get("headers_json", {}) if isinstance(fetch.get("headers_json"), dict) else {}
+    auth_ref = str(fetch.get("auth_ref") or "").strip()
+    if auth_ref:
+        token = os.environ.get(auth_ref, "").strip()
+        if token:
+            headers = dict(headers)
+            headers.setdefault("Authorization", f"Bearer {token}")
     out = {
         "source_id": sid,
         "connector": connector,
@@ -239,8 +248,10 @@ def test_source(source: dict[str, Any], limit: int = 3) -> dict[str, Any]:
 
     try:
         if connector == "rss":
-            req = Request(url, headers={"User-Agent": "Mozilla/5.0 CodexIVD/1.0"})
-            with urlopen(req, timeout=20) as r:
+            h = {"User-Agent": "Mozilla/5.0 CodexIVD/1.0"}
+            h.update({str(k): str(v) for k, v in headers.items()})
+            req = Request(url, headers=h)
+            with urlopen(req, timeout=timeout) as r:
                 data = r.read()
                 out["http_status"] = int(getattr(r, "status", 200))
             feed = feedparser.parse(data)
@@ -248,12 +259,15 @@ def test_source(source: dict[str, Any], limit: int = 3) -> dict[str, Any]:
             for e in feed.entries[: max(1, limit)]:
                 sample.append({"title": getattr(e, "title", ""), "link": getattr(e, "link", "")})
             out["sample"] = sample
-            out["ok"] = True
+            # "可解析"：至少解析到 1 条 entry
+            out["ok"] = bool(sample)
             return out
 
         if connector == "web":
-            req = Request(url, headers={"User-Agent": "Mozilla/5.0 CodexIVD/1.0"})
-            with urlopen(req, timeout=20) as r:
+            h = {"User-Agent": "Mozilla/5.0 CodexIVD/1.0"}
+            h.update({str(k): str(v) for k, v in headers.items()})
+            req = Request(url, headers=h)
+            with urlopen(req, timeout=timeout) as r:
                 html = r.read().decode("utf-8", errors="ignore")
                 out["http_status"] = int(getattr(r, "status", 200))
             title_match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
@@ -263,8 +277,40 @@ def test_source(source: dict[str, Any], limit: int = 3) -> dict[str, Any]:
             return out
 
         if connector == "api":
+            endpoint = str(fetch.get("endpoint") or "").strip()
+            if not url or not endpoint:
+                out["error"] = "missing api base_url(url) or fetch.endpoint"
+                return out
+            full = url.rstrip("/") + (endpoint if endpoint.startswith("/") else f"/{endpoint}")
+            h = {"User-Agent": "Mozilla/5.0 CodexIVD/1.0", "Accept": "application/json"}
+            h.update({str(k): str(v) for k, v in headers.items()})
+            req = Request(full, headers=h)
+            with urlopen(req, timeout=timeout) as r:
+                data = r.read()
+                out["http_status"] = int(getattr(r, "status", 200))
+            try:
+                obj = json.loads(data.decode("utf-8", errors="ignore"))
+            except Exception:
+                obj = None
+            sample: list[dict[str, str]] = []
+            if isinstance(obj, list):
+                for row in obj[: max(1, limit)]:
+                    if isinstance(row, dict):
+                        title = str(row.get("title") or row.get("name") or "")[:200]
+                        link = str(row.get("url") or row.get("link") or full)
+                        sample.append({"title": title, "link": link})
+            elif isinstance(obj, dict):
+                # common shape: {"items":[...]}
+                items = obj.get("items")
+                if isinstance(items, list):
+                    for row in items[: max(1, limit)]:
+                        if isinstance(row, dict):
+                            title = str(row.get("title") or row.get("name") or "")[:200]
+                            link = str(row.get("url") or row.get("link") or full)
+                            sample.append({"title": title, "link": link})
+            out["sample"] = sample
             out["ok"] = True
-            out["sample"] = []
+            out["url"] = full
             return out
 
         out["error"] = f"unsupported connector={connector}"
