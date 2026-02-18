@@ -1252,7 +1252,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         }
 
     def _json_diff(left: Any, right: Any, path: str = "$", out: list[dict[str, Any]] | None = None, limit: int = 200) -> list[dict[str, Any]]:
-        out = out or []
+        if out is None:
+            out = []
         if len(out) >= limit:
             return out
         if type(left) != type(right):
