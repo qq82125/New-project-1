@@ -544,7 +544,8 @@ class RuleEngine:
             if isinstance(inc, dict):
                 # If nothing selected, keep all packs (backward compatible / safe).
                 if packs_sel:
-                    filtered = {k: v for k, v in inc.items() if str(k) in set(packs_sel)}
+                    sel = set(packs_sel)
+                    filtered = {k: v for k, v in inc.items() if (str(k) in sel) or (str(k) == "_custom")}
                 else:
                     filtered = dict(inc)
                 ks["include_keywords"] = filtered
@@ -648,7 +649,22 @@ class RuleEngine:
             if rule_type == "source_priority":
                 return [("source_priority", params)]
             if rule_type == "include_filter":
-                return [("keyword_sets.include_keywords", params.get("include_keywords", params))]
+                # Backward-compatible: console may store both:
+                # - pack maps (e.g. {"ivd_core":[...], "oncology":[...]})
+                # - custom list under params.include_keywords
+                # If include_keywords exists but is empty, we still want pack maps to take effect.
+                custom_list = _as_list(params.get("include_keywords"))
+                pack_map = {
+                    str(k): v
+                    for k, v in params.items()
+                    if k != "include_keywords" and isinstance(v, list)
+                }
+                if pack_map:
+                    # Preserve explicit custom includes as a special pack that bypasses pack selection.
+                    if custom_list:
+                        pack_map["_custom"] = custom_list
+                    return [("keyword_sets.include_keywords", pack_map)]
+                return [("keyword_sets.include_keywords", custom_list)]
             if rule_type == "exclude_filter":
                 return [
                     ("keyword_sets.exclude_keywords", params.get("exclude_keywords", params)),
