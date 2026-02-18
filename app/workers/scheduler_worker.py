@@ -8,11 +8,13 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
 from app.services.run_lock import RunLockError, acquire_run_lock
 from app.services.rules_store import RulesStore
+from app.services.source_registry import test_source
 from app.workers.live_run import run_digest
 
 
@@ -141,19 +143,107 @@ class SchedulerWorker:
         run_id = f"{purpose}-{int(time.time())}"
         try:
             with acquire_run_lock(self.lock_path, run_id=run_id, purpose=purpose):
-                send = purpose == "digest"
-                out = run_digest(
-                    profile=profile,
-                    trigger="schedule",
-                    schedule_id=schedule_id,
-                    send=send,
-                    project_root=self.project_root,
+                if purpose == "collect":
+                    out = self._run_collect(schedule_id=schedule_id, profile=profile)
+                else:
+                    out = run_digest(
+                        profile=profile,
+                        trigger="schedule",
+                        schedule_id=schedule_id,
+                        send=True,
+                        project_root=self.project_root,
+                    )
+                _log(
+                    f"job_done schedule_id={schedule_id} purpose={purpose} ok={out.get('ok')} run_id={out.get('run_id')}"
                 )
-                _log(f"job_done schedule_id={schedule_id} purpose={purpose} ok={out.get('ok')} run_id={out.get('run_id')}")
         except RunLockError as e:
             _log(f"job_skipped_locked schedule_id={schedule_id} purpose={purpose} error={e}")
         except Exception as e:
             _log(f"job_failed schedule_id={schedule_id} purpose={purpose} error={e}")
+
+    def _run_collect(self, *, schedule_id: str, profile: str) -> dict[str, Any]:
+        """
+        Per-source collection loop with min-interval gating.
+
+        - Reads enabled sources from DB.
+        - For each source, checks last_fetched_at against fetch.interval_minutes.
+        - Only due sources are fetched; skipped sources are recorded.
+        """
+        run_id = f"collect-{int(time.time())}"
+        artifacts_dir = self.project_root / "artifacts" / run_id
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        now = time.time()
+        fetched = 0
+        skipped = 0
+        failed = 0
+
+        rows = self.store.list_sources(enabled_only=True)
+        for s in rows:
+            sid = str(s.get("id", "")).strip()
+            if not sid:
+                continue
+            fetch_cfg = s.get("fetch", {}) if isinstance(s.get("fetch"), dict) else {}
+            interval_m = fetch_cfg.get("interval_minutes")
+            try:
+                interval_min = int(interval_m) if interval_m is not None and str(interval_m).strip() != "" else 0
+            except Exception:
+                interval_min = 0
+
+            last_fetched_at = str(s.get("last_fetched_at") or "").strip()
+            due = True
+            if interval_min > 0 and last_fetched_at:
+                try:
+                    # stored as isoformat from _utc_now (timezone aware)
+                    from datetime import datetime
+
+                    dt_last = datetime.fromisoformat(last_fetched_at.replace("Z", "+00:00"))
+                    age = now - dt_last.timestamp()
+                    due = age >= interval_min * 60
+                except Exception:
+                    due = True
+
+            if not due:
+                skipped += 1
+                # record as skipped (keep last_fetched_at unchanged)
+                # Keep last_fetched_at unchanged; only update status field.
+                try:
+                    self.store.record_source_fetch(sid, status="skipped", http_status=None, error=None)
+                except Exception:
+                    pass
+                continue
+
+            result = test_source(s, limit=3)
+            ok = bool(result.get("ok"))
+            status = "ok" if ok else "fail"
+            http_status = result.get("http_status")
+            err = result.get("error")
+            try:
+                self.store.record_source_fetch(
+                    sid,
+                    status=status,
+                    http_status=int(http_status) if http_status is not None else None,
+                    error=str(err or "") if not ok else None,
+                )
+            except Exception:
+                pass
+
+            if ok:
+                fetched += 1
+            else:
+                failed += 1
+
+        meta = {
+            "run_id": run_id,
+            "trigger": "schedule",
+            "schedule_id": schedule_id,
+            "profile": profile,
+            "purpose": "collect",
+            "ts": time.time(),
+            "counts": {"enabled_sources": len(rows), "fetched": fetched, "skipped": skipped, "failed": failed},
+        }
+        (artifacts_dir / "run_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"ok": True, "run_id": run_id, "counts": meta["counts"], "artifacts_dir": str(artifacts_dir)}
 
     def _apply_config(self, cfg: dict[str, Any]) -> None:
         defaults = _extract_defaults(cfg)

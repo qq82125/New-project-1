@@ -2063,24 +2063,27 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           d.style.display = 'none';
           d.innerHTML = '';
         }
-        function renderRow(s){
-          const lastRaw = s.last_success_at || s.updated_at || '';
-          const last = esc(fmtTime(lastRaw) || lastRaw || '-');
-              const err = s.last_error ? `<span class="pill err" title="${esc(s.last_error)}">异常</span>` : '';
-          const hs = s.last_http_status ? `<span class="pill">${esc(s.last_http_status)}</span>` : '';
-          const urlText = prettyUrl(s.url||'');
-          const urlCell = s.url ? `<a class="url" href="${esc(s.url)}" target="_blank" title="${esc(s.url)}">${esc(urlText)}</a>` : '';
-          const toggleLabel = s.enabled ? '停用' : '启用';
-          return `
-            <tr data-id="${esc(s.id)}">
-              <td class="nowrap">${s.enabled ? '启用' : '停用'}</td>
-              <td>${esc(s.name)} ${err} ${hs}</td>
-              <td class="nowrap">${esc(s.connector)}</td>
-              <td class="urlcol">${urlCell}</td>
-              <td class="nowrap">${s.priority}</td>
-              <td class="tagcol">${esc((s.tags||[]).join(','))}</td>
-              <td>${last}</td>
-              <td class="actionscol">
+	        function renderRow(s){
+	          const lastFetchRaw = s.last_fetched_at || '';
+	          const lastFetch = esc(fmtTime(lastFetchRaw) || lastFetchRaw || '-');
+	          const st = String(s.last_fetch_status||'').toLowerCase();
+	          const stLabel = st==='ok' ? '成功' : (st==='fail' ? '失败' : (st==='skipped' ? '跳过' : ''));
+	          const stPill = stLabel ? `<span class="pill ${st==='fail'?'err':''}">${esc(stLabel)}</span>` : '';
+	              const err = s.last_fetch_error ? `<span class="pill err" title="${esc(s.last_fetch_error)}">异常</span>` : '';
+	          const hs = s.last_fetch_http_status ? `<span class="pill">${esc(s.last_fetch_http_status)}</span>` : '';
+	          const urlText = prettyUrl(s.url||'');
+	          const urlCell = s.url ? `<a class="url" href="${esc(s.url)}" target="_blank" title="${esc(s.url)}">${esc(urlText)}</a>` : '';
+	          const toggleLabel = s.enabled ? '停用' : '启用';
+	          return `
+	            <tr data-id="${esc(s.id)}">
+	              <td class="nowrap">${s.enabled ? '启用' : '停用'}</td>
+	              <td>${esc(s.name)} ${stPill} ${err} ${hs}</td>
+	              <td class="nowrap">${esc(s.connector)}</td>
+	              <td class="urlcol">${urlCell}</td>
+	              <td class="nowrap">${s.priority}</td>
+	              <td class="tagcol">${esc((s.tags||[]).join(','))}</td>
+	              <td>${lastFetch}</td>
+	              <td class="actionscol">
                 <select onchange="doAction('${esc(s.id)}', this.value); this.value='';">
                   <option value="">选择…</option>
                   <option value="edit">编辑</option>
@@ -2090,7 +2093,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               </td>
             </tr>`;
         }
-            async function loadSources() {
+	        async function loadSources() {
           const j = await api('/admin/api/sources');
           if (!j || !j.ok) { document.getElementById('table').textContent = JSON.stringify(j,null,2); return; }
           const q = (document.getElementById('q').value||'').trim();
@@ -2101,9 +2104,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             return matchQ(s,q);
           });
           const rows = filtered.map(renderRow).join('');
-          document.getElementById('table').innerHTML = `<table><thead><tr><th>状态</th><th>名称</th><th>方式</th><th>链接</th><th>优先级</th><th>标签</th><th>最近成功</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`;
-          window._sources = j.sources||[];
-        }
+	          document.getElementById('table').innerHTML = `<table><thead><tr><th>状态</th><th>名称</th><th>方式</th><th>链接</th><th>优先级</th><th>标签</th><th>最近抓取</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`;
+	          window._sources = j.sources||[];
+	        }
         function editSource(id){
           const s = (window._sources||[]).find(x=>x.id===id); if(!s) return;
           document.getElementById('id').value = s.id||'';

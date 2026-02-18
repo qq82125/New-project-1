@@ -112,6 +112,10 @@ class RulesStore:
                     parsing_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
+                    last_fetched_at TEXT,
+                    last_fetch_status TEXT,
+                    last_fetch_http_status INTEGER,
+                    last_fetch_error TEXT,
                     last_success_at TEXT,
                     last_http_status INTEGER,
                     last_error TEXT
@@ -144,6 +148,14 @@ class RulesStore:
                 conn.execute("ALTER TABLE sources ADD COLUMN fetch_json TEXT NOT NULL DEFAULT '{}'")
             if "parsing_json" not in cols:
                 conn.execute("ALTER TABLE sources ADD COLUMN parsing_json TEXT NOT NULL DEFAULT '{}'")
+            if "last_fetched_at" not in cols:
+                conn.execute("ALTER TABLE sources ADD COLUMN last_fetched_at TEXT")
+            if "last_fetch_status" not in cols:
+                conn.execute("ALTER TABLE sources ADD COLUMN last_fetch_status TEXT")
+            if "last_fetch_http_status" not in cols:
+                conn.execute("ALTER TABLE sources ADD COLUMN last_fetch_http_status INTEGER")
+            if "last_fetch_error" not in cols:
+                conn.execute("ALTER TABLE sources ADD COLUMN last_fetch_error TEXT")
             conn.commit()
 
     def _table_name(self, ruleset: str) -> str:
@@ -408,6 +420,10 @@ class RulesStore:
                         "parsing": json.loads(str(r["parsing_json"] or "{}")),
                         "created_at": str(r["created_at"]),
                         "updated_at": str(r["updated_at"]),
+                        "last_fetched_at": str(r["last_fetched_at"] or ""),
+                        "last_fetch_status": str(r["last_fetch_status"] or ""),
+                        "last_fetch_http_status": int(r["last_fetch_http_status"]) if r["last_fetch_http_status"] is not None else None,
+                        "last_fetch_error": str(r["last_fetch_error"] or ""),
                         "last_success_at": str(r["last_success_at"] or ""),
                         "last_http_status": int(r["last_http_status"]) if r["last_http_status"] is not None else None,
                         "last_error": str(r["last_error"] or ""),
@@ -434,6 +450,10 @@ class RulesStore:
                 "parsing": json.loads(str(r["parsing_json"] or "{}")),
                 "created_at": str(r["created_at"]),
                 "updated_at": str(r["updated_at"]),
+                "last_fetched_at": str(r["last_fetched_at"] or ""),
+                "last_fetch_status": str(r["last_fetch_status"] or ""),
+                "last_fetch_http_status": int(r["last_fetch_http_status"]) if r["last_fetch_http_status"] is not None else None,
+                "last_fetch_error": str(r["last_fetch_error"] or ""),
                 "last_success_at": str(r["last_success_at"] or ""),
                 "last_http_status": int(r["last_http_status"]) if r["last_http_status"] is not None else None,
                 "last_error": str(r["last_error"] or ""),
@@ -526,6 +546,63 @@ class RulesStore:
                 conn.execute(
                     "UPDATE sources SET last_http_status = ?, last_error = ?, updated_at = ? WHERE id = ?",
                     (http_status, str(error or ""), now, source_id),
+                )
+            conn.commit()
+
+    def record_source_fetch(
+        self,
+        source_id: str,
+        *,
+        status: str,
+        http_status: int | None = None,
+        error: str | None = None,
+        fetched_at: str | None = None,
+    ) -> None:
+        """
+        Record a real fetch attempt (used by scheduler-worker collect/digest runs).
+        status: ok|fail|skipped
+        """
+        now = fetched_at or _utc_now()
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            if str(status).lower() == "skipped" and fetched_at is None:
+                # Do not advance last_fetched_at when skipping due to interval gating.
+                conn.execute(
+                    """
+                    UPDATE sources
+                    SET last_fetch_status = ?,
+                        last_fetch_http_status = ?,
+                        last_fetch_error = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        str(status or ""),
+                        int(http_status) if http_status is not None else None,
+                        str(error or "") if error else None,
+                        now,
+                        source_id,
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE sources
+                    SET last_fetched_at = ?,
+                        last_fetch_status = ?,
+                        last_fetch_http_status = ?,
+                        last_fetch_error = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        now,
+                        str(status or ""),
+                        int(http_status) if http_status is not None else None,
+                        str(error or "") if error else None,
+                        now,
+                        source_id,
+                    ),
                 )
             conn.commit()
 
