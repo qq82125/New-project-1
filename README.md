@@ -1,6 +1,6 @@
 # New-project-1: 全球 IVD 晨报（规则控制台 + 常驻调度 + 云端兜底）
 
-一个面向 IVD 行业情报的自动化系统：按固定 A–G 结构生成《全球 IVD 晨报》，支持本机或 Docker 常驻运行，提供网页规则控制台（草稿校验、试跑预览、发布生效、版本回滚），并保留 GitHub Actions 作为云端兜底补发。
+一个面向 IVD 行业前沿的自动化系统：按固定 A–G 结构生成《全球 IVD 晨报》，支持本机或 Docker 常驻运行，提供网页规则控制台（草稿校验、试跑预览、发布生效、版本回滚），并保留 GitHub Actions 作为云端兜底补发。
 
 默认保持 `legacy` 行为不变；增强能力（`enhanced` 规则、常驻调度、质控/输出规则等）均可灰度启用。
 
@@ -160,4 +160,3 @@ python3 scripts/cloud_backup_send.py --dry-run --date 2026-02-16
 ## 8. License
 
 MIT
-
