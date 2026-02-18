@@ -562,6 +562,48 @@ class RuleEngine:
             base["sections_order"] = deepcopy(out.get("sections_order"))
         return base
 
+    def _normalize_output_rules(self, output: RuleSelection) -> None:
+        """
+        Normalize output_rules config for consistency.
+
+        We intentionally expose section sizing both in defaults (defaults.E/F) and in rules[].type=section_sizes
+        for backwards compatibility. In practice operators edit the defaults via the console UI, so we sync the
+        section_sizes rule params to match defaults if they diverge, avoiding "UI shows 5 but effective is 3".
+        """
+        try:
+            data = output.data
+            if not isinstance(data, dict):
+                return
+            defaults = data.get("defaults", {}) if isinstance(data.get("defaults"), dict) else {}
+            rules = data.get("rules", [])
+            if not isinstance(rules, list) or not rules:
+                return
+
+            e = defaults.get("E", {}) if isinstance(defaults.get("E"), dict) else {}
+            f = defaults.get("F", {}) if isinstance(defaults.get("F"), dict) else {}
+            tc = e.get("trends_count")
+            gc = f.get("gaps_count", {}) if isinstance(f.get("gaps_count"), dict) else {}
+            gmin = gc.get("min")
+            gmax = gc.get("max")
+
+            for r in rules:
+                if not isinstance(r, dict):
+                    continue
+                if str(r.get("type", "")) != "section_sizes":
+                    continue
+                params = r.get("params", {})
+                if not isinstance(params, dict):
+                    params = {}
+                    r["params"] = params
+                if tc is not None and params.get("trends_count") != tc:
+                    params["trends_count"] = tc
+                if gmin is not None and params.get("gaps_min") != gmin:
+                    params["gaps_min"] = gmin
+                if gmax is not None and params.get("gaps_max") != gmax:
+                    params["gaps_max"] = gmax
+        except Exception:
+            return
+
     def _effect_paths(
         self,
         ruleset: str,
@@ -845,6 +887,9 @@ class RuleEngine:
 
         qc, qc_fallback_reason = _load_with_boundary_fallback("qc_rules")
         output, output_fallback_reason = _load_with_boundary_fallback("output_rules")
+
+        # Normalize output_rules config for consistency (operator edits often touch defaults only).
+        self._normalize_output_rules(output)
 
         default_merge = "last_match"
         if conflict_strategy == "priority_append":

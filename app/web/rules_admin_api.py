@@ -1323,6 +1323,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 <label>发送时间(分钟)</label><input id="minute" type="number" min="0" max="59"/>
                 <label>收件人列表(逗号分隔)</label><input id="recipients" placeholder="a@b.com,c@d.com"/>
                 <label>主题模板</label><input id="subject_template" />
+                <label>主题前缀（subject_prefix，可选）</label><input id="subject_prefix" placeholder="例如：[Enhanced] "/>
+                <div class="small">如果你不想要标题前面的 <code>[Enhanced]</code>，把这里清空并发布即可。</div>
                 <label>操作人</label><input id="created_by" value="rules-admin-ui"/>
                 <div>
                   <button onclick="saveDraft()">保存草稿并校验</button>
@@ -1339,6 +1341,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                       <li><b>发送时间</b>：按北京时间定时触发（GitHub Actions 兜底补发逻辑不受这里影响）。</li>
                       <li><b>收件人列表</b>：逗号分隔邮箱地址（将写入 rules 的 recipient 字段）。</li>
                       <li><b>主题模板</b>：支持占位符（例如 <code>{{date}}</code>），用于生成邮件主题。</li>
+                      <li><b>主题前缀</b>：会拼在主题模板前（例如 <code>[Enhanced] </code>）。留空则不加前缀。</li>
                     </ul>
                   </div>
                 </details>
@@ -1397,6 +1400,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           const rec = (currentConfig.defaults||{}).recipient || '';
           document.getElementById('recipients').value = rec;
           document.getElementById('subject_template').value = (currentConfig.defaults||{}).subject_template || '';
+          document.getElementById('subject_prefix').value = (currentConfig.overrides||{}).subject_prefix || '';
               document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
           document.getElementById('btnPublish').disabled = true;
           currentDraftId = null;
@@ -1411,6 +1415,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           cfg.defaults.recipient = document.getElementById('recipients').value.trim();
           cfg.defaults.subject_template = document.getElementById('subject_template').value.trim();
           cfg.overrides.enabled = document.getElementById('enabled').value === 'true';
+          cfg.overrides.subject_prefix = document.getElementById('subject_prefix').value;
           cfg.profile = document.getElementById('profile').value;
           cfg.ruleset = 'email_rules';
           return cfg;
