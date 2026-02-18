@@ -881,6 +881,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "platform_diag": out.get("platform_diag", {}),
             "lane_diag": out.get("lane_diag", {}),
             "event_diag": out.get("event_diag", {}),
+            "keyword_pack_stats": out.get("keyword_pack_stats", {}),
             "artifacts_dir": out.get("artifacts_dir"),
         }
 
