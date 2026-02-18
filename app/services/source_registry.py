@@ -43,6 +43,39 @@ def _normalize_source(raw: dict[str, Any], file_path: Path) -> dict[str, Any]:
     return src
 
 
+def _extract_web_sample_entries(html: str, base_url: str, limit: int = 3) -> list[dict[str, str]]:
+    if not html:
+        return []
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for m in re.finditer(r"<a[^>]+href=['\"]([^'\"]+)['\"][^>]*>(.*?)</a>", html, flags=re.I | re.S):
+        href = (m.group(1) or "").strip()
+        raw_title = re.sub(r"<[^>]+>", " ", m.group(2) or "")
+        title = re.sub(r"\s+", " ", raw_title).strip()
+        if not href or not title or len(title) < 8:
+            continue
+        low = href.lower()
+        if any(x in low for x in ("javascript:", "mailto:", "#", "login", "signin", "register")):
+            continue
+        if not re.search(r"\.?(portal\.php\?mod=(view|show|thread|detail)|/thread|/article|/news|aid=|itemid=)", low):
+            continue
+        if low.startswith("http://") or low.startswith("https://"):
+            link = href
+        elif low.startswith("//"):
+            link = f"https:{href}"
+        elif href.startswith("?"):
+            link = base_url + href
+        else:
+            link = base_url.rstrip("/") + "/" + href.lstrip("/")
+        if link in seen:
+            continue
+        seen.add(link)
+        out.append({"title": title, "link": link})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _resolve_rules_root(project_root: Path, rules_root: Path | None = None) -> Path:
     if rules_root is not None:
         return rules_root
@@ -261,9 +294,16 @@ def test_source(source: dict[str, Any], limit: int = 3) -> dict[str, Any]:
             sample = []
             for e in feed.entries[: max(1, limit)]:
                 sample.append({"title": getattr(e, "title", ""), "link": getattr(e, "link", "")})
-            out["sample"] = sample
-            # "可解析"：至少解析到 1 条 entry
-            out["ok"] = bool(sample)
+            if sample:
+                out["sample"] = sample
+                # "可解析"：至少解析到 1 条 entry
+                out["ok"] = True
+                return out
+
+            # 回退到网页列表抽取，兼容将门户页误配置为 RSS 的情况
+            fallback = _extract_web_sample_entries(data.decode("utf-8", errors="ignore"), url, limit)
+            out["sample"] = fallback
+            out["ok"] = bool(fallback)
             return out
 
         if connector == "web":
@@ -273,9 +313,12 @@ def test_source(source: dict[str, Any], limit: int = 3) -> dict[str, Any]:
             with urlopen(req, timeout=timeout) as r:
                 html = r.read().decode("utf-8", errors="ignore")
                 out["http_status"] = int(getattr(r, "status", 200))
-            title_match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
-            title = title_match.group(1).strip() if title_match else ""
-            out["sample"] = [{"title": title, "link": url}]
+            sample = _extract_web_sample_entries(html, url, limit)
+            if not sample:
+                title_match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
+                title = title_match.group(1).strip() if title_match else ""
+                sample = [{"title": title, "link": url}]
+            out["sample"] = sample
             out["ok"] = True
             return out
 

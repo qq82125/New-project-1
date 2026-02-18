@@ -13,6 +13,18 @@ jobs:
   backup-send:
     runs-on: ubuntu-latest
     steps:
+      - name: Bootstrap reports
+        shell: bash
+        run: |
+          mkdir -p reports
+          RUN_ID="${{ github.run_id }}.${{ github.run_attempt }}"
+          TS_UTC="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          {
+            echo "run_id=${RUN_ID}"
+            echo "timestamp_utc=${TS_UTC}"
+            echo "commit_sha=${{ github.sha }}"
+          } > reports/_bootstrap.txt
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -29,6 +41,57 @@ jobs:
       - name: Validate rules profiles
         run: |
           python3 -m app.workers.cli rules:validate
+
+      - name: Env presence check (no secrets printed)
+        shell: bash
+        env:
+          SMTP_HOST: smtp.mail.me.com
+          SMTP_PORT: "587"
+          SMTP_USER: ${{ secrets.IVD_SMTP_USER }}
+          SMTP_PASS: ${{ secrets.IVD_SMTP_PASS }}
+          SMTP_FROM: ${{ secrets.IVD_SMTP_FROM }}
+          TO_EMAIL: ${{ secrets.IVD_TO_EMAIL }}
+          IMAP_HOST: imap.mail.me.com
+          IMAP_PORT: "993"
+          IMAP_SENT_MAILBOX: ${{ secrets.IVD_IMAP_SENT_MAILBOX }}
+          REPORT_SUBJECT_PREFIX: "全球IVD晨报 - "
+          REPORT_TZ: "Asia/Shanghai"
+        run: |
+          check() {
+            local k="$1"
+            if [ -n "${!k:-}" ]; then
+              echo "${k}: EXISTS"
+            else
+              echo "${k}: MISSING"
+            fi
+          }
+          check SMTP_HOST
+          check SMTP_PORT
+          check SMTP_USER
+          check SMTP_PASS
+          check SMTP_FROM
+          check TO_EMAIL
+          check IMAP_HOST
+          check IMAP_PORT
+          check IMAP_SENT_MAILBOX
+          check REPORT_SUBJECT_PREFIX
+          check REPORT_TZ
+
+      - name: Dry-run diagnostics (works even without secrets)
+        env:
+          SMTP_HOST: smtp.mail.me.com
+          SMTP_PORT: "587"
+          SMTP_USER: ${{ secrets.IVD_SMTP_USER }}
+          SMTP_PASS: ${{ secrets.IVD_SMTP_PASS }}
+          SMTP_FROM: ${{ secrets.IVD_SMTP_FROM }}
+          TO_EMAIL: ${{ secrets.IVD_TO_EMAIL }}
+          IMAP_HOST: imap.mail.me.com
+          IMAP_PORT: "993"
+          IMAP_SENT_MAILBOX: ${{ secrets.IVD_IMAP_SENT_MAILBOX }}
+          REPORT_SUBJECT_PREFIX: "全球IVD晨报 - "
+          REPORT_TZ: "Asia/Shanghai"
+        run: |
+          python3 scripts/cloud_backup_send.py --dry-run
 
       - name: Run cloud backup sender
         env:

@@ -25,5 +25,18 @@
 ## 手动测试
 在 GitHub Actions 页面运行 `IVD Cloud Backup Mail` 的 `Run workflow`。
 
+## 诊断报告（重要）
+无论成功/失败，工作流都会生成并上传 `reports/*.txt` 作为 artifact，其中：
+- `reports/_bootstrap.txt`：工作流启动信息（run_id/时间戳/commit sha）
+- `reports/ivd_backup_YYYY-MM-DD.txt`：兜底脚本诊断报告（env 缺失、IMAP 检索、是否补发、SMTP 结果等）
+
+本地自检（不发信）：
+
+```bash
+python3 scripts/cloud_backup_send.py --dry-run --date 2026-02-16
+```
+
+说明：若缺少必要环境变量（如 SMTP_PASS），命令会以非 0 退出码结束，但仍会生成 `reports/ivd_backup_2026-02-16.txt` 便于排障。
+
 ## 时区说明
 工作流使用 `cron: 40 0 * * *`，对应北京时间 `08:40`（UTC+8）。

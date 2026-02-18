@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
@@ -190,6 +193,69 @@ class RulesAdminApiTests(unittest.TestCase):
         os.environ.pop("ADMIN_TOKEN", None)
         self._td.cleanup()
 
+    def _seed_send_attempts(self) -> str:
+        db_path = self.root / "data" / "rules.db"
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS send_attempts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    to_email TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    run_id TEXT
+                )
+                """
+            )
+            conn.execute("DELETE FROM send_attempts")
+            now = datetime.now(ZoneInfo("Asia/Shanghai"))
+            today = now.date().isoformat()
+            yesterday = (now - timedelta(days=1)).date().isoformat()
+            conn.execute(
+                "INSERT INTO send_attempts(date, subject, to_email, status, error, created_at, run_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    today,
+                    "全球IVD晨报 - test",
+                    "qq82125@gmail.com",
+                    "FAILED",
+                    "smtp 失败",
+                    now.replace(second=0, microsecond=0).isoformat(),
+                    "run-fail",
+                ),
+            )
+            conn.execute(
+                "INSERT INTO send_attempts(date, subject, to_email, status, error, created_at, run_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    today,
+                    "全球IVD晨报 - test",
+                    "qq82125@gmail.com",
+                    "SUCCESS",
+                    "",
+                    now.replace(second=0, microsecond=0).isoformat() + "+08:00",
+                    "run-ok",
+                ),
+            )
+            conn.execute(
+                "INSERT INTO send_attempts(date, subject, to_email, status, error, created_at, run_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    yesterday,
+                    "全球IVD晨报 - old",
+                    "qq82125@gmail.com",
+                    "FAILED",
+                    "旧失败",
+                    (now - timedelta(days=1)).isoformat(),
+                    "run-old",
+                ),
+            )
+            conn.commit()
+        return today
+
     def test_active_requires_auth(self) -> None:
         r = self.client.get("/admin/api/email_rules/active?profile=enhanced")
         self.assertEqual(r.status_code, 401)
@@ -367,6 +433,20 @@ class RulesAdminApiTests(unittest.TestCase):
         self.assertIsInstance(body["items"], list)
         self.assertIsInstance(body["clustered_items"], list)
         self.assertIsInstance(body["explain"], dict)
+
+    def test_run_status_api_from_send_attempts(self) -> None:
+        today = self._seed_send_attempts()
+        r = self.client.get("/admin/api/run_status", auth=("admin", "pass123"))
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["today"]["date"], today)
+        self.assertTrue(body["today"]["sent"])
+        self.assertTrue(body["today"]["fallback_triggered"])
+        self.assertIn("smtp", body["today"]["last_error"])
+        self.assertIn("run_id", body["runs"][0])
+        self.assertGreaterEqual(body["count"], 3)
+        self.assertIn("scheduler", body)
 
 
 if __name__ == "__main__":

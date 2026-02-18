@@ -1,44 +1,48 @@
-# Global IVD Morning Briefing Automation
+# New-project-1: 全球 IVD 晨报（规则控制台 + 常驻调度 + 云端兜底）
 
-一个面向 IVD 行业情报的自动化项目：按固定结构生成全球 IVD 晨报，并通过 iCloud SMTP 发送邮件，同时提供 GitHub Actions 云端兜底补发能力。
+一个面向 IVD 行业情报的自动化系统：按固定 A–G 结构生成《全球 IVD 晨报》，支持本机或 Docker 常驻运行，提供网页规则控制台（草稿校验、试跑预览、发布生效、版本回滚），并保留 GitHub Actions 作为云端兜底补发。
 
-## Key Features
+默认保持 `legacy` 行为不变；增强能力（`enhanced` 规则、常驻调度、质控/输出规则等）均可灰度启用。
 
-- 每日生成并发送《全球 IVD 晨报》（支持固定主题格式）。
-- 本机 SMTP 发送脚本（iCloud SMTP，支持 UTF-8 正文）。
-- GitHub Actions 云端兜底：检测当天是否已发送，未发送则自动补发。
-- 自动化同步工具：提供本地 `git` 自动同步与 post-commit 自动推送能力。
-- 配套部署文档，便于快速落地到个人仓库。
+---
 
-## Tech Stack
+## 1. 能做什么
 
-- `Bash`（自动化脚本）
-- `Python 3`（云端兜底发送逻辑）
-- `GitHub Actions`（定时任务与手动触发）
-- `iCloud SMTP/IMAP`（邮件发送与“已发送”检测）
-- `Git`（版本管理与同步）
+- **晨报生成与发信**：生成晨报内容，通过 `send_mail_icloud.sh` 走 iCloud SMTP 发送。
+- **网页规则控制台（/admin）**：编辑/校验/预览/发布/回滚；运行侧只读取“已发布版本”。
+- **常驻在线模式（Docker Compose）**：
+  - `admin-api`：规则控制台（FastAPI）
+  - `scheduler-worker`：常驻调度（读取 `scheduler_rules`），并带单并发锁，避免重复跑
+- **云端兜底补发（GitHub Actions: IVD Cloud Backup Mail）**：
+  - 即使缺少 secrets、IMAP/SMTP 失败，也会生成 `reports/*.txt` 诊断并上传 artifact，便于定位
+- **信源管理（sources registry）**：sources 独立为 registry，支持启用/禁用/test。
+- **故事级聚合（story clustering）**：多源同事件只保留 1 条主条目，其余挂到 `other_sources`，并输出 explain。
 
-## Getting Started
+---
 
-### 1. Clone 项目
+## 2. 关键入口与目录
 
-```bash
-git clone https://github.com/qq82125/New-project-1.git
-cd New-project-1
-```
+- 生成日报脚本：`scripts/generate_ivd_report.py`
+- 发信脚本（SMTP）：`send_mail_icloud.sh`（读取同目录的 `.mail.env`）
+- 管理台服务入口：`app/admin_server.py`（FastAPI）
+- 调度 Worker：`app/workers/scheduler_worker.py`（APScheduler）
+- 规则与 Schema：`rules/`、`rules/schemas/`
+- 文档：
+  - `docs/RULES_SYSTEM.md`（规则系统与边界）
+  - `docs/RULES_CONSOLE.md`（控制台与 API）
+  - `docs/ALWAYS_ON_RUNBOOK.md`（常驻运行手册）
+  - `CLOUD_BACKUP_SETUP.md`（云端兜底配置）
 
-### 2. 安装依赖
+---
 
-本项目核心脚本使用 Python 标准库，无强制第三方依赖。  
-如需使用脚本化方式调用 GitHub Secrets 加密（高级用法），可安装：
+## 3. 快速开始（推荐：Docker 常驻）
 
-```bash
-pip install pynacl
-```
+### 3.1 配置环境变量
 
-### 3. 运行项目
+1. Docker 环境变量：复制 `.docker.env.example` 为 `.docker.env` 并填写（至少包含管理台登录 `ADMIN_USER/ADMIN_PASS`）。
+2. SMTP 发信：复制 `.mail.env.example` 为 `.mail.env` 并填写（不要提交到 git）。
 
-1) 配置本机 SMTP 环境（示例 `.mail.env`）：
+`.mail.env` 示例：
 
 ```bash
 SMTP_HOST=smtp.mail.me.com
@@ -49,129 +53,111 @@ SMTP_FROM=your_mail@me.com
 SMTP_FROM_NAME=全球IVD晨报
 ```
 
-2) 发送测试邮件：
-
-```bash
-./send_mail_icloud.sh qq82125@gmail.com "全球IVD晨报 - 2026-02-13（测试）" ./ivd_morning_2026-02-13.txt
-```
-
-3) 启用云端兜底（GitHub Actions）：
-- 参考 `CLOUD_BACKUP_SETUP.md` 配置 Secrets。
-- 在 Actions 中运行 `IVD Cloud Backup Mail` 做一次验证。
-
-## Usage Example
-
-### 命令行发送示例
-
-```bash
-./send_mail_icloud.sh \
-  qq82125@gmail.com \
-  "全球IVD晨报 - 2026-02-13" \
-  ./ivd_morning_2026-02-13.txt
-```
-
-### 云端兜底逻辑（简述）
-
-1. 每天 08:40（北京时间）触发 GitHub Actions。  
-2. 先检查 iCloud「已发送」是否存在当日主题邮件。  
-3. 若不存在，则自动补发到目标邮箱。  
-
-## Rules Console
-
-提供网页规则控制台（编辑/校验/预览/发布/回滚），不影响 `send_mail_icloud.sh` 与 GitHub Actions 兜底补发逻辑。
-
-### 1) 启动 /admin 控制台（FastAPI，推荐）
-
-本地启动（命令行一次性注入账号密码）：
-
-```bash
-ADMIN_USER=admin ADMIN_PASS=change-me python -m app.admin_server
-```
-
-或使用脚本（会自动读取同目录的 `.admin_api.env`，如存在）：
-
-```bash
-./scripts/run_admin.sh
-```
-
-打开页面：
-
-- `http://127.0.0.1:8789/admin`（会跳转到 `/admin/email`）
-
-### Docker Compose（常驻模式）
-
-本项目提供 `docker-compose.yml`（两服务）：
-- `admin-api`：规则控制台（FastAPI）
-- `scheduler-worker`：常驻调度（读取 `scheduler_rules`）
-
-启动：
+### 3.2 启动
 
 ```bash
 docker compose up -d --build
 ```
 
-健康检查：
-- `admin-api`：`GET /healthz`
-- `scheduler-worker`：每分钟写入 `/app/logs/scheduler_worker_heartbeat.json`（compose healthcheck 会检查更新时间）
+访问管理台：
+- `http://127.0.0.1:8090/admin`
 
-访问：
-- Docker 模式默认映射到 `http://127.0.0.1:8090/admin`（容器内是 8789；避免与本机 launchd 8789 冲突）
+健康检查：
+- `GET http://127.0.0.1:8090/healthz`
 
 说明：
-- 常驻模式启用后，GitHub Actions 仍保留作为兜底/可选停用（不删除）。
-- 若要让容器内 digest 任务实际发信，需要提供 `TO_EMAIL` 与 SMTP 环境变量（`send_mail_icloud.sh` 所需）。
+- `docker-compose.yml` 会把 `./app`、`./rules`、`./data`、`./artifacts`、`./logs` 挂载进容器，方便迭代。
+- `scripts/` 和根目录脚本（如 `send_mail_icloud.sh`）在镜像内，改动后需要 `--build` 才会生效。
 
-### 2) 在浏览器配置规则（Draft -> Publish）
+---
 
-通用流程（邮件规则/采集规则一致）：
+## 4. 控制台怎么用（运营 SOP）
 
-1. 打开 `/admin/email` 或 `/admin/content`
-2. 修改表单
-3. 点击“保存草稿并校验”
-4. 校验通过后点击“发布生效”
+### 4.1 发布规则（不会立刻发信）
 
-版本管理：
+通用流程（适用于 `/admin/email`、`/admin/content`、`/admin/qc`、`/admin/output`、`/admin/scheduler`）：
 
-- 打开 `/admin/versions` 查看生效版本、对比差异、以及“一键回滚到上一版本”
+1. 修改左侧表单
+2. 点击 `保存草稿并校验`
+3. 校验通过后点击 `发布生效`
+4. 如发现问题：进入 `/admin/versions` 对对应 ruleset 一键回滚
 
-### 3) dry-run 预览（不发信）
+### 4.2 试跑预览（不发信）
 
-在页面上：
+各页面右侧的 `试跑预览(不发信)` 会执行 dry-run，常见输出包括：
+- content 统计：候选/聚合后/入选数量
+- qc 报告：pass/fail + 指标面板
+- output 渲染：A–G 预览（`G` 必须置尾）
+- email 预览：subject/recipients/preview
 
-- `/admin/email` 右侧点击“试跑预览(不发信)”
-- `/admin/content` 右侧点击“试跑预览(不发信)”查看候选条数与聚合簇
+### 4.3 立刻执行发信（实跑）
 
-API 一键 dry-run（推荐）：
+进入 `/admin/scheduler`：
+- `Trigger Now`：立即触发一次“采集→生成→发信”（真实发信）
+- `Pause/Resume`：暂停/恢复自动调度
+
+查看结果：
+- `/admin` 运行状态页
+- `artifacts/<run_id>/run_meta.json`
+
+---
+
+## 5. 本机运行（不使用 Docker）
+
+启动管理台（本机）：
 
 ```bash
-curl -u admin:change-me \
-  -X POST "http://127.0.0.1:8789/admin/api/dryrun?profile=enhanced&date=2026-02-16" | python3 -m json.tool
+ADMIN_USER=admin ADMIN_PASS='change-me' python3 -m app.admin_server
 ```
 
-### 4) 发布/回滚
-
-- 发布：页面在 Draft 校验通过后，点击“发布生效”
-- 回滚：进入 `/admin/versions` 点击“回滚邮件规则 / 回滚采集规则”
-
-详细 API 与示例：见 `docs/RULES_CONSOLE.md`。
-
-### 5) 旧版 Rules Console（8787）
-
-历史版本的简易控制台仍保留，可用于对比/兼容验证：
+或：
 
 ```bash
-export RULES_CONSOLE_USER=admin
-export RULES_CONSOLE_PASS=change-me
-python -m app.web.rules_console
+./scripts/run_admin.sh
 ```
 
-打开 `http://127.0.0.1:8787`。  
-该服务主要用于兼容验证；主运行侧规则读取以 DB active 版本为优先（失败回退到 `rules/legacy.*`）。
+访问：
+- `http://127.0.0.1:8789/admin`
 
-## Contributing
+（可选）旧版规则控制台：
 
-欢迎提交 Issue 和 Pull Request。建议先描述问题背景与预期行为，再提交最小可复现改动，便于快速评审和合并。
+```bash
+./scripts/run_rules_console.sh
+```
 
-## License
+---
 
-This project is licensed under the MIT License.
+## 6. GitHub Actions 云端兜底（IVD Cloud Backup Mail）
+
+用途：当常驻运行/本机网络异常导致晨报未按时到达时，在云端进行补发。
+
+特点（可靠兜底）：
+- 任意失败路径都会产出 `reports/*.txt` 诊断文件并上传 artifact。
+- `scripts/cloud_backup_send.py` 启动会做 env 自检，缺失项会写报告并以非 0 退出码失败（CI 可见）。
+
+配置方式见：
+- `CLOUD_BACKUP_SETUP.md`
+
+本地自检（dry-run，不连接 IMAP/SMTP，只生成诊断报告）：
+
+```bash
+python3 scripts/cloud_backup_send.py --dry-run --date 2026-02-16
+```
+
+诊断输出：
+- `reports/ivd_backup_YYYY-MM-DD.txt`
+
+---
+
+## 7. 安全与注意事项
+
+- 不要把 `.mail.env`、`.docker.env`、任何 app 专用密码、token、PAT 提交到仓库。
+- 管理台鉴权依赖 `ADMIN_TOKEN` 或 `ADMIN_USER/ADMIN_PASS`；对公网暴露前必须开启鉴权。
+- sources/web 抓取受网络与站点结构影响；建议先在 `/admin/sources` 里 `test` 再启用。
+
+---
+
+## 8. License
+
+MIT
+

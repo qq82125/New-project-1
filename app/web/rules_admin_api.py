@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-import json
-import html
 import os
 import re
+import sqlite3
+import json
+import html
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -362,6 +364,180 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "meta": {"profile": sel.profile, "version": sel.version, "path": str(sel.path)},
         }
 
+    def _read_scheduler_status() -> dict[str, Any]:
+        hb_path = root / "logs" / "scheduler_worker_heartbeat.json"
+        st_path = root / "logs" / "scheduler_worker_status.json"
+        hb: dict[str, Any] | None = None
+        st: dict[str, Any] | None = None
+        try:
+            if hb_path.exists():
+                hb = json.loads(hb_path.read_text(encoding="utf-8"))
+        except Exception:
+            hb = None
+        try:
+            if st_path.exists():
+                st = json.loads(st_path.read_text(encoding="utf-8"))
+        except Exception:
+            st = None
+        return {"heartbeat": hb, "status": st}
+
+    def _normalize_time_for_status(raw: str | None) -> str:
+        if not raw:
+            return ""
+        s = str(raw).strip()
+        if not s:
+            return ""
+        return s.replace("Z", "+00:00")
+
+    def _short_summary(text: str, max_chars: int = 120) -> str:
+        t = str(text or "").strip()
+        if len(t) <= max_chars:
+            return t
+        return t[: max_chars - 1] + "…"
+
+    def _run_records_from_send_attempts(limit: int) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        try:
+            with sqlite3.connect(store.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                rows_raw = conn.execute(
+                    "SELECT date, subject, to_email, status, error, created_at, run_id FROM send_attempts "
+                    "ORDER BY created_at DESC, id DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        except Exception:
+            rows_raw = []
+
+        for r in rows_raw:
+            st = str(r["status"] or "").upper()
+            status_map = {
+                "SUCCESS": "success",
+                "FAILED": "failed",
+                "STARTED": "running",
+                "SKIP": "skipped",
+            }
+            mapped = status_map.get(st, st.lower() or "unknown")
+            created = _normalize_time_for_status(str(r["created_at"] or ""))
+            rows.append(
+                {
+                    "source": "fallback",
+                    "run_id": str(r["run_id"] or ""),
+                    "time": created,
+                    "status": mapped,
+                    "failed_reason_summary": _short_summary(str(r["error"] or "")),
+                    "subject": str(r["subject"] or ""),
+                    "to_email": str(r["to_email"] or ""),
+                    "date": str(r["date"] or ""),
+                    "trigger": "backup",
+                    "schedule_id": "manual_or_job",
+                }
+            )
+        return rows
+
+    def _run_records_from_artifacts(limit: int) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        art_root = root / "artifacts"
+        if not art_root.exists():
+            return []
+        files: list[tuple[float, Path]] = []
+        for p in art_root.glob("*/*"):
+            if p.name != "run_meta.json":
+                continue
+            try:
+                files.append((p.stat().st_mtime, p))
+            except Exception:
+                pass
+        if not files:
+            return []
+        files.sort(key=lambda item: item[0], reverse=True)
+        for _, p in files:
+            if len(out) >= limit:
+                break
+            try:
+                payload = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            status = str(payload.get("status", "")).strip().lower()
+            if not status:
+                continue
+            trigger = str(payload.get("trigger", "digest"))
+            purpose = str(payload.get("purpose", "")).strip().lower()
+            if purpose == "collect":
+                continue
+            if trigger == "collect":
+                continue
+            run_id = str(payload.get("run_id", "")).strip()
+            if not run_id:
+                continue
+            started_at = _normalize_time_for_status(str(payload.get("started_at", "")))
+            if not started_at and p.exists():
+                try:
+                    started_at = datetime.fromtimestamp(p.stat().st_mtime, timezone.utc).isoformat()
+                except Exception:
+                    started_at = ""
+            dt_obj = None
+            if started_at:
+                try:
+                    dt_obj = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                except Exception:
+                    dt_obj = None
+            date_text = (
+                dt_obj.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
+                if dt_obj is not None
+                else str(payload.get("date", ""))
+            )
+            out.append(
+                {
+                    "source": "scheduler",
+                    "run_id": run_id,
+                    "time": started_at,
+                    "status": status,
+                    "failed_reason_summary": _short_summary(str(payload.get("error_summary", ""))),
+                    "subject": "",
+                    "to_email": "",
+                    "date": date_text,
+                    "trigger": trigger,
+                    "schedule_id": str(payload.get("schedule_id", "")),
+                }
+            )
+        return out
+
+    def _merge_run_records(*, limit: int = 30) -> list[dict[str, Any]]:
+        send_records = _run_records_from_send_attempts(limit)
+        artifact_records = _run_records_from_artifacts(limit)
+        merged: list[dict[str, Any]] = send_records + artifact_records
+
+        def _to_sort_key(item: dict[str, Any]) -> tuple[int, str]:
+            t = str(item.get("time") or "")
+            ts = ""
+            try:
+                if t:
+                    dt = datetime.fromisoformat(t.replace("Z", "+00:00"))
+                    ts = dt.isoformat()
+            except Exception:
+                pass
+            return (1 if ts else 0, ts)
+
+        merged.sort(key=_to_sort_key, reverse=True)
+        return merged[:limit]
+
+    def _is_today(item: dict[str, Any], today: str) -> bool:
+        dt_text = str(item.get("date") or "").strip()
+        if dt_text:
+            return dt_text == today
+        time_text = str(item.get("time") or "").strip()
+        if not time_text:
+            return False
+        try:
+            dt = datetime.fromisoformat(time_text.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat() == today
+        except Exception:
+            return time_text.startswith(today)
+
     def _page_shell(title: str, body_html: str, script_js: str = "") -> str:
         nav = """
         <aside class="sidebar">
@@ -372,6 +548,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           <a class="nav" href="/admin/output">输出规则</a>
           <a class="nav" href="/admin/scheduler">调度规则</a>
           <a class="nav" href="/admin/sources">信源管理</a>
+          <a class="nav" href="/admin/runs">运行状态</a>
           <a class="nav" href="/admin/versions">版本与回滚</a>
           <div class="sidehint">必须先通过草稿校验，才允许发布生效</div>
         </aside>
@@ -434,7 +611,10 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         .err { color: var(--err); font-weight:700; }
         .warn { color: var(--warn); font-weight:700; }
     .pill { display:inline-block; font-size: 12px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); }
-    .row { display:flex; gap: 10px; align-items: center; }
+    /* Rows often contain multiple small controls; allow wrap to avoid overflow on narrow widths. */
+    .row { display:flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .row > * { min-width: 0; }
+    .row input, .row select { width: auto; flex: 1 1 140px; }
     .grow { flex: 1; }
     .toastWrap { position: fixed; right: 14px; top: 14px; display:flex; flex-direction: column; gap: 10px; z-index: 50; }
     .toast { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: rgba(15,21,35,.92); box-shadow: 0 20px 60px rgba(0,0,0,.35); max-width: 420px; }
@@ -768,6 +948,45 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "explain_cluster": _read_json(str(artifacts.get("cluster_explain", ""))),
             "items": _read_json(str(artifacts.get("items", ""))) or [],
             "artifacts": artifacts,
+        }
+
+    @app.get("/admin/api/run_status")
+    def run_status(
+        limit: int = 30,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        lim = max(1, min(int(limit or 30), 200))
+        rows = _merge_run_records(limit=lim)
+        if not rows:
+            rows = []
+
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        today = now.date().isoformat()
+        today_rows = [r for r in rows if _is_today(r, today)]
+        last_error = ""
+        for item in rows:
+            if str(item.get("status", "")).lower() == "failed":
+                last_error = str(item.get("failed_reason_summary") or "")
+                break
+
+        today_sent = any(str(r.get("status", "")).lower() == "success" for r in today_rows)
+        today_fallback = any(
+            str(r.get("source", "")).lower() in {"fallback", "backup"}
+            and _is_today(r, today)
+            for r in rows
+        )
+
+        return {
+            "ok": True,
+            "runs": rows,
+            "count": len(rows),
+            "today": {
+                "date": today,
+                "sent": bool(today_sent),
+                "fallback_triggered": bool(today_fallback),
+                "last_error": last_error,
+            },
+            "scheduler": _read_scheduler_status(),
         }
 
     @app.post("/admin/api/content_rules/draft")
@@ -2759,6 +2978,88 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         loadVersions();
         """
         return _page_shell("版本与回滚", body, js)
+
+    @app.get("/admin/runs", response_class=HTMLResponse)
+    def page_runs(_: dict[str, str] = Depends(_auth_guard)) -> str:
+        body = """
+        <div class="layout">
+          <div class="card">
+            <h4>今日状态</h4>
+            <div class="kvs" id="todayStatus">
+              <div>日期</div><b>-</b>
+              <div>是否已发送</div><b>-</b>
+              <div>是否触发兜底</div><b>-</b>
+              <div>最后错误</div><b>-</b>
+            </div>
+            <div class="row" style="margin-top:8px">
+              <button onclick="loadRuns()">刷新</button>
+            </div>
+            <details class="help">
+              <summary>字段说明</summary>
+              <div class="box">
+                <ul>
+                  <li><b>是否已发送</b>：按今日日期统计，任意一条成功发送则为是。</li>
+                  <li><b>是否触发兜底</b>：今日是否有兜底/补发路径执行记录。</li>
+                  <li><b>最后错误</b>：最近一次失败的摘要（截断展示）。</li>
+                </ul>
+              </div>
+            </details>
+          </div>
+          <div class="card">
+            <h4>最近 30 条运行记录（按时间降序）</h4>
+            <div id="runTable"></div>
+          </div>
+        </div>
+        """
+        js = """
+        function esc(s){ return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+        function mapStatus(s){
+          const st = String(s||'').toLowerCase();
+          if(st === 'success') return '成功';
+          if(st === 'failed') return '失败';
+          if(st === 'running') return '进行中';
+          if(st === 'skipped') return '已跳过';
+          if(st === 'unknown') return '未知';
+          return st || '未知';
+        }
+        function short(s){
+          const t = String(s||'').trim();
+          return t.length > 120 ? t.slice(0, 119) + '…' : t;
+        }
+        async function loadRuns(){
+          const j = await api('/admin/api/run_status?limit=30');
+          if(!j || !j.ok){
+            toast('err','加载失败', JSON.stringify(j));
+            return;
+          }
+          const t = j.today || {};
+          const todayCard = document.getElementById('todayStatus');
+          if(todayCard){
+            todayCard.innerHTML = `
+              <div>日期</div><b>${esc(t.date||'')}</b>
+              <div>是否已发送</div><b>${t.sent ? '是' : '否'}</b>
+              <div>是否触发兜底</div><b>${t.fallback_triggered ? '是' : '否'}</b>
+              <div>最后错误</div><b>${short(t.last_error||'无')}</b>
+            `;
+          }
+
+          const rows = (j.runs||[]).map(r=>{
+            return `<tr>
+              <td>${esc(r.run_id||'')}</td>
+              <td>${esc(r.time||'')}</td>
+              <td>${esc(mapStatus(r.status))}</td>
+              <td>${esc(r.source||'')}</td>
+              <td>${esc(short(r.failed_reason_summary||''))}</td>
+            </tr>`;
+          }).join('');
+          document.getElementById('runTable').innerHTML = `<table>
+            <thead><tr><th>Run ID</th><th>时间</th><th>状态</th><th>来源</th><th>失败原因摘要</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan=\"5\">暂无数据</td></tr>'}</tbody>
+          </table>`;
+        }
+        loadRuns();
+        """
+        return _page_shell("运行状态", body, js)
 
     return app
 

@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
 import datetime as dt
 import email.utils
 import imaplib
+import sqlite3
 import os
+from typing import Any
 import smtplib
 import ssl
 import sys
+import traceback
 import uuid
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -27,6 +33,155 @@ def now_in_tz(tz_name: str) -> dt.datetime:
         return dt.datetime.now(ZoneInfo(tz_name))
     except Exception:
         return dt.datetime.utcnow()
+
+
+def ensure_send_attempts_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS send_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            to_email TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            run_id TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_send_attempts_lookup
+            ON send_attempts(date, subject, to_email, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_send_attempts_created_at
+            ON send_attempts(created_at);
+        """
+    )
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(send_attempts)")}
+    if "run_id" not in cols:
+        conn.execute("ALTER TABLE send_attempts ADD COLUMN run_id TEXT")
+
+
+def parse_int_env(name: str, default: int) -> int:
+    value = get_env(name)
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def prune_send_attempts(conn: sqlite3.Connection, retention_days: int) -> int:
+    if retention_days <= 0:
+        return 0
+    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=retention_days)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    cur = conn.execute(
+        "DELETE FROM send_attempts WHERE created_at < ?",
+        (cutoff,),
+    )
+    return int(cur.rowcount)
+
+
+def iso_utc_now() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def ensure_reports_dir() -> Path:
+    reports_dir = Path("reports")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    return reports_dir
+
+
+def send_attempt_db_path() -> Path:
+    return ROOT_DIR / "data" / "rules.db"
+
+
+def with_send_attempt_db(retention_days: int | None = None) -> sqlite3.Connection:
+    path = send_attempt_db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    ensure_send_attempts_schema(conn)
+    if retention_days is not None:
+        prune_send_attempts(conn, retention_days)
+        conn.commit()
+    return conn
+
+
+def get_send_attempt_success(conn: sqlite3.Connection, date_str: str, subject: str, to_email: str) -> dict[str, Any] | None:
+    row = conn.execute(
+        """
+        SELECT *
+        FROM send_attempts
+        WHERE date = ? AND subject = ? AND to_email = ? AND UPPER(status) = 'SUCCESS'
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (date_str, subject, to_email),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": int(row["id"]),
+        "status": str(row["status"]),
+        "run_id": str(row["run_id"] or ""),
+        "created_at": str(row["created_at"]),
+        "error": str(row["error"] or ""),
+    }
+
+
+def record_send_attempt(
+    conn: sqlite3.Connection,
+    date_str: str,
+    subject: str,
+    to_email: str,
+    status: str,
+    run_id: str,
+    error: str | None = None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO send_attempts(date, subject, to_email, status, error, created_at, run_id)
+        VALUES(?, ?, ?, ?, ?, ?, ?)
+        """,
+        (date_str, subject, to_email, status, error, iso_utc_now(), run_id),
+    )
+
+
+
+def write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def append_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(text)
+
+
+def write_report(diag_path: Path, section_title: str, content: str) -> None:
+    title = (section_title or "").strip()
+    body = (content or "").rstrip()
+    append_text(
+        diag_path,
+        "\n".join(
+            [
+                f"## {title}",
+                body,
+                "",
+            ]
+        )
+        + "\n",
+    )
+
+
+def format_exception_truncated(exc: BaseException, limit: int = 4000) -> str:
+    tb = traceback.format_exc()
+    s = f"{type(exc).__name__}: {exc}\n{tb}"
+    if len(s) > limit:
+        return s[:limit] + "\n...(truncated)\n"
+    return s
 
 
 def pick_sent_mailbox(conn: imaplib.IMAP4_SSL, preferred: str) -> str:
@@ -54,25 +209,36 @@ def pick_sent_mailbox(conn: imaplib.IMAP4_SSL, preferred: str) -> str:
     return preferred or "Sent Messages"
 
 
-def already_sent_today(
+def imap_check_sent(
     imap_host: str,
     imap_port: int,
     username: str,
     password: str,
     subject: str,
     mailbox_hint: str,
-) -> bool:
-    with imaplib.IMAP4_SSL(imap_host, imap_port) as conn:
-        conn.login(username, password)
-        mailbox = pick_sent_mailbox(conn, mailbox_hint)
-        status, _ = conn.select(f'"{mailbox}"', readonly=True)
-        if status != "OK":
-            return False
-        status, data = conn.search(None, "HEADER", "Subject", f'"{subject}"')
-        if status != "OK":
-            return False
-        hits = data[0].split() if data and data[0] else []
-        return len(hits) > 0
+) -> dict:
+    """
+    Returns a structured result. Never raises unless IMAP library itself breaks badly.
+    """
+    try:
+        with imaplib.IMAP4_SSL(imap_host, imap_port) as conn:
+            conn.login(username, password)
+            mailbox = pick_sent_mailbox(conn, mailbox_hint)
+            status, _ = conn.select(f'"{mailbox}"', readonly=True)
+            if status != "OK":
+                return {"ok": False, "error": f"select_failed:{status}", "mailbox": mailbox}
+            status, data = conn.search(None, "HEADER", "Subject", f'"{subject}"')
+            if status != "OK":
+                return {"ok": False, "error": f"search_failed:{status}", "mailbox": mailbox}
+            hits = data[0].split() if data and data[0] else []
+            return {
+                "ok": True,
+                "mailbox": mailbox,
+                "hits": len(hits),
+                "already_sent": len(hits) > 0,
+            }
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
 def load_body(report_file: str, date_str: str) -> str:
@@ -125,7 +291,26 @@ def send_email(
         server.sendmail(from_addr, [to_addr], msg.as_string())
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="IVD Cloud Backup Mail sender (GitHub Actions fallback)")
+    p.add_argument("--date", default="", help="Report date in YYYY-MM-DD (default: now in REPORT_TZ)")
+    p.add_argument("--dry-run", action="store_true", help="Do not perform IMAP/SMTP network calls")
+    p.add_argument("--report-file", default="", help="Optional path to load report body from")
+    p.add_argument("--force-send", action="store_true", help="Send even if IMAP indicates already sent today")
+    p.add_argument(
+        "--send-attempt-retention-days",
+        type=int,
+        default=None,
+        help="Retention days for send_attempts local idempotency table",
+    )
+    return p.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    retention_days = args.send_attempt_retention_days
+    if retention_days is None:
+        retention_days = parse_int_env("SEND_ATTEMPT_RETENTION_DAYS", 30)
     smtp_host = get_env("SMTP_HOST")
     smtp_port = int(get_env("SMTP_PORT", "587"))
     smtp_user = get_env("SMTP_USER")
@@ -136,61 +321,321 @@ def main() -> int:
     imap_host = get_env("IMAP_HOST", "imap.mail.me.com")
     imap_port = int(get_env("IMAP_PORT", "993"))
     mailbox_hint = get_env("IMAP_SENT_MAILBOX", "Sent Messages")
+    # Backwards compatible: if IMAP_USER/IMAP_PASS not set, fall back to SMTP credentials.
+    imap_user = get_env("IMAP_USER", smtp_user)
+    imap_pass = get_env("IMAP_PASS", smtp_pass)
 
     tz_name = get_env("REPORT_TZ", "Asia/Shanghai")
-    prefix = get_env("REPORT_SUBJECT_PREFIX", "全球IVD晨报 - ")
-    date_str = now_in_tz(tz_name).strftime("%Y-%m-%d")
-    subject = f"{prefix}{date_str}"
-    run_id = get_env("REPORT_RUN_ID", "") or f"backup-{uuid.uuid4().hex[:10]}"
+    # Subject prefix may legitimately include a trailing space; do not strip it.
+    prefix = os.environ.get("REPORT_SUBJECT_PREFIX", "全球IVD晨报 - ").replace("\n", "")
+    date_str = (args.date.strip() or now_in_tz(tz_name).strftime("%Y-%m-%d"))
+    subject_initial = f"{prefix}{date_str}"
+    run_id = (
+        get_env("REPORT_RUN_ID", "")
+        or get_env("GITHUB_RUN_ID", "")
+        or f"backup-{uuid.uuid4().hex[:10]}"
+    )
+
     runtime_rules = load_runtime_rules(date_str=date_str, run_id=run_id)
+    subject_final = subject_initial
     if runtime_rules.get("enabled"):
-        subject = runtime_rules.get("email", {}).get("subject", subject)
+        subject_final = runtime_rules.get("email", {}).get("subject", subject_final)
+
+    # Diagnostic report is always produced (success/failure) to make Actions debuggable.
+    reports_dir = ensure_reports_dir()
+    diag_path = reports_dir / f"ivd_backup_{date_str}.txt"
+    write_text(
+        diag_path,
+        "\n".join(
+            [
+                f"run_id: {run_id}",
+                f"timestamp_utc: {iso_utc_now()}",
+                f"date: {date_str}",
+                f"report_tz: {tz_name}",
+                f"subject_initial: {subject_initial}",
+                f"subject_final: {subject_final}",
+                f"dry_run: {bool(args.dry_run)}",
+                f"commit_sha: {get_env('GITHUB_SHA','') or get_env('COMMIT_SHA','')}",
+                "",
+            ]
+        )
+        + "\n",
+    )
+
     rv = runtime_rules.get("rules_version", {}) if isinstance(runtime_rules, dict) else {}
+    write_report(
+        diag_path,
+        "Rules",
+        "\n".join(
+            [
+                f"rules_profile={runtime_rules.get('active_profile','legacy')}",
+                f"rules_version.email={rv.get('email','')}",
+                f"rules_version.content={rv.get('content','')}",
+            ]
+        ),
+    )
     print(
         f"[RUN] run_id={run_id} profile={runtime_rules.get('active_profile','legacy')} "
         f"rules_version.email={rv.get('email','')} rules_version.content={rv.get('content','')}",
         file=sys.stderr,
     )
-    report_file = get_env("REPORT_FILE")
+    report_file = args.report_file.strip() or get_env("REPORT_FILE")
 
-    required = {
-        "SMTP_HOST": smtp_host,
-        "SMTP_USER": smtp_user,
-        "SMTP_PASS": smtp_pass,
-        "TO_EMAIL": to_email,
-    }
-    missing = [k for k, v in required.items() if not v]
+    required_env = [
+        ("SMTP_HOST", smtp_host),
+        ("SMTP_PORT", str(smtp_port) if smtp_port else ""),
+        ("SMTP_USER", smtp_user),
+        ("SMTP_PASS", smtp_pass),
+        ("TO_EMAIL", to_email),
+        ("IMAP_HOST", imap_host),
+        ("IMAP_PORT", str(imap_port) if imap_port else ""),
+        ("IMAP_USER", imap_user),
+        ("IMAP_PASS", imap_pass),
+    ]
+    missing = [k for k, v in required_env if not (v or "").strip()]
     if missing:
-        print(f"Missing required env vars: {', '.join(missing)}", file=sys.stderr)
+        msg = f"Missing required env vars: {', '.join(missing)}"
+        print(msg, file=sys.stderr)
+        write_report(diag_path, "Env Check", f"status=FAIL\nmissing_env={missing}\n")
+        write_report(diag_path, "Result", "status=FAIL\nexit_code=2\n")
         return 2
+    write_report(diag_path, "Env Check", "status=PASS\n")
 
+    local_send_attempt = None
     try:
-        if already_sent_today(
-            imap_host, imap_port, smtp_user, smtp_pass, subject, mailbox_hint
-        ):
-            print(
-                f"Skip: found existing sent mail with subject '{subject}' "
-                f"rules_profile={runtime_rules.get('active_profile', 'legacy')}"
-            )
-            return 0
+        with with_send_attempt_db(retention_days) as db:
+            local_send_attempt = get_send_attempt_success(db, date_str, subject_final, to_email)
     except Exception as e:
-        print(f"IMAP check failed, continue with backup send: {e}")
+        write_report(
+            diag_path,
+            "Send Attempts",
+            "\n".join(
+                [
+                    "status=FAIL",
+                    "scope=local_idempotent_check",
+                ]
+            )
+            + "\n",
+        )
+        write_report(diag_path, "Send Attempts Error", format_exception_truncated(e))
+
+    if local_send_attempt is not None:
+        write_report(
+            diag_path,
+            "Decision",
+            "\n".join(
+                [
+                    "action=SKIP",
+                    "reason=already_sent_in_db",
+                    f"attempt_id={local_send_attempt['id']}",
+                    f"attempt_status={local_send_attempt['status']}",
+                    f"attempt_created_at={local_send_attempt['created_at']}",
+                    f"attempt_run_id={local_send_attempt['run_id']}",
+                ]
+            ),
+        )
+        write_report(diag_path, "Result", "status=OK\nexit_code=0\n")
+        print(f"Skip: existing send_attempt success for date={date_str} subject={subject_final}")
+        return 0
+
+    if args.dry_run:
+        write_report(
+            diag_path,
+            "IMAP Check",
+            "\n".join(
+                [
+                    "status=WOULD_CHECK",
+                    f"host={imap_host}",
+                    f"port={imap_port}",
+                    f"mailbox_hint={mailbox_hint}",
+                    f"subject={subject_final}",
+                ]
+            )
+            + "\n",
+        )
+    else:
+        try:
+            imap_res = imap_check_sent(
+                imap_host, imap_port, imap_user, imap_pass, subject_final, mailbox_hint
+            )
+        except Exception as e:
+            # Defensive: should not happen since imap_check_sent already catches, but keep it reported.
+            write_report(diag_path, "IMAP Check", "status=FAIL\nerror=exception_in_imap_check\n")
+            write_report(diag_path, "IMAP Exception", format_exception_truncated(e))
+            imap_res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+        if imap_res.get("ok"):
+            found = bool(imap_res.get("already_sent"))
+            write_report(
+                diag_path,
+                "IMAP Check",
+                "\n".join(
+                    [
+                        "status=OK",
+                        f"mailbox={imap_res.get('mailbox','')}",
+                        f"hits={imap_res.get('hits',0)}",
+                        f"found={'true' if found else 'false'}",
+                    ]
+                ),
+            )
+            if imap_res.get("already_sent") and not args.force_send:
+                msg = (
+                    f"Skip: found existing sent mail with subject '{subject_final}' "
+                    f"rules_profile={runtime_rules.get('active_profile', 'legacy')}"
+                )
+                print(msg)
+                write_report(
+                    diag_path,
+                    "Decision",
+                    "action=SKIP\nreason=already_sent_in_imap\n",
+                )
+                write_report(diag_path, "Result", "status=OK\nexit_code=0\n")
+                return 0
+        else:
+            # IMAP failure must be visible but should not block backup send by default.
+            write_report(
+                diag_path,
+                "IMAP Check",
+                f"status=FAIL\nerror={imap_res.get('error','unknown')}\n",
+            )
+            print(
+                f"IMAP check failed, continue with backup send: {imap_res.get('error','unknown')}",
+                file=sys.stderr,
+            )
 
     body = load_body(report_file, date_str)
     out = ensure_report_file(body, date_str)
-    send_email(
-        smtp_host=smtp_host,
-        smtp_port=smtp_port,
-        username=smtp_user,
-        password=smtp_pass,
-        from_addr=smtp_from,
-        to_addr=to_email,
-        subject=subject,
-        body=body,
+    write_report(
+        diag_path,
+        "Decision",
+        "\n".join(
+            [
+                f"action={'WOULD_SEND' if args.dry_run else 'SEND'}",
+                f"body_source={report_file or f'reports/ivd_morning_{date_str}.txt (fallback)'}",
+                f"body_file_written={out}",
+            ]
+        ),
     )
-    print(f"Backup sent (report={out}) rules_profile={runtime_rules.get('active_profile', 'legacy')}")
-    return 0
+
+    if args.dry_run:
+        write_report(
+            diag_path,
+            "Send Attempts",
+            "status=WOULD_START\nreason=dry_run\n",
+        )
+        write_report(
+            diag_path,
+            "SMTP Send",
+            "\n".join(
+                [
+                    "status=WOULD_SEND",
+                    f"host={smtp_host}",
+                    f"port={smtp_port}",
+                    f"from={smtp_from or ''}",
+                    f"to={to_email}",
+                    f"subject={subject_final}",
+                ]
+            )
+            + "\n",
+        )
+        write_report(diag_path, "Result", "status=OK\nexit_code=0\n")
+        print(
+            f"Dry-run: would send backup (report={out}) rules_profile={runtime_rules.get('active_profile', 'legacy')}"
+        )
+        return 0
+
+    try:
+        with with_send_attempt_db(retention_days) as db:
+            record_send_attempt(db, date_str, subject_final, to_email, "STARTED", run_id)
+            db.commit()
+        write_report(
+            diag_path,
+            "Send Attempts",
+            "status=STARTED\n",
+        )
+    except Exception as e:
+        write_report(
+            diag_path,
+            "Send Attempts",
+            "status=FAIL\nscope=record_start\n",
+        )
+        write_report(diag_path, "Send Attempts Error", format_exception_truncated(e))
+
+    try:
+        send_email(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            username=smtp_user,
+            password=smtp_pass,
+            from_addr=smtp_from,
+            to_addr=to_email,
+            subject=subject_final,
+            body=body,
+        )
+        try:
+            with with_send_attempt_db(retention_days) as db:
+                db.execute(
+                    """
+                    UPDATE send_attempts
+                    SET status='SUCCESS', error=NULL, created_at = ?, run_id = ?
+                    WHERE date = ? AND subject = ? AND to_email = ? AND status = 'STARTED'
+                    """,
+                    (iso_utc_now(), run_id, date_str, subject_final, to_email),
+                )
+                if db.total_changes == 0:
+                    record_send_attempt(db, date_str, subject_final, to_email, "SUCCESS", run_id)
+                db.commit()
+            write_report(
+                diag_path,
+                "Send Attempts",
+                "status=SUCCESS\n",
+            )
+        except Exception as e:
+            write_report(
+                diag_path,
+                "Send Attempts",
+                "status=FAIL\nscope=update_success\n",
+            )
+            write_report(diag_path, "Send Attempts Error", format_exception_truncated(e))
+        write_report(diag_path, "SMTP Send", "status=OK\n")
+        write_report(diag_path, "Result", "status=OK\nexit_code=0\n")
+        print(
+            f"Backup sent (report={out}) rules_profile={runtime_rules.get('active_profile', 'legacy')}"
+        )
+        return 0
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"
+        try:
+            with with_send_attempt_db(retention_days) as db:
+                db.execute(
+                    """
+                    UPDATE send_attempts
+                    SET status='FAILED', error=?, created_at = ?, run_id = ?
+                    WHERE date = ? AND subject = ? AND to_email = ? AND status = 'STARTED'
+                    """,
+                    (str(err), iso_utc_now(), run_id, date_str, subject_final, to_email),
+                )
+                if db.total_changes == 0:
+                    record_send_attempt(db, date_str, subject_final, to_email, "FAILED", run_id, err)
+                db.commit()
+            write_report(
+                diag_path,
+                "Send Attempts",
+                "status=FAILED\n",
+            )
+        except Exception as attempt_err:
+            write_report(
+                diag_path,
+                "Send Attempts",
+                "status=FAIL\nscope=update_failed\n",
+            )
+            write_report(diag_path, "Send Attempts Error", format_exception_truncated(attempt_err))
+        write_report(diag_path, "SMTP Send", f"status=FAIL\nerror={err}\n")
+        write_report(diag_path, "SMTP Exception", format_exception_truncated(e))
+        write_report(diag_path, "Result", "status=FAIL\nexit_code=3\n")
+        print(f"SMTP send failed: {err}", file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(None))

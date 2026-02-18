@@ -17,15 +17,24 @@ LOG_FILE="${LOG_DIR}/mail_send.log"
 encode_rfc2047() {
   # Encode non-ASCII headers (Subject / From name) for broad mailbox compatibility.
   # Reads UTF-8 text from stdin, prints RFC2047 encoded-word if needed.
-  python3 - <<'PY'
+  python3 -c '
 import sys
 from email.header import Header
 
 s = sys.stdin.read()
 if s.endswith("\n"):
     s = s[:-1]
-print(str(Header(s, "utf-8")))
-PY
+# Avoid header injection and folding newlines: some clients show "(no subject)" if folded/invalid.
+s = s.replace("\r", " ").replace("\n", " ").strip()
+if not s:
+    print("")
+else:
+    h = Header(s, "utf-8", maxlinelen=0)  # disable folding
+    # .encode() produces a RFC2047 encoded string when needed.
+    v = h.encode()
+    v = v.replace("\r", " ").replace("\n", " ").strip()
+    print(v)
+'
 }
 
 if [ ! -f "$ENV_FILE" ]; then
@@ -61,6 +70,12 @@ ENC_SUBJECT="$(printf '%s' "$SUBJECT" | encode_rfc2047)"
   printf '\r\n'
   cat "$BODY_FILE"
 } > "$TMP_EML"
+
+# Optional debug: keep a copy of the raw RFC822 message for troubleshooting client parsing (e.g. "(no subject)").
+# Do NOT enable by default.
+if [ "${SMTP_DEBUG_SAVE_EML:-}" = "1" ]; then
+  cp -f "$TMP_EML" "${LOG_DIR}/last_message.eml" || true
+fi
 
 # Retry & timeout defaults (override via env if needed).
 SMTP_CONNECT_TIMEOUT="${SMTP_CONNECT_TIMEOUT:-10}"

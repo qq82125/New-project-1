@@ -21,6 +21,7 @@ from http.client import RemoteDisconnected
 from pathlib import Path
 from socket import timeout as SocketTimeout
 from typing import Optional
+from urllib.parse import urljoin
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -742,9 +743,43 @@ def fetch_web_entries(url: str, timeout: int = 15) -> list[dict]:
     html = fetch_text(url, timeout=timeout)
     if not html:
         return []
-    m = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
-    title = re.sub(r"\s+", " ", m.group(1)).strip() if m else url
-    return [{"title": title, "link": url, "summary": ""}]
+    entries: list[dict] = []
+    # 优先识别常见列表页链接，提取前 20 条用于入池
+    # 兼容站点：DedeCMS / portal 列表页常见链接会有 mod=view/aid/uid/path 等字段
+    seen: set[str] = set()
+    for m in re.finditer(r"<a[^>]+href=['\"]([^'\"]+)['\"][^>]*>(.*?)</a>", html, flags=re.I | re.S):
+        href = (m.group(1) or "").strip()
+        raw_title = re.sub(r"<[^>]+>", " ", m.group(2) or "")
+        title = re.sub(r"\s+", " ", raw_title).strip()
+        if not href or not title:
+            continue
+        if len(title) < 8:
+            continue
+        # 过滤导航/版权等非正文类链接，优先正文条目
+        low_href = href.lower()
+        if any(x in low_href for x in ("javascript:", "mailto:", "#", "login", "signin", "register")):
+            continue
+        if not re.search(r"\.?(portal\.php\?mod=(view|show|thread|detail)|/thread|/article|/news|aid=|itemid=)", low_href):
+            continue
+        abs_link = href
+        if low_href.startswith("http://") or low_href.startswith("https://"):
+            pass
+        elif low_href.startswith("//"):
+            abs_link = f"https:{href}"
+        else:
+            abs_link = urljoin(url, href)
+        if abs_link in seen:
+            continue
+        seen.add(abs_link)
+        entries.append({"title": title, "link": abs_link, "summary": ""})
+        if len(entries) >= 20:
+            break
+    if not entries:
+        # 退化为页面 title，避免采集完全空白
+        m = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
+        title = re.sub(r"\s+", " ", m.group(1)).strip() if m else url
+        entries = [{"title": title, "link": url, "summary": ""}]
+    return entries
 
 
 def collect_nmpa_udi(now_utc: dt.datetime, tz_name: str) -> list[Item]:
@@ -1321,6 +1356,17 @@ def main() -> int:
                             "entry": e,
                         }
                     )
+                if not entries:
+                    # 兼容非标准 RSS 链接：尝试按网页列表页抽取 anchor
+                    for e in fetch_web_entries(url, timeout=15):
+                        entries.append(
+                            {
+                                "title": str(e.get("title", "")).strip(),
+                                "link": str(e.get("link", "")).strip(),
+                                "summary": str(e.get("summary", "")),
+                                "entry": None,
+                            }
+                        )
         elif connector == "web":
             web_entries = fetch_web_entries(url, timeout=15)
             http_status = 200 if web_entries else 0
