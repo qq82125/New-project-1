@@ -1099,7 +1099,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   <summary>字段说明/用法</summary>
                   <div class="box">
                     <ul>
-                      <li><b>规则 Profile</b>：灰度/配置档位。通常用 <code>legacy</code> 保持原行为，用 <code>enhanced</code> 启用增强规则。</li>
+                      <li><b>规则档位（Profile）</b>：灰度/配置档位。通常用 <code>legacy</code> 保持原行为，用 <code>enhanced</code> 启用增强规则。</li>
                       <li><b>启用开关</b>：关闭后不发送邮件（用于临时停发或维护窗口）。</li>
                       <li><b>发送时间</b>：按北京时间定时触发（GitHub Actions 兜底补发逻辑不受这里影响）。</li>
                       <li><b>收件人列表</b>：逗号分隔邮箱地址（将写入 rules 的 recipient 字段）。</li>
@@ -2270,7 +2270,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             <div class="kvs">
               <div>状态</div><b>${esc(enabled)} / ${esc(paused)}</b>
               <div>档位</div><b>${esc(st.profile||hb.profile||'')}</b>
-              <div>Active版本</div><b>${esc(st.active_version||hb.active_version||'')}</b>
+              <div>生效版本</div><b>${esc(st.active_version||hb.active_version||'')}</b>
               <div>心跳</div><b>${esc(hb.ts||'')}</b>
             </div>`;
           const jobs = (st.jobs||[]);
@@ -2333,6 +2333,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 	            <label>API endpoint（仅 api 需要，如 /v1/news）</label><input id="api_endpoint" placeholder="/v1/news"/>
 
 	            <label>采集频率 interval_minutes（1..1440，留空=跟随全局/调度）</label><input id="fetch_interval" type="number" min="1" max="1440" placeholder="例如：60"/>
+              <div class="small">表示该信源“最小抓取间隔”。例如：媒体 60，监管公告 360-1440。</div>
 	            <label>超时 timeout_seconds（1..120）</label><input id="fetch_timeout" type="number" min="1" max="120" placeholder="例如：20"/>
 	            <label>请求头 headers_json（可选，JSON 对象）</label><textarea id="fetch_headers" rows="3" placeholder='{"User-Agent":"..."}'></textarea>
 	            <label>鉴权引用 auth_ref（可选：env/secret 名称，不存明文）</label><input id="fetch_auth_ref" placeholder="例如：NMPA_API_KEY"/>
@@ -2343,6 +2344,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 	              <input id="rl_rps" type="number" min="0.1" max="50" step="0.1" placeholder="rps 1.0"/>
 	              <input id="rl_burst" type="number" min="1" max="100" step="1" placeholder="burst 5"/>
 	            </div>
+              <div class="small">用于抓取端节流，避免被封或触发风控。一般 rps 0.5-2 足够。</div>
 
 	            <label>解析配置 parse_profile（可选，用于选择解析器模板）</label><input id="parse_profile" placeholder="例如：pmda_list_v1"/>
 	            <label>优先级（0-1000，越大越优先）</label><input id="priority" type="number" min="0" max="1000" value="50"/>
@@ -2626,7 +2628,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             <summary>字段说明/用法</summary>
             <div class="box">
               <ul>
-                <li><b>规则 Profile</b>：规则灰度/配置档位。通常用 <code>legacy</code> 保持原行为，用 <code>enhanced</code> 启用增强规则。</li>
+                <li><b>规则档位（Profile）</b>：规则灰度/配置档位。通常用 <code>legacy</code> 保持原行为，用 <code>enhanced</code> 启用增强规则。</li>
                 <li><b>版本号</b>：发布时生成的 DB 版本标识。点击版本号会自动填入 from/to。</li>
                 <li><b>规则集（ruleset）</b>：<code>email_rules</code> 邮件规则，<code>content_rules</code> 采集规则，<code>qc_rules</code> 质控规则，<code>output_rules</code> 输出渲染规则，<code>scheduler_rules</code> 调度规则。</li>
                 <li><b>from/to</b>：选择两个版本做差异对比，下面会列出字段级变更（新增/移除/变更）。</li>
