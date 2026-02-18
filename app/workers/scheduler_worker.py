@@ -97,10 +97,17 @@ class SchedulerWorker:
         self.store = RulesStore(self.project_root)
         self.profile = os.environ.get("SCHEDULER_PROFILE", "enhanced").strip() or "enhanced"
         self.refresh_seconds = int(os.environ.get("SCHEDULER_REFRESH_SECONDS", "60") or "60")
+        # Poll cadence to support "immediate" admin actions without running APScheduler in FastAPI.
+        self.tick_seconds = int(os.environ.get("SCHEDULER_TICK_SECONDS", "5") or "5")
         self.lock_path = self.project_root / "data" / "ivd_digest.lock"
         self.heartbeat_path = self.project_root / "logs" / "scheduler_worker_heartbeat.json"
+        self.status_path = self.project_root / "logs" / "scheduler_worker_status.json"
+        self.reload_signal_path = self.project_root / "data" / "scheduler_reload.signal"
+        self.commands_dir = self.project_root / "data" / "scheduler_commands"
         self._active_version = ""
         self._enabled = False
+        self._paused = False
+        self._last_reload_mtime = 0.0
 
         try:
             from apscheduler.schedulers.background import BackgroundScheduler  # type: ignore
@@ -131,11 +138,95 @@ class SchedulerWorker:
             "profile": self.profile,
             "active_version": self._active_version,
             "enabled": self._enabled,
+            "paused": self._paused,
             "jobs": len(self.scheduler.get_jobs()) if self.scheduler else 0,
         }
         self.heartbeat_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def _run_job(self, *, schedule_id: str, purpose: str, profile: str, jitter: int, misfire_grace: int) -> None:
+    def _write_status(self) -> None:
+        self.status_path.parent.mkdir(parents=True, exist_ok=True)
+        jobs = []
+        try:
+            for j in self.scheduler.get_jobs():
+                nrt = getattr(j, "next_run_time", None)
+                jobs.append(
+                    {
+                        "id": str(getattr(j, "id", "")),
+                        "name": str(getattr(j, "name", "")),
+                        "next_run_time": nrt.isoformat() if nrt else None,
+                    }
+                )
+        except Exception:
+            jobs = []
+        payload = {
+            "ts": time.time(),
+            "profile": self.profile,
+            "active_version": self._active_version,
+            "enabled": self._enabled,
+            "paused": self._paused,
+            "jobs": jobs,
+        }
+        self.status_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _check_reload_signal(self) -> bool:
+        try:
+            if not self.reload_signal_path.exists():
+                return False
+            mt = float(self.reload_signal_path.stat().st_mtime)
+            if mt > self._last_reload_mtime:
+                self._last_reload_mtime = mt
+                return True
+        except Exception:
+            return False
+        return False
+
+    def _drain_commands(self) -> None:
+        """
+        Commands are small JSON files written by admin-api under data/scheduler_commands/.
+
+        Supported:
+        - {"cmd":"trigger","purpose":"collect"|"digest","profile":"enhanced"}
+        """
+        self.commands_dir.mkdir(parents=True, exist_ok=True)
+        files = sorted([p for p in self.commands_dir.glob("*.json") if p.is_file()], key=lambda p: p.name)
+        if not files:
+            return
+        done_dir = self.commands_dir / "done"
+        done_dir.mkdir(parents=True, exist_ok=True)
+        for p in files[:5]:
+            try:
+                raw = json.loads(p.read_text(encoding="utf-8"))
+                cmd = str(raw.get("cmd", "")).strip()
+                if cmd == "trigger":
+                    purpose = str(raw.get("purpose", "collect")).strip() or "collect"
+                    prof = str(raw.get("profile", self.profile)).strip() or self.profile
+                    schedule_id = str(raw.get("schedule_id", "manual")).strip() or "manual"
+                    _log(f"manual_trigger cmd_file={p.name} purpose={purpose} profile={prof}")
+                    self._run_job(schedule_id=schedule_id, purpose=purpose, profile=prof, jitter=0, misfire_grace=600, trigger="manual")
+            except Exception as e:
+                _log(f"command_failed file={p.name} error={e}")
+            finally:
+                try:
+                    p.rename(done_dir / p.name)
+                except Exception:
+                    try:
+                        p.unlink(missing_ok=True)  # type: ignore[arg-type]
+                    except Exception:
+                        pass
+
+    def _run_job(
+        self,
+        *,
+        schedule_id: str,
+        purpose: str,
+        profile: str,
+        jitter: int,
+        misfire_grace: int,
+        trigger: str = "schedule",
+    ) -> None:
+        if self._paused:
+            _log(f"job_skipped_paused schedule_id={schedule_id} purpose={purpose} profile={profile}")
+            return
         if jitter:
             time.sleep(random.randint(0, int(jitter)))
 
@@ -144,11 +235,11 @@ class SchedulerWorker:
         try:
             with acquire_run_lock(self.lock_path, run_id=run_id, purpose=purpose):
                 if purpose == "collect":
-                    out = self._run_collect(schedule_id=schedule_id, profile=profile)
+                    out = self._run_collect(schedule_id=schedule_id, profile=profile, trigger=trigger)
                 else:
                     out = run_digest(
                         profile=profile,
-                        trigger="schedule",
+                        trigger=trigger,
                         schedule_id=schedule_id,
                         send=True,
                         project_root=self.project_root,
@@ -161,7 +252,7 @@ class SchedulerWorker:
         except Exception as e:
             _log(f"job_failed schedule_id={schedule_id} purpose={purpose} error={e}")
 
-    def _run_collect(self, *, schedule_id: str, profile: str) -> dict[str, Any]:
+    def _run_collect(self, *, schedule_id: str, profile: str, trigger: str = "schedule") -> dict[str, Any]:
         """
         Per-source collection loop with min-interval gating.
 
@@ -235,7 +326,7 @@ class SchedulerWorker:
 
         meta = {
             "run_id": run_id,
-            "trigger": "schedule",
+            "trigger": trigger,
             "schedule_id": schedule_id,
             "profile": profile,
             "purpose": "collect",
@@ -251,6 +342,11 @@ class SchedulerWorker:
         tz = str(defaults.get("timezone", "Asia/Singapore"))
         conc = defaults.get("concurrency", {}) if isinstance(defaults.get("concurrency"), dict) else {}
         misfire = int(conc.get("misfire_grace_seconds") or 600)
+        max_instances = int(conc.get("max_instances") or 1)
+        coalesce = bool(conc.get("coalesce", True))
+        policies = defaults.get("run_policies", {}) if isinstance(defaults.get("run_policies"), dict) else {}
+        # pause_switch is treated as a state switch here: true => paused.
+        self._paused = bool(policies.get("pause_switch", False))
 
         specs = build_job_specs(defaults)
 
@@ -259,6 +355,9 @@ class SchedulerWorker:
         self._enabled = enabled
         if not enabled:
             _log("scheduler disabled (no jobs scheduled)")
+            return
+        if self._paused:
+            _log("scheduler paused (no jobs scheduled)")
             return
 
         for s in specs:
@@ -277,9 +376,10 @@ class SchedulerWorker:
                     "profile": s.profile or self.profile,
                     "jitter": int(s.jitter_seconds or 0),
                     "misfire_grace": misfire,
+                    "trigger": "schedule",
                 },
-                max_instances=1,
-                coalesce=True,
+                max_instances=max_instances,
+                coalesce=coalesce,
                 misfire_grace_time=misfire,
                 replace_existing=True,
             )
@@ -290,11 +390,13 @@ class SchedulerWorker:
         if version == self._active_version:
             # Still update heartbeat to prove liveness.
             self._write_heartbeat()
+            self._write_status()
             return
         self._active_version = version
         _log(f"config_change source={source} profile={self.profile} version={version}")
         self._apply_config(cfg)
         self._write_heartbeat()
+        self._write_status()
 
     def run_forever(self) -> None:
         _log(f"start profile={self.profile} refresh_seconds={self.refresh_seconds}")
@@ -302,9 +404,24 @@ class SchedulerWorker:
         self.scheduler.start()
         self._write_heartbeat()
         try:
+            last_refresh = 0.0
             while True:
-                time.sleep(max(5, self.refresh_seconds))
-                self.refresh()
+                time.sleep(max(1, self.tick_seconds))
+                # Commands are processed quickly to feel "immediate" from UI.
+                self._drain_commands()
+                # Allow admin-api to request immediate reload via signal file.
+                if self._check_reload_signal():
+                    _log("reload_signal detected; refreshing config now")
+                    self.refresh()
+                    last_refresh = time.time()
+                # Periodic refresh in case DB active version changes without signal.
+                if time.time() - last_refresh >= float(self.refresh_seconds):
+                    self.refresh()
+                    last_refresh = time.time()
+                else:
+                    # still write status/heartbeat periodically
+                    self._write_heartbeat()
+                    self._write_status()
         except KeyboardInterrupt:
             _log("stop (keyboard interrupt)")
         finally:

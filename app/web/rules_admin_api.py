@@ -4,6 +4,7 @@ import json
 import html
 import os
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -110,6 +111,7 @@ def _load_rules_schema(project_root: Path, ruleset: str) -> dict[str, Any]:
         "content_rules": "content_rules.schema.json",
         "qc_rules": "qc_rules.schema.json",
         "output_rules": "output_rules.schema.json",
+        "scheduler_rules": "scheduler_rules.schema.json",
     }
     name = name_map.get(ruleset, "")
     if not name:
@@ -364,6 +366,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           <a class="nav" href="/admin/content">采集规则</a>
           <a class="nav" href="/admin/qc">质控规则</a>
           <a class="nav" href="/admin/output">输出规则</a>
+          <a class="nav" href="/admin/scheduler">调度规则</a>
           <a class="nav" href="/admin/sources">信源管理</a>
           <a class="nav" href="/admin/versions">版本与回滚</a>
           <div class="sidehint">必须先通过草稿校验，才允许发布生效</div>
@@ -634,6 +637,18 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return {"ok": True, "ruleset": "output_rules", "profile": profile, **_active_rules("output_rules", profile)}
 
+    @app.get("/admin/api/scheduler_rules/active")
+    def scheduler_rules_active(
+        profile: str = "enhanced",
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "ruleset": "scheduler_rules",
+            "profile": profile,
+            **_active_rules("scheduler_rules", profile),
+        }
+
     @app.post("/admin/api/email_rules/dryrun")
     def email_rules_dryrun(
         payload: dict[str, Any],
@@ -838,6 +853,99 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return store.rollback("output_rules", profile=payload.profile)
 
+    def _touch_scheduler_reload_signal() -> None:
+        p = root / "data" / "scheduler_reload.signal"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        # Update content so mtime reliably changes on some filesystems.
+        p.write_text(str(time.time()), encoding="utf-8")
+
+    @app.post("/admin/api/scheduler_rules/draft")
+    def scheduler_rules_draft(
+        payload: RulesDraftPayload,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        errors = _draft_validate("scheduler_rules", payload.profile, payload.config_json)
+        draft = store.create_draft(
+            ruleset="scheduler_rules",
+            profile=payload.profile,
+            config=payload.config_json,
+            created_by=payload.created_by,
+            validation_errors=errors,
+        )
+        return {"ok": len(errors) == 0, "draft": draft}
+
+    @app.post("/admin/api/scheduler_rules/publish")
+    def scheduler_rules_publish(
+        payload: RulesPublishPayload,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        out = _publish_from_draft("scheduler_rules", payload)
+        try:
+            _touch_scheduler_reload_signal()
+        except Exception:
+            pass
+        return out
+
+    @app.post("/admin/api/scheduler_rules/rollback")
+    def scheduler_rules_rollback(
+        payload: RulesRollbackPayload,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        out = store.rollback("scheduler_rules", profile=payload.profile)
+        try:
+            _touch_scheduler_reload_signal()
+        except Exception:
+            pass
+        return out
+
+    @app.get("/admin/api/scheduler/status")
+    def scheduler_status(_: dict[str, str] = Depends(_auth_guard)) -> dict[str, Any]:
+        hb_path = root / "logs" / "scheduler_worker_heartbeat.json"
+        st_path = root / "logs" / "scheduler_worker_status.json"
+        hb: dict[str, Any] | None = None
+        st: dict[str, Any] | None = None
+        try:
+            if hb_path.exists():
+                hb = json.loads(hb_path.read_text(encoding="utf-8"))
+        except Exception:
+            hb = None
+        try:
+            if st_path.exists():
+                st = json.loads(st_path.read_text(encoding="utf-8"))
+        except Exception:
+            st = None
+        return {"ok": True, "heartbeat": hb, "status": st}
+
+    class SchedulerTriggerPayload(BaseModel):
+        profile: str = Field(default="enhanced")
+        purpose: str = Field(default="collect")
+        schedule_id: str = Field(default="manual")
+
+    @app.post("/admin/api/scheduler/trigger")
+    def scheduler_trigger(
+        payload: SchedulerTriggerPayload,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        purpose = str(payload.purpose or "collect").strip()
+        if purpose not in {"collect", "digest"}:
+            raise HTTPException(status_code=400, detail="purpose must be collect|digest")
+        cmd_dir = root / "data" / "scheduler_commands"
+        cmd_dir.mkdir(parents=True, exist_ok=True)
+        fname = f"cmd-{int(time.time())}-{os.getpid()}.json"
+        (cmd_dir / fname).write_text(
+            json.dumps(
+                {
+                    "cmd": "trigger",
+                    "purpose": purpose,
+                    "profile": str(payload.profile or "enhanced"),
+                    "schedule_id": str(payload.schedule_id or "manual"),
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return {"ok": True, "enqueued": True, "file": fname}
+
     @app.get("/admin/api/sources")
     def sources_list(_: dict[str, str] = Depends(_auth_guard)) -> dict[str, Any]:
         rows = store.list_sources()
@@ -891,6 +999,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "content_rules": _version_rows("content_rules", profile),
             "qc_rules": _version_rows("qc_rules", profile),
             "output_rules": _version_rows("output_rules", profile),
+            "scheduler_rules": _version_rows("scheduler_rules", profile),
         }
 
     @app.get("/admin/api/versions/diff")
@@ -930,8 +1039,11 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         to_version: str,
         _: dict[str, str] = Depends(_auth_guard),
     ) -> dict[str, Any]:
-        if ruleset not in {"email_rules", "content_rules", "qc_rules", "output_rules"}:
-            raise HTTPException(status_code=400, detail="ruleset must be email_rules|content_rules|qc_rules|output_rules")
+        if ruleset not in {"email_rules", "content_rules", "qc_rules", "output_rules", "scheduler_rules"}:
+            raise HTTPException(
+                status_code=400,
+                detail="ruleset must be email_rules|content_rules|qc_rules|output_rules|scheduler_rules",
+            )
         left = _config_for_version(ruleset, profile, from_version)
         right = _config_for_version(ruleset, profile, to_version)
         if left is None or right is None:
@@ -1944,6 +2056,222 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         """
         return _page_shell("输出规则", body, js)
 
+    @app.get("/admin/scheduler", response_class=HTMLResponse)
+    def page_scheduler(_: dict[str, str] = Depends(_auth_guard)) -> str:
+        body = """
+            <div class="layout">
+              <div class="card">
+                <label>规则 Profile</label>
+                <select id="profile"><option value="enhanced">enhanced</option><option value="legacy">legacy</option></select>
+                <label>启用开关 enabled</label><select id="enabled"><option value="true">true</option><option value="false">false</option></select>
+                <label>时区 timezone</label><input id="timezone" placeholder="例如：Asia/Singapore"/>
+
+                <label>并发（concurrency.max_instances）</label><input id="max_instances" type="number" min="1" max="5"/>
+                <label>合并错过触发（concurrency.coalesce）</label><select id="coalesce"><option value="true">true</option><option value="false">false</option></select>
+                <label>misfire_grace_seconds（容忍延迟秒数）</label><input id="misfire" type="number" min="0" max="86400"/>
+
+                <label>暂停开关 pause_switch（true=暂停）</label><select id="pause_switch"><option value="false">false</option><option value="true">true</option></select>
+                <label>允许手动触发 allow_manual_trigger</label><select id="allow_manual"><option value="true">true</option><option value="false">false</option></select>
+
+                <div class="divider"></div>
+                <h4>任务 schedules</h4>
+                <div class="row">
+                  <button onclick="addCron()">+ Cron</button>
+                  <button onclick="addInterval()">+ Interval</button>
+                </div>
+                <div id="schedules"></div>
+
+                <label>操作人</label><input id="created_by" value="rules-admin-ui"/>
+                <div>
+                  <button onclick="saveDraft()">保存草稿并校验</button>
+                  <button id="btnPublish" onclick="publishDraft()" disabled>发布生效</button>
+                  <span class="pill" id="verPill">生效版本: -</span>
+                </div>
+                <p id="status"></p>
+                <details class="help">
+                  <summary>字段说明/用法</summary>
+                  <div class="box">
+                    <ul>
+                      <li><b>enabled</b>：是否启用调度（关闭后不再触发计划任务）。</li>
+                      <li><b>timezone</b>：cron/interval 的时区。</li>
+                      <li><b>schedules</b>：定义计划任务。<code>cron</code> 用 crontab 表达式；<code>interval</code> 用分钟间隔。</li>
+                      <li><b>purpose</b>：<code>collect</code> 表示只按信源抓取；<code>digest</code> 表示执行日报主链路（生成并发信）。</li>
+                      <li><b>pause_switch</b>：true 表示暂停调度（不运行任何计划任务，手动 trigger 也会被跳过）。</li>
+                      <li><b>立即生效</b>：发布/回滚后会触发 worker reload（无需重启容器）。</li>
+                    </ul>
+                  </div>
+                </details>
+              </div>
+
+              <div class="card">
+                <div class="row">
+                  <button onclick="pauseNow(true)">暂停</button>
+                  <button onclick="pauseNow(false)">恢复</button>
+                  <button onclick="triggerNow('collect')">Trigger Now: collect</button>
+                  <button onclick="triggerNow('digest')">Trigger Now: digest</button>
+                  <button onclick="loadStatus()">刷新状态</button>
+                </div>
+                <div class="drawer" id="schedStatus"></div>
+                <pre id="nextRuns"></pre>
+              </div>
+            </div>
+            """
+        js = """
+        let currentConfig = null;
+        let currentDraftId = null;
+        let schedules = [];
+
+        function esc(s){ return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+        function mkRow(s, idx){
+          const isCron = (s.type||'') === 'cron';
+          const cronPart = isCron
+            ? `<label>cron</label><input value="${esc(s.cron||'')}" onchange="schedules[${idx}].cron=this.value"/>`
+            : `<label>interval_minutes</label><input type="number" min="1" max="1440" value="${esc(s.interval_minutes??60)}" onchange="schedules[${idx}].interval_minutes=Number(this.value)"/>`;
+          return `
+            <div class="box" style="margin-top:8px">
+              <div class="row" style="justify-content:space-between">
+                <b>任务 ${idx+1}</b>
+                <button onclick="delSchedule(${idx})">删除</button>
+              </div>
+              <label>id</label><input value="${esc(s.id||'')}" onchange="schedules[${idx}].id=this.value"/>
+              <label>type</label>
+              <select onchange="schedules[${idx}].type=this.value; renderSchedules();">
+                <option value="cron" ${isCron?'selected':''}>cron</option>
+                <option value="interval" ${!isCron?'selected':''}>interval</option>
+              </select>
+              ${cronPart}
+              <label>purpose</label>
+              <select onchange="schedules[${idx}].purpose=this.value;">
+                <option value="collect" ${(s.purpose||'')==='collect'?'selected':''}>collect</option>
+                <option value="digest" ${(s.purpose||'')==='digest'?'selected':''}>digest</option>
+              </select>
+              <label>profile</label><input value="${esc(s.profile||'enhanced')}" onchange="schedules[${idx}].profile=this.value"/>
+              <label>jitter_seconds</label><input type="number" min="0" max="300" value="${esc(s.jitter_seconds??0)}" onchange="schedules[${idx}].jitter_seconds=Number(this.value)"/>
+            </div>
+          `;
+        }
+        function renderSchedules(){
+          const html = schedules.map(mkRow).join('');
+          document.getElementById('schedules').innerHTML = html || '<div class="small">暂无任务</div>';
+        }
+        function addCron(){
+          schedules.push({id:'daily-digest', type:'cron', cron:'0 9 * * *', purpose:'digest', profile:'enhanced', jitter_seconds:0});
+          renderSchedules();
+        }
+        function addInterval(){
+          schedules.push({id:'hourly-collect', type:'interval', interval_minutes:60, purpose:'collect', profile:'enhanced', jitter_seconds:0});
+          renderSchedules();
+        }
+        function delSchedule(i){ schedules.splice(i,1); renderSchedules(); }
+
+        function buildConfig(){
+          const cfg = JSON.parse(JSON.stringify(currentConfig||{}));
+          if(!cfg.defaults) cfg.defaults = {};
+          if(!cfg.defaults.concurrency) cfg.defaults.concurrency = {};
+          if(!cfg.defaults.run_policies) cfg.defaults.run_policies = {};
+          cfg.profile = document.getElementById('profile').value;
+          cfg.ruleset = 'scheduler_rules';
+          cfg.defaults.enabled = document.getElementById('enabled').value === 'true';
+          cfg.defaults.timezone = (document.getElementById('timezone').value||'Asia/Singapore').trim();
+          cfg.defaults.schedules = schedules;
+          cfg.defaults.concurrency.max_instances = Number(document.getElementById('max_instances').value||1);
+          cfg.defaults.concurrency.coalesce = document.getElementById('coalesce').value === 'true';
+          cfg.defaults.concurrency.misfire_grace_seconds = Number(document.getElementById('misfire').value||600);
+          cfg.defaults.run_policies.pause_switch = document.getElementById('pause_switch').value === 'true';
+          cfg.defaults.run_policies.allow_manual_trigger = document.getElementById('allow_manual').value === 'true';
+          return cfg;
+        }
+
+        async function loadActive(){
+          const profile = document.getElementById('profile').value;
+          const j = await api(`/admin/api/scheduler_rules/active?profile=${encodeURIComponent(profile)}`);
+          if(!j || !j.ok){ document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
+          currentConfig = j.config_json;
+          document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
+          const d = (currentConfig.defaults||{});
+          document.getElementById('enabled').value = String(!!d.enabled);
+          document.getElementById('timezone').value = d.timezone || 'Asia/Singapore';
+          const c = d.concurrency || {};
+          document.getElementById('max_instances').value = c.max_instances ?? 1;
+          document.getElementById('coalesce').value = String(c.coalesce ?? true);
+          document.getElementById('misfire').value = c.misfire_grace_seconds ?? 600;
+          const p = d.run_policies || {};
+          document.getElementById('pause_switch').value = String(!!p.pause_switch);
+          document.getElementById('allow_manual').value = String(p.allow_manual_trigger ?? true);
+          schedules = Array.isArray(d.schedules) ? d.schedules : [];
+          renderSchedules();
+          document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
+          document.getElementById('btnPublish').disabled = true;
+          currentDraftId = null;
+        }
+
+        async function saveDraft(){
+          const profile = document.getElementById('profile').value;
+          const created_by = document.getElementById('created_by').value || 'rules-admin-ui';
+          const j = await api('/admin/api/scheduler_rules/draft','POST',{ profile, created_by, config_json: buildConfig() });
+          currentDraftId = j.draft?.id || null;
+          const errs = j.draft?.validation_errors || [];
+          if(j.ok){
+            document.getElementById('status').innerHTML = `<span class="ok">草稿校验通过（draft_id=${currentDraftId}）</span>`;
+            document.getElementById('btnPublish').disabled = false;
+            toast('ok','草稿校验通过',`draft_id=${currentDraftId}`);
+          } else {
+            document.getElementById('status').innerHTML = `<span class="err">草稿校验失败</span>\\n${JSON.stringify(errs,null,2)}`;
+            document.getElementById('btnPublish').disabled = true;
+            toast('err','草稿校验失败', `${errs.length} 处错误`);
+          }
+        }
+        async function publishDraft(){
+          const profile = document.getElementById('profile').value;
+          const created_by = document.getElementById('created_by').value || 'rules-admin-ui';
+          const j = await api('/admin/api/scheduler_rules/publish','POST',{ profile, draft_id: currentDraftId, created_by });
+          if(j && j.ok){
+            document.getElementById('status').innerHTML = `<span class="ok">已生效版本号：${j.version}</span>`;
+            document.getElementById('btnPublish').disabled = true;
+            toast('ok','发布成功', `version=${j.version}`);
+            await loadActive();
+            await loadStatus();
+          } else {
+            document.getElementById('status').innerHTML = `<span class="err">发布失败</span>\\n${JSON.stringify(j,null,2)}`;
+            toast('err','发布失败', JSON.stringify(j?.errors||j?.error||j));
+          }
+        }
+
+        async function loadStatus(){
+          const j = await api('/admin/api/scheduler/status');
+          const st = j.status || {};
+          const hb = j.heartbeat || {};
+          const enabled = (st.enabled ?? hb.enabled) ? '启用' : '未启用';
+          const paused = (st.paused ?? hb.paused) ? '暂停' : '运行';
+          document.getElementById('schedStatus').innerHTML = `
+            <div class="kvs">
+              <div>状态</div><b>${esc(enabled)} / ${esc(paused)}</b>
+              <div>Profile</div><b>${esc(st.profile||hb.profile||'')}</b>
+              <div>Active版本</div><b>${esc(st.active_version||hb.active_version||'')}</b>
+              <div>心跳</div><b>${esc(hb.ts||'')}</b>
+            </div>`;
+          const jobs = (st.jobs||[]);
+          document.getElementById('nextRuns').textContent = JSON.stringify(jobs, null, 2);
+        }
+
+        async function pauseNow(v){
+          document.getElementById('pause_switch').value = String(!!v);
+          await saveDraft();
+          if(!document.getElementById('btnPublish').disabled) await publishDraft();
+        }
+        async function triggerNow(purpose){
+          const profile = document.getElementById('profile').value;
+          await api('/admin/api/scheduler/trigger','POST',{ profile, purpose, schedule_id:'manual' });
+          toast('ok','已触发', purpose);
+          await loadStatus();
+        }
+
+        document.getElementById('profile').addEventListener('change', async ()=>{ await loadActive(); await loadStatus(); });
+        loadActive(); loadStatus();
+        setInterval(loadStatus, 5000);
+        """
+        return _page_shell("调度规则", body, js)
+
     @app.get("/admin/sources", response_class=HTMLResponse)
     def page_sources(_: dict[str, str] = Depends(_auth_guard)) -> str:
         style = """
@@ -2230,6 +2558,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               <button onclick="rollbackContent()">回滚采集规则</button>
               <button onclick="rollbackQc()">回滚质控规则</button>
               <button onclick="rollbackOutput()">回滚输出规则</button>
+              <button onclick="rollbackScheduler()">回滚调度规则</button>
             </div>
           </div>
           <div class="versionsGrid" style="margin-top:12px">
@@ -2237,6 +2566,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             <div><h4>采集规则版本</h4><div id="contentTable"></div></div>
             <div><h4>质控规则版本</h4><div id="qcTable"></div></div>
             <div><h4>输出规则版本</h4><div id="outputTable"></div></div>
+            <div><h4>调度规则版本</h4><div id="schedulerTable"></div></div>
           </div>
           <h4>版本差异对比</h4>
           <label>规则集（ruleset）</label>
@@ -2245,6 +2575,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             <option>content_rules</option>
             <option>qc_rules</option>
             <option>output_rules</option>
+            <option>scheduler_rules</option>
           </select>
           <label>对比起点版本（from_version）</label><input id="from_version" list="versions_datalist" placeholder="点击上方版本号，或在此选择/输入版本号"/>
           <label>对比终点版本（to_version）</label><input id="to_version" list="versions_datalist" placeholder="点击上方版本号，或在此选择/输入版本号"/>
@@ -2260,7 +2591,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               <ul>
                 <li><b>规则 Profile</b>：规则灰度/配置档位。通常用 <code>legacy</code> 保持原行为，用 <code>enhanced</code> 启用增强规则。</li>
                 <li><b>版本号</b>：发布时生成的 DB 版本标识。点击版本号会自动填入 from/to。</li>
-                <li><b>规则集（ruleset）</b>：<code>email_rules</code> 邮件规则，<code>content_rules</code> 采集规则，<code>qc_rules</code> 质控规则，<code>output_rules</code> 输出渲染规则。</li>
+                <li><b>规则集（ruleset）</b>：<code>email_rules</code> 邮件规则，<code>content_rules</code> 采集规则，<code>qc_rules</code> 质控规则，<code>output_rules</code> 输出渲染规则，<code>scheduler_rules</code> 调度规则。</li>
                 <li><b>from/to</b>：选择两个版本做差异对比，下面会列出字段级变更（新增/移除/变更）。</li>
                 <li><b>回滚</b>：将当前生效版本（active）切回上一个版本（同 profile）。建议回滚前先做试跑预览验证。</li>
               </ul>
@@ -2316,12 +2647,14 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             email_rules: j.email_rules || [],
             content_rules: j.content_rules || [],
             qc_rules: j.qc_rules || [],
-            output_rules: j.output_rules || []
+            output_rules: j.output_rules || [],
+            scheduler_rules: j.scheduler_rules || []
           };
           document.getElementById('emailTable').innerHTML = render(j.email_rules);
           document.getElementById('contentTable').innerHTML = render(j.content_rules);
           document.getElementById('qcTable').innerHTML = render(j.qc_rules);
           document.getElementById('outputTable').innerHTML = render(j.output_rules);
+          document.getElementById('schedulerTable').innerHTML = render(j.scheduler_rules);
           setDatalistOptions(document.getElementById('diff_ruleset').value);
         }
         async function rollbackEmail(){
@@ -2343,6 +2676,11 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           const profile = document.getElementById('profile').value;
           const j = await api('/admin/api/output_rules/rollback','POST',{profile});
           toast(j&&j.ok?'ok':'err','回滚输出规则', JSON.stringify(j)); loadVersions();
+        }
+        async function rollbackScheduler(){
+          const profile = document.getElementById('profile').value;
+          const j = await api('/admin/api/scheduler_rules/rollback','POST',{profile});
+          toast(j&&j.ok?'ok':'err','回滚调度规则', JSON.stringify(j)); loadVersions();
         }
         async function showDiff(){
           const profile = document.getElementById('profile').value;
