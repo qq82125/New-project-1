@@ -477,6 +477,8 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
     clustered_items_file = artifacts_dir / "clustered_items.json"
     source_stats_file = artifacts_dir / "source_stats.json"
     event_explain_file = artifacts_dir / "event_type_explain.json"
+    platform_explain_file = artifacts_dir / "platform_explain.json"
+    platform_diag_file = artifacts_dir / "platform_diag.json"
     cluster_payload = {}
     if cluster_explain_file.exists():
         try:
@@ -495,6 +497,56 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             event_explain_payload = json.loads(event_explain_file.read_text(encoding="utf-8"))
         except Exception:
             event_explain_payload = {}
+    platform_explain_payload = {}
+    if platform_explain_file.exists():
+        try:
+            platform_explain_payload = json.loads(platform_explain_file.read_text(encoding="utf-8"))
+        except Exception:
+            platform_explain_payload = {}
+
+    # UI-friendly diagnostics for platform tagging (focus on "未标注" cases).
+    platform_diag: dict[str, Any] = {"unlabeled_count": 0, "reasons": {}, "samples": []}
+    try:
+        rows = (
+            platform_explain_payload.get("items", [])
+            if isinstance(platform_explain_payload, dict)
+            else []
+        )
+        if isinstance(rows, list):
+            reasons: dict[str, int] = {}
+            samples: list[dict[str, str]] = []
+            unlabeled = 0
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                plat = str(r.get("platform", "")).strip()
+                if plat != "未标注":
+                    continue
+                unlabeled += 1
+                explain = r.get("explain", {}) if isinstance(r.get("explain"), dict) else {}
+                reason = str(explain.get("reason", "")).strip() or "unknown"
+                reasons[reason] = reasons.get(reason, 0) + 1
+                if len(samples) < 10:
+                    samples.append(
+                        {
+                            "title": str(r.get("title", ""))[:200],
+                            "url": str(r.get("url", ""))[:500],
+                            "event_type": str(r.get("event_type", ""))[:80],
+                            "source_id": str(r.get("source_id", ""))[:120],
+                            "reason": reason[:80],
+                        }
+                    )
+            platform_diag = {
+                "unlabeled_count": unlabeled,
+                "reasons": dict(sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))),
+                "samples": samples,
+            }
+            platform_diag_file.write_text(
+                json.dumps(platform_diag, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+    except Exception:
+        platform_diag = {"unlabeled_count": 0, "reasons": {}, "samples": []}
 
     clustered_items: list[dict] = []
     if clustered_items_file.exists():
@@ -601,15 +653,16 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             cleaned = [ln for ln in txt.splitlines() if not any(m in ln for m in quality_markers)]
             rendered_sections[sec] = ("\n".join(cleaned).rstrip() + "\n\n") if cleaned else ""
 
+    # Build a readable preview with consistent spacing: exactly one blank line between sections.
     title_line = raw_preview_text.splitlines()[0] if raw_preview_text.strip() else "全球IVD晨报"
-    preview_text = f"{title_line}\n\n"
+    parts: list[str] = [title_line, ""]
     for sec in ["A", "B", "C", "D", "E", "F", "G"]:
-        block = rendered_sections.get(sec, "")
+        block = str(rendered_sections.get(sec, "") or "").rstrip()
         if not block:
             continue
-        preview_text += block
-        if not preview_text.endswith("\n"):
-            preview_text += "\n"
+        parts.append(block)
+        parts.append("")  # blank line separator
+    preview_text = ("\n".join(parts).rstrip() + "\n") if parts else (title_line + "\n")
 
     explain_payload = {
         "run_id": run_id,
@@ -622,6 +675,14 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             "artifact": "event_type_explain.json" if event_explain_payload else None,
             "mapping_source": (event_explain_payload.get("mapping_source") if isinstance(event_explain_payload, dict) else None),
             "items_count": (len(event_explain_payload.get("items", [])) if isinstance(event_explain_payload, dict) and isinstance(event_explain_payload.get("items"), list) else 0),
+        },
+        "platform_classifier": {
+            "artifact": "platform_explain.json" if platform_explain_payload else None,
+            "items_count": (
+                len(platform_explain_payload.get("items", []))
+                if isinstance(platform_explain_payload, dict) and isinstance(platform_explain_payload.get("items"), list)
+                else 0
+            ),
         },
         "notes": ["Dry-run only: no DB write, no email send."],
     }
@@ -682,12 +743,14 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             "qc_report": str(artifacts_dir / "qc_report.json"),
             "output_render": str(artifacts_dir / "output_render.json"),
             "run_meta": str(artifacts_dir / "run_meta.json"),
+            "platform_diag": str(platform_diag_file),
         },
         "items_count": len(items),
         "items_before_count": int(cluster_payload.get("items_before_count", len(items))),
         "items_after_count": int(cluster_payload.get("items_after_count", len(items))),
         "top_clusters": cluster_payload.get("top_clusters", []),
         "source_stats": source_payload.get("sources", []),
+        "platform_diag": platform_diag,
         "sent": False,
         "qc": qc_report,
         "email_preview": {

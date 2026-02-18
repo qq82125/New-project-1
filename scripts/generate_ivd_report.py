@@ -203,8 +203,153 @@ def cn_lane(text: str) -> str:
     return "其他"
 
 
+def _url_text(url: str) -> str:
+    try:
+        p = urlparse(str(url or ""))
+        host = (p.netloc or "").lower()
+        path = (p.path or "").lower().rstrip("/")
+        return f"{host}{path}"
+    except Exception:
+        return str(url or "").lower()
+
+
+def classify_platform(
+    title: str,
+    summary: str,
+    source_group: str,
+    url: str,
+    event_type: str,
+    *,
+    enhanced: bool,
+) -> tuple[str, dict]:
+    """
+    Platform tagging v1 (explainable, configurable via platform_mapping):
+    - Prefer explicit keyword mapping from content_rules.platform_mapping.
+    - Use URL host/path hints as a weak signal when keywords miss.
+    - If still no signal: treat some event types as cross-platform by default (enhanced only),
+      otherwise mark as "未标注" to drive dictionary improvement.
+    """
+    mapping = (
+        RUNTIME_CONTENT.get("platform_mapping", {})
+        if isinstance(RUNTIME_CONTENT.get("platform_mapping"), dict)
+        else {}
+    )
+    text_lc = (str(title or "") + " " + str(summary or "")).lower()
+    url_lc = _url_text(url)
+    sg_lc = str(source_group or "").lower()
+
+    hits: list[str] = []
+    hit_terms: dict[str, list[str]] = {}
+    for label, kws in mapping.items():
+        if not isinstance(kws, list):
+            continue
+        for kw in kws:
+            k = str(kw).strip().lower()
+            if not k:
+                continue
+            if has_term(text_lc, k):
+                hits.append(str(label))
+                hit_terms.setdefault(str(label), []).append(k)
+                break
+
+    url_hits: list[str] = []
+    # Weak URL/path heuristics (used only when keyword mapping misses).
+    # Prefer rules-configured hints if provided.
+    url_map = DEFAULT_PLATFORM_URL_HINTS
+    if isinstance(RUNTIME_CONTENT.get("platform_url_hints"), dict) and RUNTIME_CONTENT.get("platform_url_hints"):
+        url_map = RUNTIME_CONTENT.get("platform_url_hints", DEFAULT_PLATFORM_URL_HINTS)
+    if not hits and url_lc:
+        for label, toks in url_map.items():
+            if not isinstance(toks, list):
+                continue
+            for tok in toks:
+                if tok and tok in url_lc:
+                    url_hits.append(label)
+                    break
+
+    combined = list(dict.fromkeys(hits + url_hits))  # stable unique
+    if len(combined) >= 2:
+        return "跨平台", {
+            "reason": "multi_platform_hits",
+            "hits": combined,
+            "hit_terms": hit_terms,
+            "url_hits": url_hits,
+            "source_group": sg_lc,
+        }
+    if len(combined) == 1:
+        label = combined[0]
+        return label, {
+            "reason": "keyword_mapping" if hits else "url_hint",
+            "hits": combined,
+            "hit_terms": hit_terms,
+            "url_hits": url_hits,
+            "source_group": sg_lc,
+        }
+
+    if enhanced:
+        not_applicable_events = {
+            "监管审批与指南",
+            "支付与招采",
+            "并购融资/IPO与合作",
+            "政策与市场动态",
+        }
+        if str(event_type or "") in not_applicable_events:
+            return "不适用（非技术）", {
+                "reason": "event_type_not_applicable",
+                "hits": [],
+                "hit_terms": {},
+                "url_hits": [],
+                "source_group": sg_lc,
+            }
+        return "未标注", {
+            "reason": "missing_platform_keywords",
+            "hits": [],
+            "hit_terms": {},
+            "url_hits": [],
+            "source_group": sg_lc,
+        }
+
+    return "跨平台/未标注", {
+        "reason": "legacy_default",
+        "hits": [],
+        "hit_terms": {},
+        "url_hits": [],
+        "source_group": sg_lc,
+    }
+
+
+def normalize_platform_label(platform: str, event_type: str, *, enhanced: bool) -> str:
+    """
+    Keep legacy label stable, but in enhanced mode avoid the ambiguous legacy bucket.
+    """
+    p = str(platform or "").strip()
+    if not enhanced:
+        return p or "跨平台/未标注"
+    if not p:
+        return "未标注"
+    if p != "跨平台/未标注":
+        return p
+    if str(event_type or "") in {"监管审批与指南", "支付与招采", "并购融资/IPO与合作", "政策与市场动态"}:
+        return "不适用（非技术）"
+    return "未标注"
+
+
+# Default URL hints, used when rules do not provide platform_url_hints.
+DEFAULT_PLATFORM_URL_HINTS: dict[str, list[str]] = {
+    "NGS": ["ngs", "sequencing", "genome", "exome", "wgs", "wes"],
+    "PCR": ["pcr", "qpcr", "rt-pcr", "rtpcr", "lamp"],
+    "数字PCR": ["ddpcr", "digital-pcr", "digitalpcr", "dpcr"],
+    "流式细胞": ["flow-cytometry", "cytometry", "facs"],
+    "质谱": ["mass-spec", "massspec", "lc-ms", "msms", "maldi", "maldi-tof"],
+    "免疫诊断（化学发光/ELISA/IHC等）": ["immunoassay", "chemilum", "elisa", "ihc", "clia"],
+    "POCT/分子POCT": ["poct", "point-of-care", "rapid-test", "self-test"],
+    "微流控/单分子": ["microfluid", "lab-on-a-chip", "single-molecule", "simoa"],
+}
+
+
 def cn_platform(text: str) -> str:
-    t = text.lower()
+    # Legacy-compatible heuristic tagger.
+    t = str(text or "").lower()
     dynamic_platform = _map_label_by_keywords(t, RUNTIME_CONTENT.get("platform_mapping", {}))
     if dynamic_platform:
         return dynamic_platform
@@ -259,11 +404,11 @@ def cn_platform(text: str) -> str:
         return "质谱"
     if any(has_term(t, k) for k in ["flow cytometry", "cytometry"]):
         return "流式细胞"
-    if any(has_term(t, k) for k in ["immunoassay", "chemiluminescence", "elisa", "ihc"]):
+    if any(has_term(t, k) for k in ["immunoassay", "chemiluminescence", "elisa", "ihc", "clia"]):
         return "免疫诊断（化学发光/ELISA/IHC等）"
     if any(has_term(t, k) for k in ["point-of-care", "poc", "poct", "self-test", "rapid test"]):
         return "POCT/分子POCT"
-    if any(has_term(t, k) for k in ["microfluidic", "lab-on-a-chip", "single molecule", "single-molecule"]):
+    if any(has_term(t, k) for k in ["microfluidic", "lab-on-a-chip", "single molecule", "single-molecule", "simoa"]):
         return "微流控/单分子"
     return "跨平台/未标注"
 
@@ -844,7 +989,7 @@ def collect_nmpa_udi(now_utc: dt.datetime, tz_name: str) -> list[Item]:
     return out
 
 
-def collect_nmpa_site_updates(now_utc: dt.datetime, tz_name: str) -> list[Item]:
+def collect_nmpa_site_updates(now_utc: dt.datetime, tz_name: str, *, enhanced: bool) -> list[Item]:
     """
     Collect dated NMPA website items as China regulatory supplements.
     """
@@ -879,6 +1024,20 @@ def collect_nmpa_site_updates(now_utc: dt.datetime, tz_name: str) -> list[Item]:
             link = "https://www.nmpa.gov.cn/" + href.lstrip("/")
 
         text = title
+        event_type = "监管审批与指南"
+        summary = "摘要：该条来自NMPA官网公开信息，反映监管与器械动态更新。建议结合原文核对适用范围、执行日期与合规影响。"
+        if enhanced:
+            platform, _pex = classify_platform(
+                title,
+                summary,
+                "regulatory_cn",
+                link,
+                event_type,
+                enhanced=True,
+            )
+        else:
+            platform = cn_platform(text)
+        platform = normalize_platform_label(platform, event_type, enhanced=bool(enhanced))
         out.append(
             Item(
                 title=title,
@@ -887,10 +1046,10 @@ def collect_nmpa_site_updates(now_utc: dt.datetime, tz_name: str) -> list[Item]:
                 source="NMPA",
                 region="中国",
                 lane=cn_lane(text),
-                platform=cn_platform(text),
-                event_type="监管审批与指南",
+                platform=platform,
+                event_type=event_type,
                 window_tag=window_tag(pub, now_utc),
-                summary_cn="摘要：该条来自NMPA官网公开信息，反映监管与器械动态更新。建议结合原文核对适用范围、执行日期与合规影响。",
+                summary_cn=summary,
             )
         )
         seen.add(title)
@@ -899,7 +1058,7 @@ def collect_nmpa_site_updates(now_utc: dt.datetime, tz_name: str) -> list[Item]:
     return out
 
 
-def collect_pmda_updates(now_utc: dt.datetime, tz_name: str) -> list[Item]:
+def collect_pmda_updates(now_utc: dt.datetime, tz_name: str, *, enhanced: bool) -> list[Item]:
     """
     Parse PMDA English homepage dated updates and keep device/IVD-relevant items.
     """
@@ -935,6 +1094,20 @@ def collect_pmda_updates(now_utc: dt.datetime, tz_name: str) -> list[Item]:
         else:
             link = "https://www.pmda.go.jp" + (href if href.startswith("/") else "/" + href)
 
+        event_type = "监管审批与指南"
+        summary = "摘要：该条来自PMDA英文官方公告，属于亚太监管动态。建议核对适用品类、生效时间与对跨境注册/上市路径的影响。"
+        if enhanced:
+            platform, _pex = classify_platform(
+                f"{date_str.strip()} {category}: {title}",
+                summary,
+                "regulatory_apac",
+                link,
+                event_type,
+                enhanced=True,
+            )
+        else:
+            platform = cn_platform(title)
+        platform = normalize_platform_label(platform, event_type, enhanced=bool(enhanced))
         out.append(
             Item(
                 title=f"{date_str.strip()} {category}: {title}",
@@ -943,10 +1116,10 @@ def collect_pmda_updates(now_utc: dt.datetime, tz_name: str) -> list[Item]:
                 source="PMDA",
                 region="亚太",
                 lane=cn_lane(title),
-                platform=cn_platform(title),
-                event_type="监管审批与指南",
+                platform=platform,
+                event_type=event_type,
                 window_tag=window_tag(pub, now_utc),
-                summary_cn="摘要：该条来自PMDA英文官方公告，属于亚太监管动态。建议核对适用品类、生效时间与对跨境注册/上市路径的影响。",
+                summary_cn=summary,
             )
         )
         seen.add(title)
@@ -1196,6 +1369,7 @@ def main() -> int:
     run_id = env("REPORT_RUN_ID", "") or f"run-{uuid.uuid4().hex[:10]}"
     runtime_rules = load_runtime_rules(date_str=date_str, run_id=run_id)
     event_classifier = build_event_classifier(runtime_rules)
+    platform_explain_rows: list[dict] = []
     event_mapping_source = "content_rules"
     try:
         cc = runtime_rules.get("content", {}) if isinstance(runtime_rules.get("content"), dict) else {}
@@ -1240,6 +1414,7 @@ def main() -> int:
         RUNTIME_CONTENT["exclude_keywords"] = content_cfg.get("exclude_keywords", [])
         RUNTIME_CONTENT["lane_mapping"] = content_cfg.get("lane_mapping", {})
         RUNTIME_CONTENT["platform_mapping"] = content_cfg.get("platform_mapping", {})
+        RUNTIME_CONTENT["platform_url_hints"] = content_cfg.get("platform_url_hints", {})
         RUNTIME_CONTENT["event_mapping"] = content_cfg.get("event_mapping", {})
         RUNTIME_CONTENT["source_priority"] = content_cfg.get("source_priority", {})
         RUNTIME_CONTENT["dedupe_cluster"] = content_cfg.get("dedupe_cluster", RUNTIME_CONTENT["dedupe_cluster"])
@@ -1305,8 +1480,8 @@ def main() -> int:
     relaxed_pool: list[Item] = []
 
     # China official: baseline high-confidence China signal.
-    items.extend(collect_nmpa_site_updates(now_utc, tz_name))
-    items.extend(collect_pmda_updates(now_utc, tz_name))
+    items.extend(collect_nmpa_site_updates(now_utc, tz_name, enhanced=bool(use_enhanced)))
+    items.extend(collect_pmda_updates(now_utc, tz_name, enhanced=bool(use_enhanced)))
 
     # Normalize legacy tuples (7 fields) into new form (8 fields).
     norm_sources = []
@@ -1420,9 +1595,32 @@ def main() -> int:
             wt = window_tag(pub, now_utc)
             region = cn_region(src_name, link) or default_region
             lane = cn_lane(combined)
-            platform = cn_platform(combined)
             summary = cn_summary(row["entry"]) if row["entry"] is not None else "摘要：该条来自网页源抓取。"
             event_type, et_explain = event_classifier.classify(title, summary, source_group, link)
+            if use_enhanced:
+                platform, plat_explain = classify_platform(
+                    title,
+                    summary,
+                    str(source_group or ""),
+                    link,
+                    event_type,
+                    enhanced=True,
+                )
+            else:
+                platform = cn_platform(combined)
+                plat_explain = {"reason": "legacy_cn_platform"}
+            platform = normalize_platform_label(platform, event_type, enhanced=bool(use_enhanced))
+            platform_explain_rows.append(
+                {
+                    "title": title,
+                    "url": link,
+                    "source_id": source_id,
+                    "source_group": str(source_group or ""),
+                    "event_type": event_type,
+                    "platform": platform,
+                    "explain": plat_explain,
+                }
+            )
 
             it = Item(
                 title=title,
@@ -1671,6 +1869,11 @@ def main() -> int:
                 indent=2,
                 default=str,
             ),
+            encoding="utf-8",
+        )
+        # Explainability: per-item platform classification evidence (enhanced-only intent, but safe to write).
+        (p / "platform_explain.json").write_text(
+            json.dumps({"items": platform_explain_rows}, ensure_ascii=False, indent=2, default=str),
             encoding="utf-8",
         )
 

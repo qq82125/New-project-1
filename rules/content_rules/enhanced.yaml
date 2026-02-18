@@ -72,6 +72,17 @@ defaults:
     endpoints: 80
     fiercebiotech: 75
     generic_rss: 50
+  # Weak URL/path hints for platform tagging when title/summary keywords miss.
+  # Note: this only affects tagging/explain, not candidate selection.
+  platform_url_hints:
+    NGS: [ngs, sequencing, genome, exome, wgs, wes]
+    PCR: [pcr, qpcr, rt-pcr, rtpcr, lamp]
+    数字PCR: [ddpcr, digital-pcr, digitalpcr, dpcr]
+    流式细胞: [flow-cytometry, cytometry, facs]
+    质谱: [mass-spec, massspec, lc-ms, msms, maldi, maldi-tof]
+    免疫诊断（化学发光/ELISA/IHC等）: [immunoassay, chemilum, elisa, ihc, clia]
+    POCT/分子POCT: [poct, point-of-care, rapid-test, self-test]
+    微流控/单分子: [microfluid, lab-on-a-chip, single-molecule, simoa]
   dedupe_cluster:
     enabled: true
     window_hours: 72
@@ -92,6 +103,7 @@ defaults:
   region_filter:
     apac_min_share: 0.40
     china_min_share: 0.20
+    eu_na_min_share: 0.40
     allowed_regions:
       - 北美
       - 欧洲
@@ -210,27 +222,72 @@ rules:
       NGS:
         - ngs
         - sequencing
+        - next-generation sequencing
         - wgs
+        - whole genome
+        - whole-genome
+        - wes
+        - whole exome
+        - whole-exome
         - rna-seq
+        - rnaseq
+        - targeted sequencing
+        - panel sequencing
       PCR:
         - pcr
+        - qpcr
+        - q-pcr
+        - rt-pcr
+        - rtpcr
+        - real-time pcr
+        - realtime pcr
+        - isothermal
+        - lamp
+        - rt-lamp
       数字PCR:
         - digital pcr
         - ddpcr
+        - ddpcr
+        - dpcr
+        - d-pcr
       流式细胞:
         - flow cytometry
+        - cytometry
+        - facs
       质谱:
         - mass spec
         - lc-ms
+        - lc-ms/ms
+        - ms/ms
+        - maldi
+        - maldi-tof
       免疫诊断（化学发光/ELISA/IHC等）:
         - immunoassay
+        - clia
         - chemiluminescence
+        - chemiluminescent
         - elisa
         - ihc
+        - lateral flow immunoassay
+        - lfiae
       POCT/分子POCT:
         - poct
         - point-of-care
+        - point of care
         - rapid test
+        - self-test
+        - at-home
+        - near patient
+        - cartridge
+        - sample-to-answer
+      微流控/单分子:
+        - microfluidic
+        - micro-fluidic
+        - lab-on-a-chip
+        - lab on a chip
+        - single molecule
+        - single-molecule
+        - simoa
 
   - id: dedupe-enhanced
     enabled: true
@@ -279,6 +336,7 @@ rules:
     params:
       apac_min_share: 0.40
       china_min_share: 0.20
+      eu_na_min_share: 0.40
       allowed_tracks:
         - 肿瘤检测
         - 感染检测

@@ -71,6 +71,16 @@
           "propertyNames": { "type": "string", "minLength": 1 },
           "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 1000 }
         },
+        "platform_url_hints": {
+          "type": "object",
+          "propertyNames": { "type": "string", "minLength": 1 },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 50,
+            "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+          }
+        },
         "dedupe_cluster": {
           "type": "object",
           "required": [
@@ -124,6 +134,7 @@
           "properties": {
             "apac_min_share": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
             "china_min_share": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+            "eu_na_min_share": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
             "allowed_regions": {
               "type": "array",
               "items": { "type": "string", "enum": ["北美", "欧洲", "亚太", "中国", "全球"] }

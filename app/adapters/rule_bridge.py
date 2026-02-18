@@ -76,6 +76,7 @@ def _adapt_content(decision: dict[str, Any]) -> dict[str, Any]:
         "exclude_keywords": [str(x) for x in keyword_sets.get("exclude_keywords", []) if str(x).strip()],
         "lane_mapping": deepcopy(categories.get("lane_mapping", {})),
         "platform_mapping": deepcopy(categories.get("platform_mapping", {})),
+        "platform_url_hints": deepcopy(content.get("platform_url_hints", {})),
         "event_mapping": deepcopy(categories.get("event_mapping", {})),
         "source_priority": deepcopy(content.get("source_priority", {})),
         "dedupe_cluster": deepcopy(content.get("dedupe_cluster", {})),

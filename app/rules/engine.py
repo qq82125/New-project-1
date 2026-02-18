@@ -495,6 +495,9 @@ class RuleEngine:
                 "ranking": {},
             },
             "source_priority": deepcopy(defaults.get("source_priority", {})),
+            # Optional: URL path hints for platform tagging (weak signal).
+            # Must not affect inclusion/selection, only tagging/explain downstream.
+            "platform_url_hints": deepcopy(defaults.get("platform_url_hints", {})),
             "dedupe_cluster": deepcopy(
                 defaults.get(
                     "dedupe_cluster",

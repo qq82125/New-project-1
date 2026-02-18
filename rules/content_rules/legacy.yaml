@@ -43,6 +43,7 @@ defaults:
   region_filter:
     apac_min_share: 0.40
     china_min_share: 0.00
+    eu_na_min_share: 0.40
     allowed_regions:
       - 北美
       - 欧洲
@@ -117,6 +118,7 @@ rules:
     description: 保留现有亚太占比约束
     params:
       apac_min_share: 0.40
+      eu_na_min_share: 0.40
 
 output:
   format: plain_text

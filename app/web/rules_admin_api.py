@@ -598,7 +598,17 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     button { margin-right:8px; margin-top:8px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: rgba(122,166,255,.10); color: var(--text); cursor:pointer; }
     button:hover { background: rgba(122,166,255,.18); }
     button:disabled { opacity: .45; cursor:not-allowed; }
-    pre { background: rgba(0,0,0,.25); padding:10px; border-radius:12px; overflow:auto; border:1px solid var(--border); }
+    pre {
+      background: rgba(0,0,0,.25);
+      padding:10px;
+      border-radius:12px;
+      overflow:auto;
+      border:1px solid var(--border);
+      /* Make previews readable without horizontal scrolling. */
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
     table { width:100%; border-collapse: collapse; table-layout: fixed; }
     th, td { border-bottom:1px solid var(--border); padding:8px 6px; text-align:left; vertical-align:top; overflow:hidden; }
         th { font-size: 12px; color: var(--muted); font-weight: 700; }
@@ -868,6 +878,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "items_after_count": out.get("items_after_count"),
             "items_count": out.get("items_count"),
             "top_clusters": out.get("top_clusters", []),
+            "platform_diag": out.get("platform_diag", {}),
             "artifacts_dir": out.get("artifacts_dir"),
         }
 
@@ -901,6 +912,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     def unified_dryrun(
         date: str | None = None,
         profile: str = "enhanced",
+        lite: bool = False,
         _: dict[str, str] = Depends(_auth_guard),
     ) -> dict[str, Any]:
         """
@@ -931,7 +943,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         preview_text = _read_text(str(artifacts.get("preview", "")))
         preview_html = f"<pre>{html.escape(preview_text)}</pre>" if preview_text else ""
 
-        return {
+        payload: dict[str, Any] = {
             "ok": True,
             "run_id": out.get("run_id"),
             "profile": out.get("profile"),
@@ -943,12 +955,14 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "qc_report": _read_json(str(artifacts.get("qc_report", ""))) or {},
             "output_render": _read_json(str(artifacts.get("output_render", ""))) or {},
             "run_meta": _read_json(str(artifacts.get("run_meta", ""))) or {},
-            "clustered_items": _read_json(str(artifacts.get("clustered_items", ""))),
-            "explain": _read_json(str(artifacts.get("explain", ""))),
-            "explain_cluster": _read_json(str(artifacts.get("cluster_explain", ""))),
-            "items": _read_json(str(artifacts.get("items", ""))) or [],
             "artifacts": artifacts,
         }
+        if not lite:
+            payload["clustered_items"] = _read_json(str(artifacts.get("clustered_items", "")))
+            payload["explain"] = _read_json(str(artifacts.get("explain", "")))
+            payload["explain_cluster"] = _read_json(str(artifacts.get("cluster_explain", "")))
+            payload["items"] = _read_json(str(artifacts.get("items", ""))) or []
+        return payload
 
     @app.get("/admin/api/run_status")
     def run_status(
@@ -1337,7 +1351,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   <label>高亮关键词（逗号分隔，留空自动从采集规则读取包含/排除词）</label>
                   <input id="highlight_terms" />
                 </div>
-                <pre id="preview"></pre>
+                <pre id="preview" style="min-height:320px">（点击“试跑预览(不发信)”后，这里会显示预览正文）</pre>
                 <details class="help">
                   <summary>预览说明</summary>
                   <div class="box">
@@ -1433,6 +1447,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         async function preview() {
           const profile = document.getElementById('profile').value;
           const date = document.getElementById('dryrun_date').value.trim();
+          const previewEl = document.getElementById('preview');
+          if(previewEl) previewEl.textContent = '运行中...（不会发信）';
           const j = await api('/admin/api/email_rules/dryrun','POST',{ profile, date });
           if (!j || !j.ok) { document.getElementById('preview').textContent = JSON.stringify(j,null,2); return; }
           let includeTerms = [];
@@ -1441,12 +1457,10 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           if(custom.length){
             includeTerms = custom;
           } else {
-            const cj = await api(`/admin/api/content_rules/active?profile=${encodeURIComponent(profile)}`);
-            const rules = (cj && cj.ok) ? (cj.config_json.rules||[]) : [];
-            const inc = (rules.find(r=>r.type==='include_filter')||{}).params||{};
-            const exc = (rules.find(r=>r.type==='exclude_filter')||{}).params||{};
-            includeTerms = inc.include_keywords||[];
-            excludeTerms = exc.exclude_keywords||[];
+            // Avoid freezing the UI by default (keyword packs can be large).
+            // If you need highlight, fill highlight_terms explicitly.
+            includeTerms = [];
+            excludeTerms = [];
           }
               const md = j.preview_markdown || '(空)';
           const base = escHtml(md);
@@ -1492,10 +1506,11 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                         <label>24小时内不足该值则启用7天回补（topup_if_24h_lt）</label>
                         <input id="topup_if_24h_lt" type="number" min="0" max="30"/>
 
-                        <label>区域纠偏目标（apac_min_share / china_min_share，0-1）</label>
+                        <label>区域纠偏目标（apac_min_share / china_min_share / eu_na_min_share，0-1）</label>
                         <div class="row">
                           <input id="apac_min_share" type="number" step="0.01" min="0" max="1"/>
                           <input id="china_min_share" type="number" step="0.01" min="0" max="1"/>
+                          <input id="eu_na_min_share" type="number" step="0.01" min="0" max="1" placeholder="欧美占比 0.40"/>
                         </div>
 
                         <label>关键词包（keywords_pack，多选）</label>
@@ -1585,9 +1600,19 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   </div>
               <div class="card">
               <label>试跑日期（可选，YYYY-MM-DD）</label><input id="dryrun_date" placeholder="例如：2026-02-18"/>
-                <button onclick="preview()">试跑预览(不发信)</button>
+                <div class="row">
+                  <button onclick="preview()">试跑预览(不发信)</button>
+                  <button onclick="copyPreview()">复制预览</button>
+                </div>
                 <div class="drawer" id="summary"></div>
                 <div class="cards" id="clusters"></div>
+                <details class="help" id="platformDiagBox" style="margin-top:10px; display:none">
+                  <summary>未标注诊断（用于补平台关键词）</summary>
+                  <div class="box">
+                    <div class="small">仅展示“平台=未标注”的原因统计与最多 10 条样例。建议把真实缩写/同义词补到左侧“技术平台映射”。</div>
+                    <pre id="platformDiag" style="margin-top:8px"></pre>
+                  </div>
+                </details>
                 <details class="help">
                   <summary>预览说明</summary>
                   <div class="box">
@@ -1604,6 +1629,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         js = """
                 let currentConfig = null;
                 let currentDraftId = null;
+                let lastDryrun = null;
                 function csv(v){ return (v||[]).join(','); }
                 function arr(v){ return (v||'').split(',').map(s=>s.trim()).filter(Boolean); }
                 function esc(s){ return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
@@ -1683,6 +1709,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   const rf = (currentConfig.defaults||{}).region_filter || {};
                   document.getElementById('apac_min_share').value = rf.apac_min_share ?? 0.4;
                   document.getElementById('china_min_share').value = rf.china_min_share ?? 0.2;
+                  document.getElementById('eu_na_min_share').value = rf.eu_na_min_share ?? 0.4;
                   const ov = currentConfig.overrides||{};
                   setChecks('keywords_pack', ov.keywords_pack||[]);
                   const cs = (currentConfig.defaults||{}).content_sources || {};
@@ -1733,6 +1760,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   cfg.defaults.region_filter.allowed_regions = arr(document.getElementById('allowed_regions').value);
                   cfg.defaults.region_filter.apac_min_share = Number(document.getElementById('apac_min_share').value||0.4);
                   cfg.defaults.region_filter.china_min_share = Number(document.getElementById('china_min_share').value||0.2);
+                  cfg.defaults.region_filter.eu_na_min_share = Number(document.getElementById('eu_na_min_share').value||0.4);
                   cfg.defaults.coverage_tracks = arr(document.getElementById('tracks').value);
                   cfg.overrides.min_confidence = Number(document.getElementById('min_confidence').value||0);
                   cfg.overrides.keywords_pack = getChecks('keywords_pack');
@@ -1818,7 +1846,17 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         async function preview() {
           const profile = document.getElementById('profile').value;
           const date = document.getElementById('dryrun_date').value.trim();
+          // Show loading state immediately so users know the click is effective.
+          const summaryEl = document.getElementById('summary');
+          const clustersEl = document.getElementById('clusters');
+          const pdBox = document.getElementById('platformDiagBox');
+          const pdEl = document.getElementById('platformDiag');
+          if (summaryEl) summaryEl.textContent = '运行中...（不会发信）';
+          if (clustersEl) clustersEl.innerHTML = '<div class="small">运行中...</div>';
+          if (pdBox) pdBox.style.display = 'none';
+          if (pdEl) pdEl.textContent = '';
           const j = await api('/admin/api/content_rules/dryrun','POST',{ profile, date });
+          lastDryrun = j;
           if (!j || !j.ok) { document.getElementById('summary').textContent = JSON.stringify(j,null,2); return; }
               document.getElementById('summary').innerHTML = `
                 <div class="kvs">
@@ -1840,7 +1878,21 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 </div>`;
           }).join('');
           document.getElementById('clusters').innerHTML = cards || '<div class="small">无可展示聚合簇</div>';
+              const pd = j.platform_diag || {};
+              if(pd && typeof pd === 'object' && (pd.unlabeled_count || (pd.samples||[]).length)){
+                if(pdEl) pdEl.textContent = JSON.stringify(pd, null, 2);
+                if(pdBox) pdBox.style.display = 'block';
+              }
               toast('ok','试跑完成', `运行ID=${j.run_id}`);
+        }
+        async function copyPreview(){
+          if(!lastDryrun){
+            toast('warn','尚无预览','请先点击“试跑预览(不发信)”');
+            return;
+          }
+          const txt = JSON.stringify(lastDryrun, null, 2);
+          try { await navigator.clipboard.writeText(txt||''); toast('ok','已复制','已复制本次试跑 JSON 到剪贴板'); }
+          catch(e){ toast('err','复制失败', String(e)); }
         }
         document.getElementById('profile').addEventListener('change', loadActive);
         loadActive();
@@ -1866,8 +1918,10 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             <label>昨日报重复率上限（daily_repeat_rate_max, 0-1）</label><input id="daily_repeat_rate_max" type="number" step="0.01" min="0" max="1"/>
             <label>近7日峰值重复率上限（recent_7d_repeat_rate_max, 0-1）</label><input id="recent_7d_repeat_rate_max" type="number" step="0.01" min="0" max="1"/>
 
-            <label>必查信源清单（逗号分隔）</label><input id="required_sources" placeholder="NMPA,CMDE,UDI数据库,CCGP,TGA,HSA,PMDA/MHLW,MFDS"/>
-            <div class="small">用于 G 段审计：当日入选条目中是否命中这些必查信源。</div>
+            <label>必查信源清单（从“信源管理”强绑定选择）</label>
+            <select id="required_sources_ids" multiple size="10" style="height:220px"></select>
+            <div class="small">用于 G 段审计：检查当日入选条目是否命中这些 <code>source_id</code>。按住 <code>Cmd</code>/<code>Shift</code> 可多选。</div>
+            <div class="small" id="required_sources_note"></div>
 
             <label>传闻标记开关（rumor_policy.enabled）</label><select id="rumor_enabled"><option value="true">启用</option><option value="false">停用</option></select>
             <label>传闻触发词（rumor_policy.trigger_terms，逗号分隔）</label><input id="rumor_terms" placeholder="rumor,unconfirmed,据传,传闻"/>
@@ -1941,12 +1995,56 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         let currentConfig = null;
         let currentDraftId = null;
         function splitCsv(s){ return (s||'').split(',').map(x=>x.trim()).filter(Boolean); }
+        function setMultiSelect(id, values){
+          const set = new Set((values||[]).map(String));
+          const el = document.getElementById(id);
+          if(!el) return;
+          for(const opt of el.options){
+            opt.selected = set.has(String(opt.value));
+          }
+        }
+        function getMultiSelect(id){
+          const el = document.getElementById(id);
+          if(!el) return [];
+          const out = [];
+          for(const opt of el.selectedOptions){ out.push(String(opt.value)); }
+          return out;
+        }
+        function esc2(s){ return esc(String(s||'')); }
+        async function loadSources(){
+          const j = await api('/admin/api/sources','GET',null);
+          if(!j||!j.ok) return { ids: new Set(), byName: {}, sources: [] };
+          const sources = (j.sources||[]).filter(x=>x && typeof x==='object');
+          sources.sort((a,b)=> String(a.name||'').localeCompare(String(b.name||'')) || String(a.id||'').localeCompare(String(b.id||'')));
+          const sel = document.getElementById('required_sources_ids');
+          if(sel){
+            sel.innerHTML = '';
+            for(const s of sources){
+              const id = String(s.id||'').trim();
+              if(!id) continue;
+              const name = String(s.name||id);
+              const opt = document.createElement('option');
+              opt.value = id;
+              opt.textContent = `${name} [${id}]`;
+              sel.appendChild(opt);
+            }
+          }
+          const ids = new Set(sources.map(s=>String(s.id||'').trim()).filter(Boolean));
+          const byName = {};
+          for(const s of sources){
+            const nm = String(s.name||'').trim().toLowerCase();
+            const id = String(s.id||'').trim();
+            if(nm && id && !byName[nm]) byName[nm] = id;
+          }
+          return { ids, byName, sources };
+        }
 
         async function loadActive(){
           const profile = document.getElementById('profile').value;
           const j = await api(`/admin/api/qc_rules/active?profile=${encodeURIComponent(profile)}`);
           if(!j||!j.ok){ document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
           currentConfig = j.config_json;
+          const src = await loadSources();
           document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
           document.getElementById('enabled').value = String(!!(currentConfig.overrides||{}).enabled);
           const d = currentConfig.defaults||{};
@@ -1957,11 +2055,26 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('china_min_share').value = d.china_min_share ?? 0.2;
           document.getElementById('daily_repeat_rate_max').value = d.daily_repeat_rate_max ?? 0.25;
           document.getElementById('recent_7d_repeat_rate_max').value = d.recent_7d_repeat_rate_max ?? 0.4;
-          document.getElementById('required_sources').value = (d.required_sources_checklist||[]).join(',');
           const qp = d.quality_policy || {};
           // Back-compat: prefer new quality_policy.required_sources_checklist if present.
-          if(Array.isArray(qp.required_sources_checklist) && qp.required_sources_checklist.length){
-            document.getElementById('required_sources').value = (qp.required_sources_checklist||[]).join(',');
+          const reqRaw = (Array.isArray(qp.required_sources_checklist) && qp.required_sources_checklist.length) ? qp.required_sources_checklist : (d.required_sources_checklist||[]);
+          // Strong binding: map legacy names to source_id when possible.
+          const selected = [];
+          const missing = [];
+          for(const x of (reqRaw||[])){
+            const v = String(x||'').trim();
+            if(!v) continue;
+            if(src.ids.has(v)){ selected.push(v); continue; }
+            const mapped = src.byName[String(v).toLowerCase()];
+            if(mapped && src.ids.has(mapped)){ selected.push(mapped); continue; }
+            missing.push(v);
+          }
+          setMultiSelect('required_sources_ids', selected);
+          const note = document.getElementById('required_sources_note');
+          if(note){
+            note.innerHTML = missing.length
+              ? `提示：有 ${missing.length} 个旧值无法映射为 source_id：<code>${esc2(missing.join(', '))}</code>。建议到“信源管理”创建对应信源后再选择。`
+              : '提示：已按 source_id 强绑定（建议后续只用本选择器管理清单）。';
           }
           const rp = d.rumor_policy||{};
           document.getElementById('rumor_enabled').value = String(!!rp.enabled);
@@ -2000,11 +2113,20 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           cfg.defaults.china_min_share = Number(document.getElementById('china_min_share').value||0.2);
           cfg.defaults.daily_repeat_rate_max = Number(document.getElementById('daily_repeat_rate_max').value||0.25);
           cfg.defaults.recent_7d_repeat_rate_max = Number(document.getElementById('recent_7d_repeat_rate_max').value||0.4);
-          const reqList = splitCsv(document.getElementById('required_sources').value);
+          const reqList = getMultiSelect('required_sources_ids');
           cfg.defaults.required_sources_checklist = reqList;
           // v2 structured field (prompt7)
           cfg.defaults.quality_policy = cfg.defaults.quality_policy || {};
           cfg.defaults.quality_policy.required_sources_checklist = reqList;
+          // Keep the rules[] required_sources rule consistent with defaults (if present).
+          cfg.rules = cfg.rules || [];
+          let rr = (cfg.rules||[]).find(r=>r && r.type==='required_sources');
+          if(!rr){
+            rr = { id:'required-sources-ui', enabled:true, priority:80, type:'required_sources', params:{} };
+            cfg.rules = (cfg.rules||[]).concat([rr]);
+          }
+          rr.params = rr.params || {};
+          rr.params.required_sources_checklist = reqList;
           cfg.defaults.rumor_policy = {
             enabled: document.getElementById('rumor_enabled').value === 'true',
             trigger_terms: splitCsv(document.getElementById('rumor_terms').value),
@@ -2027,7 +2149,6 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             summary_sentences_max: Number(document.getElementById('comp_sum_max').value||3),
           };
           cfg.output = cfg.output || { format: 'json', panel_enabled: true };
-          cfg.rules = cfg.rules || [];
           return cfg;
         }
 
@@ -2066,8 +2187,14 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         async function preview(){
           const profile = document.getElementById('profile').value;
           const date = document.getElementById('dryrun_date').value.trim();
-          const j = await api(`/admin/api/dryrun?profile=${encodeURIComponent(profile)}&date=${encodeURIComponent(date)}`,'POST',null);
-          if(!j||!j.ok){ document.getElementById('preview').textContent = JSON.stringify(j,null,2); return; }
+          document.getElementById('qcPanel').textContent = '运行中...';
+          document.getElementById('preview').textContent = '';
+          const j = await api(`/admin/api/dryrun?lite=1&profile=${encodeURIComponent(profile)}&date=${encodeURIComponent(date)}`,'POST',null);
+          if(!j||!j.ok){
+            document.getElementById('qcPanel').textContent = '';
+            document.getElementById('preview').textContent = JSON.stringify(j,null,2);
+            return;
+          }
           document.getElementById('qcPanel').textContent = JSON.stringify(j.qc_report||{}, null, 2);
           document.getElementById('preview').textContent = j.preview_text || '';
           toast('ok','试跑完成', `运行ID=${j.run_id}`);
@@ -2278,8 +2405,17 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         async function preview(){
           const profile = document.getElementById('profile').value;
           const date = document.getElementById('dryrun_date').value.trim();
+          // Loading state: show immediately to avoid "no response" perception.
+          const qcEl = document.getElementById('qcPanel');
+          const preEl = document.getElementById('preview');
+          if(qcEl) qcEl.textContent = '运行中...（不会发信）';
+          if(preEl) preEl.textContent = '运行中...（不会发信）';
           const j = await api(`/admin/api/dryrun?profile=${encodeURIComponent(profile)}&date=${encodeURIComponent(date)}`,'POST',null);
-          if(!j||!j.ok){ document.getElementById('preview').textContent = JSON.stringify(j,null,2); return; }
+          if(!j||!j.ok){
+            if(qcEl) qcEl.textContent = '';
+            if(preEl) preEl.textContent = JSON.stringify(j,null,2);
+            return;
+          }
           document.getElementById('qcPanel').textContent = JSON.stringify(j.qc_report||{}, null, 2);
           document.getElementById('preview').textContent = j.preview_text || '';
           toast('ok','试跑完成', `运行ID=${j.run_id}`);
@@ -3013,6 +3149,20 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         """
         js = """
         function esc(s){ return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+        function fmtTime(raw){
+          const s = String(raw||'').trim();
+          if(!s) return '';
+          const d = new Date(s);
+          if(Number.isNaN(d.getTime())) return s;
+          const dtf = new Intl.DateTimeFormat('zh-CN', {
+            timeZone: 'Asia/Shanghai',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hour12: false,
+          });
+          // "2026/02/18 18:56:22" -> "2026-02-18 18:56:22"
+          return dtf.format(d).replaceAll('/', '-');
+        }
         function mapStatus(s){
           const st = String(s||'').toLowerCase();
           if(st === 'success') return '成功';
@@ -3022,9 +3172,24 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           if(st === 'unknown') return '未知';
           return st || '未知';
         }
-        function short(s){
+        function short(s, n=120){
           const t = String(s||'').trim();
-          return t.length > 120 ? t.slice(0, 119) + '…' : t;
+          return t.length > n ? t.slice(0, n-1) + '…' : t;
+        }
+        function summarizeFail(raw){
+          const s = String(raw||'').trim();
+          if(!s) return {title:'-', hint:'', raw:''};
+          // Common, actionable patterns
+          if(s.includes('missing TO_EMAIL')) return {title:'缺少收件人（TO_EMAIL）', hint:'设置 TO_EMAIL 或在邮件规则里配置收件人。', raw:s};
+          if(s.includes('unauthorized') || s.includes('HTTP_401')) return {title:'鉴权失败', hint:'检查 ADMIN_USER/ADMIN_PASS 或 ADMIN_TOKEN。', raw:s};
+          if(s.includes('Could not resolve host')) return {title:'网络/DNS 解析失败', hint:'检查网络或 DNS；常见于 SMTP/外部站点不可达。', raw:s};
+          if(s.toLowerCase().includes('timed out') || s.toLowerCase().includes('timeout')) return {title:'网络超时', hint:'可尝试提高 timeout 或稍后重试。', raw:s};
+          const mCurl = s.match(/curl:\\s*\\((\\d+)\\)\\s*([^\\n]+)/i);
+          if(mCurl) return {title:`SMTP/HTTP 传输失败（curl ${mCurl[1]}）`, hint: short(mCurl[2], 80), raw:s};
+          const mRcpt = s.match(/RCPT failed:\\s*(\\d+)/i);
+          if(mRcpt) return {title:`收件人被拒绝（${mRcpt[1]}）`, hint:'检查收件人邮箱格式/是否允许外域投递。', raw:s};
+          if(s.startsWith('Command') || s.includes('send_mail_icloud.sh')) return {title:'发送脚本执行失败', hint:'查看 logs/mail_send.log 或检查 SMTP 配置。', raw:s};
+          return {title: short(s, 60), hint:'', raw:s};
         }
         async function loadRuns(){
           const j = await api('/admin/api/run_status?limit=30');
@@ -3033,23 +3198,28 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             return;
           }
           const t = j.today || {};
+          const last = summarizeFail(t.last_error||'');
           const todayCard = document.getElementById('todayStatus');
           if(todayCard){
             todayCard.innerHTML = `
               <div>日期</div><b>${esc(t.date||'')}</b>
               <div>是否已发送</div><b>${t.sent ? '是' : '否'}</b>
               <div>是否触发兜底</div><b>${t.fallback_triggered ? '是' : '否'}</b>
-              <div>最后错误</div><b>${short(t.last_error||'无')}</b>
+              <div>最后错误</div><b title="${esc(last.raw||'')}">${esc(last.title || '无')}</b>
             `;
           }
 
           const rows = (j.runs||[]).map(r=>{
+            const fail = summarizeFail(r.failed_reason_summary||'');
             return `<tr>
               <td>${esc(r.run_id||'')}</td>
-              <td>${esc(r.time||'')}</td>
+              <td class="nowrap" title="${esc(String(r.time||''))}">${esc(fmtTime(r.time||''))}<div class="small">北京时间</div></td>
               <td>${esc(mapStatus(r.status))}</td>
               <td>${esc(r.source||'')}</td>
-              <td>${esc(short(r.failed_reason_summary||''))}</td>
+              <td title="${esc(fail.raw||'')}">
+                <div style="font-weight:700">${esc(fail.title||'')}</div>
+                <div class="small">${esc(fail.hint||'')}</div>
+              </td>
             </tr>`;
           }).join('');
           document.getElementById('runTable').innerHTML = `<table>
