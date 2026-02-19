@@ -244,6 +244,27 @@ DATABASE_URL_SECONDARY='sqlite:///data/rules.db' \
 
 详见：`docs/DB_MIGRATION_PLAN.md` 与 `docs/DB_SCHEMA.md`。
 
+### 9.0 10分钟快速验收（推荐）
+
+```bash
+PYTHONPATH=. alembic upgrade head
+docker compose up -d --build
+
+# 模式确认
+docker compose exec -T admin-api /bin/sh -lc 'echo DATABASE_URL=$DATABASE_URL; echo DATABASE_URL_SECONDARY=$DATABASE_URL_SECONDARY; echo DB_WRITE_MODE=$DB_WRITE_MODE; echo DB_READ_MODE=$DB_READ_MODE'
+docker compose exec -T admin-api /bin/sh -lc 'curl -fsS http://127.0.0.1:8789/healthz'
+
+# 唯一约束确认
+docker compose exec -T db psql -U ivd -d ivd -c "SELECT conname, conrelid::regclass::text AS table_name FROM pg_constraint WHERE conname IN ('uq_send_attempts_send_key','uq_dedupe_keys_dedupe_key','uq_email_rules_profile_version','uq_content_rules_profile_version','uq_qc_rules_profile_version','uq_output_rules_profile_version','uq_scheduler_rules_profile_version') ORDER BY conname;"
+docker compose exec -T db psql -U ivd -d ivd -c "SELECT indexname,indexdef FROM pg_indexes WHERE tablename='run_executions' AND indexname='uq_run_executions_run_key';"
+```
+
+通过标准：
+- `db_backend=postgresql`
+- `DB_WRITE_MODE=single`
+- `DB_READ_MODE=primary`
+- `send_key / dedupe_key / profile+version / run_key` 约束存在
+
 ### 9.1 DB 层幂等唯一约束（已生效）
 
 - `profile + version`（5 张规则版本表）
