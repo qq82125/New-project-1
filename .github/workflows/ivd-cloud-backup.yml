@@ -94,6 +94,28 @@ jobs:
         run: |
           python3 scripts/cloud_backup_send.py --dry-run
 
+      - name: Generate daily report body (enhanced, no send)
+        continue-on-error: true
+        env:
+          ENHANCED_RULES_PROFILE: "enhanced"
+          REPORT_TZ: "Asia/Shanghai"
+        shell: bash
+        run: |
+          DATE_CN="$(TZ=Asia/Shanghai date +%F)"
+          OUT="reports/ivd_morning_${DATE_CN}.txt"
+          if python3 scripts/generate_ivd_report.py > "${OUT}"; then
+            echo "report_generated=${OUT}" | tee -a reports/_bootstrap.txt
+            echo "report_size_bytes=$(wc -c < "${OUT}")" | tee -a reports/_bootstrap.txt
+          else
+            {
+              echo ""
+              echo "## Generate Report"
+              echo "status=FAIL"
+              echo "date=${DATE_CN}"
+              echo "error=generate_ivd_report_failed"
+            } >> reports/_bootstrap.txt
+          fi
+
       - name: Run cloud backup sender
         if: always()
         env:

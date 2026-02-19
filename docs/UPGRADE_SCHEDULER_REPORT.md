@@ -20,7 +20,7 @@ worker 日志（摘要）：
 
 worker 状态文件（`logs/scheduler_worker_status.json`）包含 job 的 `next_run_time`：
 - `collect_interval_60m`: `next_run_time` 有值
-- `digest_daily_0900`: `next_run_time` 有值
+- `digest_daily_0830`: `next_run_time` 有值
 
 ## 3) max_instances=1 生效（并发触发不会重复跑）
 
@@ -45,4 +45,3 @@ worker 状态文件（`logs/scheduler_worker_status.json`）包含 job 的 `next
 1. 将 `collect` interval 设为 1 分钟（或更短）
 2. 暂停 `scheduler-worker` 容器约 1-2 分钟后恢复（但不超过 misfire_grace_seconds）
 3. 观察恢复后是否会补跑最近一次触发（coalesce=true 时仅补最近一次）
-

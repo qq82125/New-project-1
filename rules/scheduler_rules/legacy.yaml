@@ -7,9 +7,9 @@ defaults:
   timezone: "Asia/Singapore"
   schedules:
     # legacy: 默认不启用常驻调度；保留示例但关闭总开关即可不生效
-    - id: "digest_daily_0900"
+    - id: "digest_daily_0830"
       type: "cron"
-      cron: "0 9 * * *"
+      cron: "30 8 * * *"
       purpose: "digest"
       profile: "legacy"
       jitter_seconds: 0
