@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import re
-import sqlite3
 import json
 import html
 import time
@@ -355,10 +354,13 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     @app.get("/healthz")
     def healthz() -> dict[str, Any]:
         # No auth: used by container healthchecks.
+        obs = store.observability_info() if hasattr(store, "observability_info") else {}
         return {
             "ok": True,
             "service": "admin-api",
-            "db_path": str(store.db_path),
+            "db_path": str(getattr(store, "db_path", "")),
+            "db_url": str(obs.get("db_url", "")),
+            "db_backend": str(obs.get("db_backend", "")),
             "ts": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -412,19 +414,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 
     def _run_records_from_send_attempts(limit: int) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
-        try:
-            with sqlite3.connect(store.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                rows_raw = conn.execute(
-                    "SELECT date, subject, to_email, status, error, created_at, run_id FROM send_attempts "
-                    "ORDER BY created_at DESC, id DESC LIMIT ?",
-                    (limit,),
-                ).fetchall()
-        except Exception:
-            rows_raw = []
-
+        rows_raw = store.list_send_attempts(limit=limit) if hasattr(store, "list_send_attempts") else []
         for r in rows_raw:
-            st = str(r["status"] or "").upper()
+            st = str(r.get("status") or "").upper()
             status_map = {
                 "SUCCESS": "success",
                 "FAILED": "failed",
@@ -432,17 +424,17 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 "SKIP": "skipped",
             }
             mapped = status_map.get(st, st.lower() or "unknown")
-            created = _normalize_time_for_status(str(r["created_at"] or ""))
+            created = _normalize_time_for_status(str(r.get("created_at") or ""))
             rows.append(
                 {
                     "source": "fallback",
-                    "run_id": str(r["run_id"] or ""),
+                    "run_id": str(r.get("run_id") or ""),
                     "time": created,
                     "status": mapped,
-                    "failed_reason_summary": _short_summary(str(r["error"] or "")),
-                    "subject": str(r["subject"] or ""),
-                    "to_email": str(r["to_email"] or ""),
-                    "date": str(r["date"] or ""),
+                    "failed_reason_summary": _short_summary(str(r.get("error") or "")),
+                    "subject": str(r.get("subject") or ""),
+                    "to_email": str(r.get("to_email") or ""),
+                    "date": str(r.get("date") or ""),
                     "trigger": "backup",
                     "schedule_id": "manual_or_job",
                 }

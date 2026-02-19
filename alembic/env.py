@@ -20,6 +20,9 @@ target_metadata = Base.metadata
 
 
 def _database_url() -> str:
+    explicit = (config.get_main_option("sqlalchemy.url") or "").strip()
+    if explicit:
+        return explicit
     settings = get_db_settings()
     return settings.database_url
 

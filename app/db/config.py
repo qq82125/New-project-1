@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy.engine import make_url
+
 
 DEFAULT_SQLITE_PATH = Path("data") / "rules.db"
 DEFAULT_DATABASE_URL = f"sqlite:///{DEFAULT_SQLITE_PATH.as_posix()}"
@@ -42,3 +44,13 @@ def get_db_settings() -> DBSettings:
         db_write_mode=db_write_mode,
         db_read_mode=db_read_mode,
     )
+
+
+def redact_database_url(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    try:
+        return make_url(raw).render_as_string(hide_password=True)
+    except Exception:
+        return raw
