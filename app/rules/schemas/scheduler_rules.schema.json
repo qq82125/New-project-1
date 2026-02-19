@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "scheduler_rules schema",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["ruleset", "version", "profile", "defaults", "overrides", "rules", "output"],
+  "properties": {
+    "ruleset": { "const": "scheduler_rules" },
+    "version": { "type": "string", "minLength": 1, "maxLength": 32 },
+    "profile": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "defaults": { "$ref": "#/$defs/SchedulerDefaults" },
+    "overrides": { "$ref": "#/$defs/SchedulerOverrides" },
+    "rules": { "type": "array" },
+    "output": { "type": "object" }
+  },
+  "$defs": {
+    "SchedulerOverrides": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "SchedulerDefaults": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["enabled", "timezone", "schedules", "concurrency", "run_policies", "artifacts"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "timezone": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "schedules": {
+          "type": "array",
+          "minItems": 0,
+          "items": { "$ref": "#/$defs/ScheduleItem" }
+        },
+        "concurrency": { "$ref": "#/$defs/Concurrency" },
+        "run_policies": { "$ref": "#/$defs/RunPolicies" },
+        "artifacts": { "$ref": "#/$defs/Artifacts" }
+      }
+    },
+    "ScheduleItem": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "type", "purpose", "profile", "jitter_seconds"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9._-]+$"
+        },
+        "type": { "type": "string", "enum": ["cron", "interval"] },
+        "cron": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 64,
+          "pattern": "^[^\\s]+\\s+[^\\s]+\\s+[^\\s]+\\s+[^\\s]+\\s+[^\\s]+$"
+        },
+        "interval_minutes": { "type": "integer", "minimum": 1, "maximum": 1440 },
+        "purpose": { "type": "string", "enum": ["collect", "digest"] },
+        "profile": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "jitter_seconds": { "type": "integer", "minimum": 0, "maximum": 300 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "cron" } } },
+          "then": {
+            "required": ["cron"],
+            "not": { "required": ["interval_minutes"] }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "interval" } } },
+          "then": {
+            "required": ["interval_minutes"],
+            "not": { "required": ["cron"] }
+          }
+        }
+      ]
+    },
+    "Concurrency": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["max_instances", "coalesce", "misfire_grace_seconds"],
+      "properties": {
+        "max_instances": { "type": "integer", "minimum": 1, "maximum": 1 },
+        "coalesce": { "type": "boolean" },
+        "misfire_grace_seconds": { "type": "integer", "minimum": 0, "maximum": 86400 }
+      }
+    },
+    "RunPolicies": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["allow_manual_trigger", "pause_switch"],
+      "properties": {
+        "allow_manual_trigger": { "type": "boolean" },
+        "pause_switch": { "type": "boolean" }
+      }
+    },
+    "Artifacts": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["retain_days"],
+      "properties": {
+        "retain_days": { "type": "integer", "minimum": 1, "maximum": 180 }
+      }
+    }
+  }
+}
+

@@ -172,14 +172,21 @@ class RuleEngine:
         name = name_map.get(ruleset, "")
         if not name:
             raise RuleEngineError(RULES_005_SCHEMA_NOT_FOUND, f"unsupported ruleset={ruleset}")
-        # Prefer workspace (console published) schema, then fallback to repo schema.
-        p = self.schemas_root / name
-        if p.exists():
-            return p
-        fallback = self.project_root / "rules" / "schemas" / name
-        if fallback.exists():
-            return fallback
-        raise RuleEngineError(RULES_005_SCHEMA_NOT_FOUND, str(p))
+        # Prefer workspace (console published) schema first.
+        # Then fallback to image-bundled schemas under app/rules/schemas to avoid
+        # occasional host bind-mount read issues on macOS Docker.
+        candidates = [
+            self.schemas_root / name,
+            self.project_root / "app" / "rules" / "schemas" / name,
+            self.project_root / "rules" / "schemas" / name,
+        ]
+        for p in candidates:
+            try:
+                if p.exists():
+                    return p
+            except OSError:
+                continue
+        raise RuleEngineError(RULES_005_SCHEMA_NOT_FOUND, str(candidates[0]))
 
     def _profile_path(self, ruleset: str, profile: str) -> Path:
         # Prefer workspace (console published) rules, then fallback to repo rules.
@@ -281,7 +288,13 @@ class RuleEngine:
         return obj
 
     def validate(self, ruleset: str, data: dict[str, Any]) -> None:
-        schema = json.loads(self._schema_path(ruleset).read_text(encoding="utf-8"))
+        schema_path = self._schema_path(ruleset)
+        try:
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        except OSError:
+            # Final fallback to image-bundled schema path.
+            fallback = self.project_root / "app" / "rules" / "schemas" / schema_path.name
+            schema = json.loads(fallback.read_text(encoding="utf-8"))
         errors = _validate_schema(data, schema)
         if errors:
             raise RuleEngineError(RULES_001_SCHEMA_INVALID, "; ".join(errors[:10]))

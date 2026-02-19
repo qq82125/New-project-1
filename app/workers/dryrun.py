@@ -5,6 +5,7 @@ import datetime as dt
 import os
 import re
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 
@@ -472,6 +473,8 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         capture_output=True,
         text=True,
     )
+    if proc.stderr:
+        print(proc.stderr, file=sys.stderr, end="")
     raw_preview_text = proc.stdout
     sections = _split_sections(raw_preview_text)
     items = _parse_items_from_report(raw_preview_text)
@@ -484,6 +487,8 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
     platform_diag_file = artifacts_dir / "platform_diag.json"
     keyword_pack_stats_file = artifacts_dir / "keyword_pack_stats.json"
     exclude_diag_file = artifacts_dir / "exclude_diag.json"
+    scoring_explain_file = artifacts_dir / "scoring_explain.json"
+    scoring_summary_file = artifacts_dir / "scoring_summary.json"
     cluster_payload = {}
     if cluster_explain_file.exists():
         try:
@@ -575,6 +580,18 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             exclude_diag = json.loads(exclude_diag_file.read_text(encoding="utf-8"))
         except Exception:
             exclude_diag = {}
+    scoring_explain: dict[str, Any] = {}
+    if scoring_explain_file.exists():
+        try:
+            scoring_explain = json.loads(scoring_explain_file.read_text(encoding="utf-8"))
+        except Exception:
+            scoring_explain = {}
+    scoring_summary: dict[str, Any] = {}
+    if scoring_summary_file.exists():
+        try:
+            scoring_summary = json.loads(scoring_summary_file.read_text(encoding="utf-8"))
+        except Exception:
+            scoring_summary = {}
 
     # Lane diagnostics: focus on "其他" cases to improve lane_mapping iteratively.
     lane_diag: dict[str, Any] = {"other_count": 0, "reasons": {}, "samples": []}
@@ -865,6 +882,8 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             "output_render": str(artifacts_dir / "output_render.json"),
             "run_meta": str(artifacts_dir / "run_meta.json"),
             "platform_diag": str(platform_diag_file),
+            "scoring_explain": str(scoring_explain_file),
+            "scoring_summary": str(scoring_summary_file),
         },
         "items_count": len(items),
         "items_before_count": int(cluster_payload.get("items_before_count", len(items))),
@@ -876,6 +895,8 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         "event_diag": event_diag,
         "keyword_pack_stats": keyword_pack_stats,
         "exclude_diag": exclude_diag,
+        "scoring_explain": scoring_explain,
+        "scoring_summary": scoring_summary,
         "sent": False,
         "qc": qc_report,
         "email_preview": {

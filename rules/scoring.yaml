@@ -1,0 +1,134 @@
+version: 1
+profile: enhanced
+enabled: true
+base_weight_by_tag:
+  regulatory: 1.00
+  journal: 0.95
+  company: 0.90
+  market_research: 0.85
+  thinktank: 0.85
+  media: 0.70
+  aggregator: 0.30
+trust_tier_adjust:
+  A: 0.10
+  B: 0.00
+  C: -0.10
+source_weight:
+  min: 0.10
+  max: 1.10
+evidence_points:
+  A: 45
+  B: 35
+  C: 25
+  D: 10
+source_points_factor: 30
+recency_points:
+  lt_24h: 15
+  d1_3: 10
+  d3_7: 6
+  d7_14: 2
+  gt_14: 0
+completeness_points:
+  summary: 3
+  published_at: 3
+  source_name: 2
+  original_source_url: 6
+  max: 10
+penalties:
+  aggregator_without_original: -12
+  very_short_duplicate_like: -6
+signal_bonus:
+  红: 6
+  橙: 3
+  黄: 1
+  灰: 0
+signal_rules:
+  red_keywords:
+    - 监管
+    - 准入
+    - 召回
+    - 警示
+    - 指南
+    - ivdr
+    - who prequalification
+    - pq
+    - fda
+    - pmda
+    - nmpa
+    - mhra
+    - warning
+    - recall
+    - guidance
+    - field safety
+    - m&a
+    - acquisition
+  orange_keywords:
+    - 融资
+    - 并购
+    - ipo
+    - 上市
+    - 产品发布
+    - 多中心
+    - 临床
+    - 指南引用
+    - funding
+    - partnership
+    - trial
+    - validation
+    - approval
+  yellow_keywords:
+    - 趋势
+    - 合作
+    - 渠道
+    - 迭代
+    - industry
+    - trend
+    - launch
+    - update
+    - collaboration
+domain_whitelist:
+  regulatory:
+    - fda.gov
+    - europa.eu
+    - ema.europa.eu
+    - imdrf.org
+    - who.int
+    - nmpa.gov.cn
+    - pmda.go.jp
+    - mhlw.go.jp
+    - tga.gov.au
+    - hsa.gov.sg
+    - mfds.go.kr
+    - gov.uk
+  journal:
+    - nejm.org
+    - thelancet.com
+    - nature.com
+    - science.org
+    - pubmed.ncbi.nlm.nih.gov
+    - europepmc.org
+  company:
+    - roche.com
+    - abbott.com
+    - siemens-healthineers.com
+    - danaher.com
+    - qiagen.com
+    - illumina.com
+    - thermofisher.com
+    - hologic.com
+  preprint:
+    - medrxiv.org
+    - biorxiv.org
+quotas:
+  regulatory:
+    min: 4
+  journal_preprint:
+    min: 4
+  company:
+    min: 4
+  media:
+    max: 14
+  aggregator:
+    max: 2
+similarity_thresholds:
+  title_jaccard: 0.92

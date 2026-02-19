@@ -105,7 +105,7 @@ while :; do
   set -e
 
   if [ "$code" -eq 0 ]; then
-    printf '[%s] SENT to=%s subject=%s\n' "$(ts)" "$TO_EMAIL" "$SUBJECT" >>"$LOG_FILE"
+    printf '[%s] SENT to=%s subject=%s\n' "$(ts)" "$TO_EMAIL" "$SUBJECT" >>"$LOG_FILE" || true
     echo "SENT"
     exit 0
   fi
@@ -113,7 +113,7 @@ while :; do
   # Keep log UTF-8 readable; errors may contain newlines.
   out_one_line="$(printf '%s' "$out" | tr '\n' ' ' | sed 's/[[:space:]]\\{1,\\}/ /g')"
   printf '[%s] FAIL attempt=%s/%s code=%s to=%s subject=%s err=%s\n' \
-    "$(ts)" "$attempt" "$SMTP_RETRIES" "$code" "$TO_EMAIL" "$SUBJECT" "$out_one_line" >>"$LOG_FILE"
+    "$(ts)" "$attempt" "$SMTP_RETRIES" "$code" "$TO_EMAIL" "$SUBJECT" "$out_one_line" >>"$LOG_FILE" || true
 
   if [ "$attempt" -ge "$SMTP_RETRIES" ]; then
     echo "$out" >&2

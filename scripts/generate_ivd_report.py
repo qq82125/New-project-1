@@ -20,8 +20,8 @@ from dataclasses import dataclass, field
 from http.client import RemoteDisconnected
 from pathlib import Path
 from socket import timeout as SocketTimeout
-from typing import Optional
-from urllib.parse import urljoin
+from typing import Any, Optional
+from urllib.parse import urljoin, urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -33,6 +33,8 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from app.adapters.rule_bridge import load_runtime_rules
+from app.core.dedupe import strong_dedupe
+from app.core.scoring import diversity_select, load_scoring_config, score_item
 from app.services.story_clusterer import StoryClusterer
 from app.services.source_registry import load_sources_registry, select_sources
 from app.services.rules_versioning import get_runtime_rules_root
@@ -59,6 +61,16 @@ class Item:
     cluster_size: int = 1
     dedupe_reason: str = ""
     event_type_explain: dict = field(default_factory=dict)
+    evidence_grade: str = "D"
+    source_weight: float = 0.0
+    signal_level: str = "灰"
+    quality_score: float = 0.0
+    dedupe_key: str = ""
+    score_breakdown: dict = field(default_factory=dict)
+    original_source_url: str = ""
+    source_bucket: str = "media"
+    item_id: str = ""
+    deduped_from_ids: list[str] = field(default_factory=list)
 
 
 RUNTIME_CONTENT = {
@@ -109,6 +121,16 @@ def item_to_dict(it: Item) -> dict:
         "cluster_size": it.cluster_size,
         "dedupe_reason": it.dedupe_reason,
         "event_type_explain": dict(it.event_type_explain or {}),
+        "evidence_grade": it.evidence_grade,
+        "source_weight": it.source_weight,
+        "signal_level": it.signal_level,
+        "quality_score": it.quality_score,
+        "dedupe_key": it.dedupe_key,
+        "score_breakdown": dict(it.score_breakdown or {}),
+        "original_source_url": it.original_source_url,
+        "source_bucket": it.source_bucket,
+        "item_id": it.item_id,
+        "deduped_from_ids": list(it.deduped_from_ids),
     }
 
 
@@ -133,6 +155,16 @@ def dict_to_item(d: dict) -> Item:
         cluster_size=int(d.get("cluster_size", 1)),
         dedupe_reason=str(d.get("dedupe_reason", "")),
         event_type_explain=d.get("event_type_explain", {}) if isinstance(d.get("event_type_explain"), dict) else {},
+        evidence_grade=str(d.get("evidence_grade", "D")),
+        source_weight=float(d.get("source_weight", 0.0) or 0.0),
+        signal_level=str(d.get("signal_level", "灰")),
+        quality_score=float(d.get("quality_score", 0.0) or 0.0),
+        dedupe_key=str(d.get("dedupe_key", "")),
+        score_breakdown=d.get("score_breakdown", {}) if isinstance(d.get("score_breakdown"), dict) else {},
+        original_source_url=str(d.get("original_source_url", "")),
+        source_bucket=str(d.get("source_bucket", "media")),
+        item_id=str(d.get("item_id", "")),
+        deduped_from_ids=[str(x) for x in d.get("deduped_from_ids", [])] if isinstance(d.get("deduped_from_ids"), list) else [],
     )
 
 
@@ -907,10 +939,23 @@ def cn_summary(entry) -> str:
     raw = re.sub(r"<[^>]+>", " ", raw)
     raw = re.sub(r"\s+", " ", raw).strip()
     if not raw:
-        return "摘要：该条目与体外诊断/检测相关。建议优先核对监管状态、商业化路径与时间节点。"
+        return "摘要：该条目与体外诊断/检测相关。"
     if len(raw) > 240:
         raw = raw[:240].rstrip() + "…"
-    return f"摘要：{raw} 建议结合原文确认对收入与准入节奏的直接影响。"
+    return f"摘要：{raw}"
+
+
+def append_event_specific_note(summary: str, event_type: str) -> str:
+    """
+    Keep caution notes short and only attach them for financing/M&A/cooperation items.
+    """
+    if not summary:
+        summary = "摘要："
+    if "并购融资/IPO与合作" in str(event_type or ""):
+        note = "建议回看原文核实商业化与准入时点。"
+        if note not in summary:
+            return f"{summary} {note}".strip()
+    return summary
 
 
 def normalize_title(title: str) -> str:
@@ -1443,6 +1488,71 @@ def calc_dup_rate(top: list[Item], history_titles: set[str]) -> float:
     return overlap / len(top)
 
 
+def _source_meta_from_registry(registry_sources: list[dict], norm_sources: list[tuple]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for s in registry_sources:
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("id", "")).strip()
+        if not sid:
+            continue
+        out[sid] = {
+            "tags": list(s.get("tags", [])) if isinstance(s.get("tags"), list) else [],
+            "trust_tier": str(s.get("trust_tier", "B")),
+            "fetcher": str(s.get("fetcher") or s.get("connector") or "rss"),
+            "name": str(s.get("name", sid)),
+        }
+    # Backfill legacy tuples when source is not in registry.
+    for row in norm_sources:
+        if not isinstance(row, tuple) or len(row) < 8:
+            continue
+        sid, conn, _name, _url, _region, kind, _pri, _sg, _fetch_cfg = row
+        if str(sid) in out:
+            continue
+        tags = ["media"]
+        if str(kind) == "regulatory":
+            tags = ["regulatory"]
+        out[str(sid)] = {
+            "tags": tags,
+            "trust_tier": "B",
+            "fetcher": str(conn),
+            "name": str(_name),
+        }
+    return out
+
+
+def _rank_scored_items(scored_items: list[dict], n: int) -> list[dict]:
+    rows = sorted(
+        scored_items,
+        key=lambda x: (
+            float(x.get("quality_score", 0) or 0),
+            str(x.get("signal_level", "灰")) == "红",
+            str(x.get("signal_level", "灰")) == "橙",
+            str(x.get("signal_level", "灰")) == "黄",
+            float(x.get("source_weight", 0) or 0),
+        ),
+        reverse=True,
+    )
+    return rows[:n]
+
+
+def _scoring_summary(rows: list[dict], dedupe_report: dict, diversity_report: dict) -> dict[str, Any]:
+    by_bucket: dict[str, int] = {}
+    by_signal: dict[str, int] = {}
+    for r in rows:
+        b = str(r.get("source_bucket", "media"))
+        by_bucket[b] = by_bucket.get(b, 0) + 1
+        s = str(r.get("signal_level", "灰"))
+        by_signal[s] = by_signal.get(s, 0) + 1
+    return {
+        "selected_count": len(rows),
+        "selected_by_bucket": dict(sorted(by_bucket.items(), key=lambda kv: kv[0])),
+        "selected_by_signal_level": dict(sorted(by_signal.items(), key=lambda kv: kv[0])),
+        "dedupe": dedupe_report,
+        "diversity": diversity_report,
+    }
+
+
 def must_source_hits(items: list[Item]) -> str:
     checks = {
         "NMPA": False,
@@ -1538,6 +1648,9 @@ def main() -> int:
     except Exception:
         pass
     use_enhanced = runtime_rules.get("active_profile") == "enhanced"
+    # Enhanced-only switch: allows instant rollback to previous enhanced behavior.
+    scoring_enabled = bool(use_enhanced and env("SCORING_DEDUPE_ENABLED", "true").lower() in ("1", "true", "yes", "on"))
+    scoring_cfg = load_scoring_config(root_dir) if scoring_enabled else {}
     if use_enhanced and runtime_rules.get("enabled"):
         content_cfg = runtime_rules.get("content", {})
         RUNTIME_CONTENT["title_similarity_threshold"] = float(
@@ -1586,6 +1699,7 @@ def main() -> int:
         ("legacy-fda-medwatch-rss", "rss", "FDA MedWatch", "https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/medwatch/rss.xml", "北美", "regulatory", 50),
     ]
     source_stats: dict[str, dict] = {}
+    registry_sources: list[dict[str, Any]] = []
 
     if use_enhanced and runtime_rules.get("enabled"):
         selector = runtime_rules.get("content", {}).get("content_sources", {})
@@ -1819,6 +1933,7 @@ def main() -> int:
             region = cn_region(src_name, link) or default_region
             summary = cn_summary(row["entry"]) if row["entry"] is not None else "摘要：该条来自网页源抓取。"
             event_type, et_explain = event_classifier.classify(title, summary, source_group, link)
+            summary = append_event_specific_note(summary, event_type)
             if use_enhanced:
                 lane, lane_explain = classify_lane(
                     title,
@@ -1921,51 +2036,124 @@ def main() -> int:
             seen_links.add(it.link)
             src_used[it.source] = src_used.get(it.source, 0) + 1
 
-    items = dedupe_items(items)
-    items.sort(key=lambda x: x.published, reverse=True)
-    items_before_cluster_count = len(items)
-    cluster_explain = {"enabled": False, "clusters": []}
-
-    if runtime_rules.get("active_profile") == "enhanced":
-        clusterer = StoryClusterer(
-            config=RUNTIME_CONTENT.get("dedupe_cluster", {}),
-            source_priority=RUNTIME_CONTENT.get("source_priority", {}),
-        )
-        clustered_dicts, cluster_explain = clusterer.cluster([item_to_dict(i) for i in items])
-        items = [dict_to_item(d) for d in clustered_dicts]
-        items.sort(key=lambda x: x.published, reverse=True)
-    items_after_cluster_count = len(items)
-
-    # Build candidates: strict 24h first, then 7d补充.
-    within_24h = [i for i in items if i.window_tag == "24小时内"]
-    within_7d = [i for i in items if i.window_tag == "7天补充"]
-    candidates = within_24h[:20]
-    if len(candidates) < int(RUNTIME_CONTENT.get("topup_if_24h_lt", 10)):
-        candidates.extend(within_7d[:30])
-    else:
-        candidates = candidates[: int(RUNTIME_CONTENT.get("max_items", 15))]
+    scoring_explain_rows: list[dict[str, Any]] = []
+    scoring_summary_payload: dict[str, Any] = {}
+    dedupe_report: dict[str, Any] = {"items_before": 0, "items_after": 0, "deduped_count": 0, "clusters": []}
+    diversity_report: dict[str, Any] = {}
 
     yday_titles, recent_titles = load_history_titles(reports_dir, date_str)
-    top = choose_top_items(candidates, yday_titles, recent_titles)
-    if len(top) < int(RUNTIME_CONTENT.get("min_items", 8)):
-        seen = {i.link for i in top}
-        used: dict[str, int] = {}
-        for i in top:
-            used[i.source] = used.get(i.source, 0) + 1
+    items_before_cluster_count = len(items)
+    items_after_cluster_count = len(items)
+    cluster_explain = {"enabled": False, "clusters": []}
+
+    if scoring_enabled:
+        source_meta_map = _source_meta_from_registry(registry_sources, norm_sources)
+        scored_dicts: list[dict[str, Any]] = []
         for it in items:
-            if it.link in seen:
-                continue
-            cap = 3
-            if used.get(it.source, 0) >= cap:
-                continue
-            top.append(it)
-            seen.add(it.link)
-            used[it.source] = used.get(it.source, 0) + 1
-            if len(top) >= int(RUNTIME_CONTENT.get("min_items", 8)):
-                break
-    top = top[: int(RUNTIME_CONTENT.get("max_items", 15))]
-    top = enforce_apac_share(top, items)
-    top = enforce_international_primary(top, items)
+            row = item_to_dict(it)
+            sid = str(row.get("source_id", ""))
+            source_meta = source_meta_map.get(sid, {})
+            scored = score_item(row, source_meta, now_utc, scoring_cfg)
+            scored_dicts.append(scored)
+
+        deduped_rows, dedupe_report = strong_dedupe(scored_dicts, scoring_cfg)
+        items_before_cluster_count = int(dedupe_report.get("items_before", len(scored_dicts)))
+        items_after_cluster_count = int(dedupe_report.get("items_after", len(deduped_rows)))
+
+        max_items = int(RUNTIME_CONTENT.get("max_items", 15))
+        min_items = int(RUNTIME_CONTENT.get("min_items", 8))
+        topup_gate = int(RUNTIME_CONTENT.get("topup_if_24h_lt", 10))
+        within_24h_rows = [x for x in deduped_rows if str(x.get("window_tag", "")) == "24小时内"]
+        within_7d_rows = [x for x in deduped_rows if str(x.get("window_tag", "")) == "7天补充"]
+        within_24h_rows = _rank_scored_items(within_24h_rows, 200)
+        within_7d_rows = _rank_scored_items(within_7d_rows, 200)
+        if len(within_24h_rows) < topup_gate:
+            candidate_rows = (within_24h_rows + within_7d_rows)[:200]
+        else:
+            candidate_rows = within_24h_rows[: max_items * 4]
+
+        selected_rows, diversity_report = diversity_select(candidate_rows, max_items, scoring_cfg)
+        if len(selected_rows) < min_items:
+            selected_ids = {str(x.get("item_id", "")) for x in selected_rows}
+            for row in _rank_scored_items(deduped_rows, 200):
+                iid = str(row.get("item_id", ""))
+                if iid in selected_ids:
+                    continue
+                selected_rows.append(row)
+                selected_ids.add(iid)
+                if len(selected_rows) >= min_items:
+                    break
+
+        selected_rows = _rank_scored_items(selected_rows, max_items)
+        top = [dict_to_item(r) for r in selected_rows]
+        items = [dict_to_item(r) for r in deduped_rows]
+        cluster_explain = {"enabled": True, "clusters": dedupe_report.get("clusters", [])}
+        scoring_summary_payload = _scoring_summary(selected_rows, dedupe_report, diversity_report)
+        for row in selected_rows:
+            scoring_explain_rows.append(
+                {
+                    "item_id": row.get("item_id", ""),
+                    "title": row.get("title", ""),
+                    "source": row.get("source", ""),
+                    "evidence_grade": row.get("evidence_grade", "D"),
+                    "signal_level": row.get("signal_level", "灰"),
+                    "quality_score": row.get("quality_score", 0),
+                    "source_weight": row.get("source_weight", 0),
+                    "source_bucket": row.get("source_bucket", "media"),
+                    "score_breakdown": row.get("score_breakdown", {}),
+                    "dedupe_key": row.get("dedupe_key", ""),
+                    "dedupe_info": {
+                        "story_id": row.get("story_id", ""),
+                        "cluster_size": row.get("cluster_size", 1),
+                        "deduped_from_ids": row.get("deduped_from_ids", []),
+                    },
+                }
+            )
+    else:
+        items = dedupe_items(items)
+        items.sort(key=lambda x: x.published, reverse=True)
+        items_before_cluster_count = len(items)
+        cluster_explain = {"enabled": False, "clusters": []}
+
+        if runtime_rules.get("active_profile") == "enhanced":
+            clusterer = StoryClusterer(
+                config=RUNTIME_CONTENT.get("dedupe_cluster", {}),
+                source_priority=RUNTIME_CONTENT.get("source_priority", {}),
+            )
+            clustered_dicts, cluster_explain = clusterer.cluster([item_to_dict(i) for i in items])
+            items = [dict_to_item(d) for d in clustered_dicts]
+            items.sort(key=lambda x: x.published, reverse=True)
+        items_after_cluster_count = len(items)
+
+        # Build candidates: strict 24h first, then 7d补充.
+        within_24h = [i for i in items if i.window_tag == "24小时内"]
+        within_7d = [i for i in items if i.window_tag == "7天补充"]
+        candidates = within_24h[:20]
+        if len(candidates) < int(RUNTIME_CONTENT.get("topup_if_24h_lt", 10)):
+            candidates.extend(within_7d[:30])
+        else:
+            candidates = candidates[: int(RUNTIME_CONTENT.get("max_items", 15))]
+
+        top = choose_top_items(candidates, yday_titles, recent_titles)
+        if len(top) < int(RUNTIME_CONTENT.get("min_items", 8)):
+            seen = {i.link for i in top}
+            used: dict[str, int] = {}
+            for i in top:
+                used[i.source] = used.get(i.source, 0) + 1
+            for it in items:
+                if it.link in seen:
+                    continue
+                cap = 3
+                if used.get(it.source, 0) >= cap:
+                    continue
+                top.append(it)
+                seen.add(it.link)
+                used[it.source] = used.get(it.source, 0) + 1
+                if len(top) >= int(RUNTIME_CONTENT.get("min_items", 8)):
+                    break
+        top = top[: int(RUNTIME_CONTENT.get("max_items", 15))]
+        top = enforce_apac_share(top, items)
+        top = enforce_international_primary(top, items)
 
     # Metrics
     n24 = len([i for i in top if i.window_tag == "24小时内"])
@@ -1985,6 +2173,25 @@ def main() -> int:
         required = qc_cfg.get("required_sources_checklist", [])
     required_list = [str(x) for x in required] if isinstance(required, list) else []
     source_hits, _missing = required_sources_checklist_hit(required_list, top)
+
+    if scoring_enabled:
+        try:
+            print(
+                "[SCORING] selected_by_bucket="
+                + json.dumps(scoring_summary_payload.get("selected_by_bucket", {}), ensure_ascii=False)
+                + f" deduped_count={int((dedupe_report or {}).get('deduped_count', 0))}",
+                file=sys.stderr,
+            )
+            for row in scoring_explain_rows[:30]:
+                print(
+                    "[SCORING_ITEM] "
+                    + f"id={row.get('item_id','')} score={row.get('quality_score',0)} "
+                    + f"evidence={row.get('evidence_grade','D')} signal={row.get('signal_level','灰')} "
+                    + f"bucket={row.get('source_bucket','media')} title={str(row.get('title',''))[:120]}",
+                    file=sys.stderr,
+                )
+        except Exception:
+            pass
 
     # Lane split
     lanes = {"肿瘤检测": [], "感染检测": [], "生殖与遗传检测": [], "其他": []}
@@ -2181,6 +2388,29 @@ def main() -> int:
         )
         (p / "exclude_diag.json").write_text(
             json.dumps(exclude_diag, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        (p / "scoring_explain.json").write_text(
+            json.dumps(
+                {
+                    "enabled": bool(scoring_enabled),
+                    "items": scoring_explain_rows,
+                    "dedupe_report": dedupe_report,
+                    "diversity_report": diversity_report,
+                },
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            ),
+            encoding="utf-8",
+        )
+        (p / "scoring_summary.json").write_text(
+            json.dumps(
+                scoring_summary_payload if isinstance(scoring_summary_payload, dict) else {},
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            ),
             encoding="utf-8",
         )
 

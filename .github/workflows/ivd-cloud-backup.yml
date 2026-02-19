@@ -78,6 +78,7 @@ jobs:
           check REPORT_TZ
 
       - name: Dry-run diagnostics (works even without secrets)
+        continue-on-error: true
         env:
           SMTP_HOST: smtp.mail.me.com
           SMTP_PORT: "587"
@@ -94,6 +95,7 @@ jobs:
           python3 scripts/cloud_backup_send.py --dry-run
 
       - name: Run cloud backup sender
+        if: always()
         env:
           SMTP_HOST: smtp.mail.me.com
           SMTP_PORT: "587"

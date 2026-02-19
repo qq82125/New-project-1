@@ -11,8 +11,7 @@ services:
     ports:
       - "8090:8789"
     volumes:
-      # Dev-friendly: mount source so UI/code changes take effect without rebuilding images.
-      - ./app:/app/app
+      # Run code from image to avoid macOS bind-mount import deadlock.
       - ./rules:/app/rules
       - ./data:/app/data
       - ./artifacts:/app/artifacts
@@ -34,8 +33,7 @@ services:
       SCHEDULER_PROFILE: "enhanced"
       SCHEDULER_REFRESH_SECONDS: "60"
     volumes:
-      # Dev-friendly: mount source so scheduler changes take effect without rebuilding images.
-      - ./app:/app/app
+      # Run code from image to avoid macOS bind-mount import deadlock.
       - ./rules:/app/rules
       - ./data:/app/data
       - ./artifacts:/app/artifacts

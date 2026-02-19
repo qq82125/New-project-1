@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/output_rules.schema.json",
+  "title": "Output Rules Schema",
+  "type": "object",
+  "required": ["ruleset", "version", "profile", "defaults", "overrides", "rules", "output"],
+  "properties": {
+    "ruleset": { "type": "string", "const": "output_rules" },
+    "version": { "type": "string", "minLength": 3 },
+    "profile": { "type": "string", "enum": ["legacy", "enhanced", "default.v1", "strict.v2"] },
+    "defaults": {
+      "type": "object",
+      "required": ["format", "sections"],
+      "properties": {
+        "format": { "type": "string", "enum": ["plain_text", "markdown", "html"] },
+        "sections": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/sectionToggle" }
+        },
+        "A": { "$ref": "#/$defs/sectionA" },
+        "D": { "$ref": "#/$defs/sectionD" },
+        "E": { "$ref": "#/$defs/sectionE" },
+        "F": { "$ref": "#/$defs/sectionF" },
+        "style": { "$ref": "#/$defs/style" },
+        "constraints": { "$ref": "#/$defs/constraints" }
+      },
+      "additionalProperties": true
+    },
+    "overrides": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "required": ["id", "enabled", "priority", "type", "params"],
+        "properties": {
+          "id": { "type": "string", "minLength": 3 },
+          "enabled": { "type": "boolean" },
+          "priority": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "type": {
+            "type": "string",
+            "enum": ["sections", "section_a", "section_sizes", "heatmap", "constraints"]
+          },
+          "description": { "type": "string", "minLength": 0 },
+          "merge_strategy": { "type": "string", "enum": ["last_match", "append", "merge"] },
+          "params": { "type": "object" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["sections_order"],
+      "properties": {
+        "sections_order": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "enum": ["A", "B", "C", "D", "E", "F", "G"] }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "sectionId": { "type": "string", "enum": ["A", "B", "C", "D", "E", "F", "G"] },
+    "sectionToggle": {
+      "type": "object",
+      "required": ["id", "enabled"],
+      "properties": {
+        "id": { "$ref": "#/$defs/sectionId" },
+        "enabled": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "rangeInt": {
+      "type": "object",
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "max": { "type": "integer", "minimum": 0, "maximum": 100 }
+      },
+      "additionalProperties": true
+    },
+    "rangeSentences": {
+      "type": "object",
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "max": { "type": "integer", "minimum": 1, "maximum": 10 }
+      },
+      "additionalProperties": true
+    },
+    "sectionA": {
+      "type": "object",
+      "required": ["items_range", "sort_by", "summary_sentences", "summary_max_chars", "show_tags", "show_other_sources", "show_source_link"],
+      "properties": {
+        "items_range": {
+          "type": "object",
+          "required": ["min", "max"],
+          "properties": {
+            "min": { "type": "integer", "minimum": 1, "maximum": 30 },
+            "max": { "type": "integer", "minimum": 1, "maximum": 30 }
+          },
+          "additionalProperties": true
+        },
+        "sort_by": { "type": "string", "enum": ["importance", "published_at", "source_priority"] },
+        "summary_sentences": { "$ref": "#/$defs/rangeSentences" },
+        "summary_max_chars": { "type": "integer", "minimum": 50, "maximum": 2000 },
+        "show_tags": { "type": "boolean" },
+        "show_other_sources": { "type": "boolean" },
+        "show_source_link": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "sectionD": {
+      "type": "object",
+      "required": ["heatmap_regions"],
+      "properties": {
+        "heatmap_regions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "enum": ["北美", "欧洲", "亚太", "中国"] }
+        }
+      },
+      "additionalProperties": true
+    },
+    "sectionE": {
+      "type": "object",
+      "required": ["trends_count"],
+      "properties": {
+        "trends_count": { "type": "integer", "minimum": 1, "maximum": 10 }
+      },
+      "additionalProperties": true
+    },
+    "sectionF": {
+      "type": "object",
+      "required": ["gaps_count"],
+      "properties": {
+        "gaps_count": { "$ref": "#/$defs/rangeInt" }
+      },
+      "additionalProperties": true
+    },
+    "constraints": {
+      "type": "object",
+      "required": ["g_must_be_last", "a_to_f_must_not_include_quality_metrics"],
+      "properties": {
+        "g_must_be_last": { "type": "boolean", "const": true },
+        "a_to_f_must_not_include_quality_metrics": { "type": "boolean", "const": true }
+      },
+      "additionalProperties": true
+    },
+    "style": {
+      "type": "object",
+      "required": ["language", "tone", "no_fluff"],
+      "properties": {
+        "language": { "type": "string", "enum": ["zh", "en"] },
+        "tone": { "type": "string", "enum": ["concise_decision", "neutral"] },
+        "no_fluff": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

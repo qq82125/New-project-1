@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/content_rules.schema.json",
+  "title": "Content Rules Schema",
+  "type": "object",
+  "required": ["ruleset", "version", "profile", "defaults", "overrides", "rules", "output"],
+  "properties": {
+    "ruleset": { "type": "string", "const": "content_rules" },
+    "version": { "type": "string", "minLength": 3 },
+    "profile": { "type": "string", "enum": ["legacy", "enhanced", "default.v1", "strict.v2"] },
+    "defaults": {
+      "type": "object",
+      "required": ["timezone", "time_window", "item_limit", "sources", "coverage_tracks", "region_filter"],
+      "properties": {
+        "timezone": { "type": "string", "minLength": 3 },
+        "content_sources": {
+          "type": "object",
+          "properties": {
+            "min_trust_tier": { "type": "string", "enum": ["A", "B", "C"] },
+            "include_tags": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "exclude_tags": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "include_source_ids": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "exclude_source_ids": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "default_enabled_only": { "type": "boolean" }
+          },
+          "additionalProperties": true
+        },
+        "time_window": {
+          "type": "object",
+          "required": ["primary_hours", "fallback_days"],
+          "properties": {
+            "primary_hours": { "type": "integer", "minimum": 1, "maximum": 72 },
+            "fallback_days": { "type": "integer", "minimum": 1, "maximum": 14 }
+          },
+          "additionalProperties": true
+        },
+        "item_limit": {
+          "type": "object",
+          "required": ["min", "max", "topup_if_24h_lt"],
+          "properties": {
+            "min": { "type": "integer", "minimum": 1, "maximum": 30 },
+            "max": { "type": "integer", "minimum": 1, "maximum": 50 },
+            "topup_if_24h_lt": { "type": "integer", "minimum": 0, "maximum": 30 }
+          },
+          "additionalProperties": true
+        },
+        "sources": {
+          "type": "object",
+          "required": ["media_global", "regulatory_cn", "regulatory_apac"],
+          "properties": {
+            "media_global": { "$ref": "#/$defs/sourceList" },
+            "regulatory_cn": { "$ref": "#/$defs/sourceList" },
+            "regulatory_apac": { "$ref": "#/$defs/sourceList" }
+          },
+          "additionalProperties": true
+        },
+        "source_priority": {
+          "type": "object",
+          "propertyNames": { "type": "string", "minLength": 1 },
+          "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 1000 }
+        },
+        "platform_url_hints": {
+          "type": "object",
+          "propertyNames": { "type": "string", "minLength": 1 },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 50,
+            "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+          }
+        },
+        "dedupe_cluster": {
+          "type": "object",
+          "required": [
+            "enabled",
+            "window_hours",
+            "key_strategies",
+            "primary_select",
+            "max_other_sources"
+          ],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "window_hours": { "type": "integer", "minimum": 1, "maximum": 720 },
+            "key_strategies": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "canonical_url",
+                  "normalized_url_host_path",
+                  "title_fingerprint_v1"
+                ]
+              }
+            },
+            "primary_select": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "source_priority",
+                  "evidence_grade",
+                  "published_at_earliest",
+                  "published_at_latest",
+                  "first_seen_earliest"
+                ]
+              }
+            },
+            "max_other_sources": { "type": "integer", "minimum": 0, "maximum": 20 }
+          },
+          "additionalProperties": true
+        },
+        "coverage_tracks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 2 }
+        },
+        "region_filter": {
+          "type": "object",
+          "required": ["apac_min_share"],
+          "properties": {
+            "apac_min_share": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+            "china_min_share": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+            "eu_na_min_share": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+            "allowed_regions": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["北美", "欧洲", "亚太", "中国", "全球"] }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "overrides": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "keywords_pack": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "ivd_core",
+              "diagnostic_tech_products",
+              "regulatory_procurement",
+              "oncology",
+              "infection",
+              "repro_genetics",
+              "policy_market",
+              "papers_clinical"
+            ]
+          }
+        },
+        "exclude_terms": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 2 }
+        },
+        "min_confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+      },
+      "additionalProperties": true
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "enabled", "priority", "type", "params"],
+        "properties": {
+          "id": { "type": "string", "minLength": 3 },
+          "enabled": { "type": "boolean" },
+          "priority": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "type": {
+            "type": "string",
+            "enum": [
+              "source_priority",
+              "include_filter",
+              "exclude_filter",
+              "lane_mapping",
+              "platform_mapping",
+              "event_mapping",
+              "dedupe",
+              "confidence_ranking",
+              "region_filter"
+            ]
+          },
+          "description": { "type": "string", "minLength": 0 },
+          "params": { "type": "object" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["format", "sections", "quality_audit_at_end"],
+      "properties": {
+        "format": { "type": "string", "enum": ["plain_text", "markdown", "html"] },
+        "sections": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "enum": ["A", "B", "C", "D", "E", "F", "G"] }
+        },
+        "quality_audit_at_end": { "type": "boolean" },
+        "per_item_summary_sentences": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "max_items": { "type": "integer", "minimum": 1, "maximum": 30 }
+      },
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "sourceItem": {
+      "type": "object",
+      "required": ["name", "url", "region", "trust_tier"],
+      "properties": {
+        "name": { "type": "string", "minLength": 2 },
+        "url": { "type": "string", "minLength": 8 },
+        "region": { "type": "string", "enum": ["北美", "欧洲", "亚太", "中国", "全球"] },
+        "trust_tier": { "type": "string", "enum": ["A", "B", "C"] }
+      },
+      "additionalProperties": true
+    },
+    "sourceList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sourceItem" }
+    }
+  },
+  "additionalProperties": true
+}

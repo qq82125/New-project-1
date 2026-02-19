@@ -5,6 +5,7 @@ import os
 import subprocess
 import time
 import uuid
+from subprocess import CalledProcessError
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -78,6 +79,8 @@ def run_digest(
             capture_output=True,
             text=True,
         )
+        if proc.stderr:
+            print(proc.stderr, end="")
         out_file.write_text(proc.stdout, encoding="utf-8")
 
         # Subject: from email rules if available, else fallback.
@@ -85,6 +88,9 @@ def run_digest(
         subject = str(rt.get("email", {}).get("subject") or f"全球IVD晨报 - {date_str}")
 
         sent = False
+        fallback_triggered = False
+        fallback_ok = False
+        fallback_error = ""
         send_cmd: list[str] | None = None
         if send:
             to_email = env.get("TO_EMAIL", "")
@@ -96,8 +102,34 @@ def run_digest(
             if not to_email:
                 raise RuntimeError("missing TO_EMAIL (and no recipients available)")
             send_cmd = ["./send_mail_icloud.sh", to_email, subject, str(out_file)]
-            subprocess.run(send_cmd, cwd=root, env=env, check=True)
-            sent = True
+            try:
+                subprocess.run(send_cmd, cwd=root, env=env, check=True)
+                sent = True
+            except CalledProcessError as se:
+                # Non-breaking fallback: invoke cloud backup sender for visibility/idempotent retry path.
+                fallback_triggered = True
+                fb_env = env.copy()
+                fb_env["REPORT_DATE"] = date_str
+                # Prefix is used by cloud backup sender to build the final subject.
+                fb_env.setdefault("REPORT_SUBJECT_PREFIX", "全球IVD晨报 - ")
+                try:
+                    subprocess.run(
+                        ["python3", "scripts/cloud_backup_send.py"],
+                        cwd=root,
+                        env=fb_env,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                    fallback_ok = True
+                except Exception as fe:
+                    fallback_ok = False
+                    fallback_error = str(fe)
+                # Keep original failure visible to scheduler/run status.
+                raise RuntimeError(
+                    f"primary_send_failed={se}; fallback_triggered={fallback_triggered}; "
+                    f"fallback_ok={fallback_ok}; fallback_error={fallback_error}"
+                ) from se
 
         return_payload = {
             "ok": True,
@@ -112,6 +144,9 @@ def run_digest(
             "output_file": str(out_file),
             "sent": sent,
             "send_cmd": send_cmd,
+            "fallback_triggered": fallback_triggered,
+            "fallback_ok": fallback_ok,
+            "fallback_error": fallback_error,
         }
     except Exception as e:
         status = "failed"
@@ -144,4 +179,3 @@ def run_digest(
         (artifacts_dir / "run_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return return_payload
-
