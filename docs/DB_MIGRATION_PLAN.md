@@ -2,6 +2,52 @@
 
 本文档描述控制面数据库从 SQLite 迁移到 PostgreSQL 的标准流程，包含断点续跑、校验、灰度、切换与回滚。
 
+## 10分钟快速验收版（推荐先跑）
+
+目标：快速确认“已切 PG 主库 + single/primary + 关键唯一约束生效”。
+
+1. 执行迁移并重启：
+
+```bash
+PYTHONPATH=. alembic upgrade head
+docker compose up -d --build
+```
+
+2. 验证运行模式：
+
+```bash
+docker compose exec -T admin-api /bin/sh -lc 'echo DATABASE_URL=$DATABASE_URL; echo DATABASE_URL_SECONDARY=$DATABASE_URL_SECONDARY; echo DB_WRITE_MODE=$DB_WRITE_MODE; echo DB_READ_MODE=$DB_READ_MODE'
+docker compose exec -T admin-api /bin/sh -lc 'curl -fsS http://127.0.0.1:8789/healthz'
+```
+
+通过标准：
+- `DATABASE_URL` 指向 PG
+- `DATABASE_URL_SECONDARY` 为空
+- `DB_WRITE_MODE=single`
+- `DB_READ_MODE=primary`
+- `healthz.db_backend=postgresql`
+
+3. 验证 DB 唯一约束：
+
+```bash
+docker compose exec -T db psql -U ivd -d ivd -c "SELECT conname, conrelid::regclass::text AS table_name FROM pg_constraint WHERE conname IN ('uq_send_attempts_send_key','uq_dedupe_keys_dedupe_key','uq_email_rules_profile_version','uq_content_rules_profile_version','uq_qc_rules_profile_version','uq_output_rules_profile_version','uq_scheduler_rules_profile_version') ORDER BY conname;"
+docker compose exec -T db psql -U ivd -d ivd -c "SELECT indexname,indexdef FROM pg_indexes WHERE tablename='run_executions' AND indexname='uq_run_executions_run_key';"
+```
+
+通过标准：
+- `send_key`、`dedupe_key`、`profile+version` 约束存在
+- `run_key` 唯一索引存在
+
+4. 失败即回滚（1 分钟）：
+
+```bash
+export DATABASE_URL='sqlite:///data/rules.db'
+unset DATABASE_URL_SECONDARY
+export DB_WRITE_MODE='single'
+export DB_READ_MODE='primary'
+docker compose up -d --build
+```
+
 ## 关键开关
 
 - `DATABASE_URL`：主库连接串（切到 PG 后指向 PG）
