@@ -36,7 +36,7 @@ from app.adapters.rule_bridge import load_runtime_rules
 from app.core.dedupe import strong_dedupe
 from app.core.scoring import diversity_select, load_scoring_config, score_item
 from app.services.story_clusterer import StoryClusterer
-from app.services.source_registry import load_sources_registry, select_sources
+from app.services.source_registry import fetch_source_entries, load_sources_registry, select_sources
 from app.services.rules_versioning import get_runtime_rules_root
 
 
@@ -1787,80 +1787,42 @@ def main() -> int:
                 "fetch_count": 0,
                 "parse_ok": 0,
                 "parse_fail": 0,
+                "parse_skip": 0,
                 "items_count": 0,
                 "last_success_at": "",
                 "top_http_status": {},
+                "last_error_type": "",
+                "last_error_message": "",
             },
         )
         stat["fetch_count"] += 1
         entries: list[dict] = []
-        http_status = 0
-        if connector in ("rss", "google_news"):
-            data, http_status = fetch_bytes_with_status(url, timeout=15)
-            if data:
-                feed = feedparser.parse(data)
-                for e in feed.entries[:50]:
-                    entries.append(
-                        {
-                            "title": (getattr(e, "title", "") or "").strip(),
-                            "link": (getattr(e, "link", "") or "").strip(),
-                            "summary": (
-                                getattr(e, "summary", "")
-                                or getattr(e, "description", "")
-                                or ""
-                            ),
-                            "entry": e,
-                        }
-                    )
-                if not entries:
-                    # 兼容非标准 RSS 链接：尝试按网页列表页抽取 anchor
-                    for e in fetch_web_entries(url, timeout=15):
-                        entries.append(
-                            {
-                                "title": str(e.get("title", "")).strip(),
-                                "link": str(e.get("link", "")).strip(),
-                                "summary": str(e.get("summary", "")),
-                                "entry": None,
-                            }
-                        )
-        elif connector == "rsshub":
-            base = os.getenv("RSSHUB_BASE_URL", "").strip().rstrip("/")
-            route = str((fetch_cfg or {}).get("rsshub_route", "")).strip()
-            if not base or not route:
-                stat["parse_fail"] += 1
-                continue
-            full = f"{base}{route if route.startswith('/') else '/' + route}"
-            data, http_status = fetch_bytes_with_status(full, timeout=15)
-            if data:
-                feed = feedparser.parse(data)
-                for e in feed.entries[:50]:
-                    entries.append(
-                        {
-                            "title": (getattr(e, "title", "") or "").strip(),
-                            "link": (getattr(e, "link", "") or "").strip(),
-                            "summary": (
-                                getattr(e, "summary", "")
-                                or getattr(e, "description", "")
-                                or ""
-                            ),
-                            "entry": e,
-                        }
-                    )
-        elif connector == "web":
-            web_entries = fetch_web_entries(url, timeout=15)
-            http_status = 200 if web_entries else 0
-            for e in web_entries:
-                entries.append(
-                    {
-                        "title": str(e.get("title", "")).strip(),
-                        "link": str(e.get("link", "")).strip(),
-                        "summary": str(e.get("summary", "")),
-                        "entry": None,
-                    }
-                )
-        else:
-            stat["parse_fail"] += 1
-            continue
+        source_obj = {
+            "id": source_id,
+            "name": src_name,
+            "fetcher": "html" if connector == "web" else connector,
+            "connector": "html" if connector == "web" else connector,
+            "url": url,
+            "tags": ["regulatory"] if kind == "regulatory" else ["media"],
+            "fetch": fetch_cfg or {},
+        }
+        fetch_out = fetch_source_entries(source_obj, limit=50, timeout_seconds=15, retries=2)
+        http_status = int(fetch_out.get("http_status") or 0)
+        st_status = str(fetch_out.get("status", "")).strip().lower()
+        if st_status in {"skip", "skipped"}:
+            stat["parse_skip"] += 1
+        if not bool(fetch_out.get("ok")):
+            stat["last_error_type"] = str(fetch_out.get("error_type") or "")
+            stat["last_error_message"] = str(fetch_out.get("error_message") or fetch_out.get("error") or "")
+        for e in fetch_out.get("entries", []) if isinstance(fetch_out.get("entries"), list) else []:
+            entries.append(
+                {
+                    "title": str(e.get("title", "")).strip(),
+                    "link": str(e.get("url", e.get("link", ""))).strip(),
+                    "summary": str(e.get("summary", "")).strip(),
+                    "entry": None,
+                }
+            )
 
         if http_status:
             key = str(http_status)

@@ -8,6 +8,19 @@ from pathlib import Path
 from app.rules.engine import RuleEngine
 
 
+def _resolve_env_template(value: str, env: dict[str, str]) -> str:
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    if s.startswith("${") and s.endswith("}"):
+        inner = s[2:-1]
+        if ":-" in inner:
+            k, d = inner.split(":-", 1)
+            return str(env.get(k.strip(), d)).strip()
+        return str(env.get(inner.strip(), "")).strip()
+    return s
+
+
 def _to_bool(v: bool | str | None, default: bool = False) -> bool:
     if isinstance(v, bool):
         return v
@@ -63,7 +76,11 @@ def run_replay(
 
         env = os.environ.copy()
         env["REPORT_TZ"] = tz_name
-        to_email = env.get("TO_EMAIL", "qq82125@gmail.com")
+        rec = decision.get("email_decision", {}).get("recipients", [])
+        rule_to = str(rec[0]) if isinstance(rec, list) and rec else "${TO_EMAIL:-qq82125@gmail.com}"
+        to_email = _resolve_env_template(rule_to, env)
+        if not to_email:
+            to_email = "qq82125@gmail.com"
         send_cmd = ["./send_mail_icloud.sh", to_email, subject, str(out_file)]
         subprocess.run(send_cmd, cwd=project_root, env=env, check=True)
         sent = True

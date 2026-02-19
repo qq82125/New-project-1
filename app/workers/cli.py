@@ -12,8 +12,10 @@ from app.services.source_registry import (
     diff_sources_for_profiles,
     effective_source_ids_for_profile,
     list_sources_for_profile,
+    load_sources_registry_bundle,
     load_sources_registry,
     retire_source,
+    run_sources_test_harness,
     test_source,
     validate_sources_registry,
 )
@@ -155,19 +157,56 @@ def cmd_sources_validate(argv: list[str]) -> int:
 
 def cmd_sources_test(argv: list[str]) -> int:
     source_id = _get_opt(argv, "--source-id")
-    if not source_id:
-        print("--source-id is required", file=sys.stderr)
-        return 2
     limit = int(_get_opt(argv, "--limit") or "3")
+    enabled_only = "--enabled-only" in argv
+    json_out = _get_opt(argv, "--json-out")
+    md_out = _get_opt(argv, "--md-out")
+    workers = int(_get_opt(argv, "--workers") or "6")
+    timeout_seconds = int(_get_opt(argv, "--timeout-seconds") or "20")
+    retries = int(_get_opt(argv, "--retries") or "2")
     engine = RuleEngine()
-    sources = load_sources_registry(engine.project_root)
-    source = next((s for s in sources if str(s.get("id", "")) == source_id), None)
-    if source is None:
-        print(json.dumps({"ok": False, "error": f"source not found: {source_id}"}, ensure_ascii=False))
-        return 3
-    out = test_source(source, limit=limit)
-    print(json.dumps(out, ensure_ascii=False, indent=2))
-    return 0 if out.get("ok") else 4
+    if source_id:
+        sources = load_sources_registry(engine.project_root, rules_root=engine.rules_root)
+        source = next((s for s in sources if str(s.get("id", "")) == source_id), None)
+        if source is None:
+            print(json.dumps({"ok": False, "error": f"source not found: {source_id}"}, ensure_ascii=False))
+            return 3
+        out = test_source(source, limit=limit, timeout_seconds=timeout_seconds, retries=retries)
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return 0 if out.get("ok") else 4
+
+    bundle = load_sources_registry_bundle(engine.project_root, rules_root=engine.rules_root)
+    out = run_sources_test_harness(
+        engine.project_root,
+        rules_root=engine.rules_root,
+        enabled_only=enabled_only,
+        limit=limit,
+        max_workers=workers,
+        timeout_seconds=timeout_seconds,
+        retries=retries,
+    )
+    if json_out:
+        import os
+        os.makedirs(os.path.dirname(json_out) or ".", exist_ok=True)
+        with open(json_out, "w", encoding="utf-8") as f:
+            f.write(json.dumps(out, ensure_ascii=False, indent=2))
+    if md_out:
+        import os
+        os.makedirs(os.path.dirname(md_out) or ".", exist_ok=True)
+        with open(md_out, "w", encoding="utf-8") as f:
+            f.write(str(out.get("markdown", "")))
+
+    payload = {
+        "ok": True,
+        "registry_file": bundle.get("source_file") if isinstance(bundle, dict) else "",
+        "overrides_file": bundle.get("overrides_file") if isinstance(bundle, dict) else "",
+        "summary": out.get("summary", {}),
+        "json_out": json_out or "",
+        "md_out": md_out or "",
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    fail_count = int(((out.get("summary") or {}).get("fail", 0)))
+    return 0 if fail_count == 0 else 4
 
 
 def cmd_sources_diff(argv: list[str]) -> int:

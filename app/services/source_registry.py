@@ -7,8 +7,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import feedparser
 import yaml
@@ -38,6 +40,29 @@ def _is_valid_url(url: str) -> bool:
     try:
         p = urlparse(url)
         return bool(p.scheme in ("http", "https") and p.netloc)
+    except Exception:
+        return False
+
+
+def _env_bool(name: str, default: bool = True) -> bool:
+    raw = str(os.environ.get(name, "")).strip().lower()
+    if not raw:
+        return bool(default)
+    return raw in {"1", "true", "yes", "y", "on"}
+
+
+def _safe_int(v: Any, default: int) -> int:
+    try:
+        return int(v)
+    except Exception:
+        return int(default)
+
+
+def _same_host(a: str, b: str) -> bool:
+    try:
+        pa = urlparse(str(a))
+        pb = urlparse(str(b))
+        return pa.hostname and pb.hostname and pa.hostname.lower() == pb.hostname.lower()
     except Exception:
         return False
 
@@ -93,6 +118,223 @@ def _extract_web_sample_entries(html: str, base_url: str, limit: int = 3) -> lis
         if len(out) >= limit:
             break
     return out
+
+
+def _extract_feed_links_from_html(html: str, page_url: str, same_host_only: bool = True) -> list[dict[str, str]]:
+    links: list[dict[str, str]] = []
+    seen: set[str] = set()
+    if not html:
+        return links
+
+    def _push(raw_url: str, title: str = "") -> None:
+        u = str(raw_url or "").strip()
+        if not u:
+            return
+        if u.startswith("//"):
+            u = f"https:{u}"
+        elif not (u.startswith("http://") or u.startswith("https://")):
+            u = urljoin(page_url, u)
+        if not _is_valid_url(u):
+            return
+        if same_host_only and not _same_host(page_url, u):
+            return
+        if u in seen:
+            return
+        seen.add(u)
+        links.append({"url": u, "name": str(title or "").strip()})
+
+    # 1) <link rel="alternate" type="application/rss+xml|atom+xml">
+    for tag in re.findall(r"<link[^>]+>", html, flags=re.I | re.S):
+        if not re.search(r"rel=['\"][^'\"]*alternate[^'\"]*['\"]", tag, flags=re.I):
+            continue
+        if not re.search(r"type=['\"]application/(rss|atom)\+xml['\"]", tag, flags=re.I):
+            continue
+        hm = re.search(r"href=['\"]([^'\"]+)['\"]", tag, flags=re.I)
+        if not hm:
+            continue
+        tm = re.search(r"title=['\"]([^'\"]+)['\"]", tag, flags=re.I)
+        _push(hm.group(1), tm.group(1) if tm else "")
+
+    # 2) anchor links to feed-looking urls
+    for m in re.finditer(r"<a[^>]+href=['\"]([^'\"]+)['\"][^>]*>(.*?)</a>", html, flags=re.I | re.S):
+        href = str(m.group(1) or "").strip()
+        text = re.sub(r"<[^>]+>", " ", str(m.group(2) or ""))
+        text = re.sub(r"\s+", " ", text).strip()
+        low = href.lower()
+        if any(x in low for x in (".xml", ".rss", ".atom", "/rss", "/feed")) or ("rss" in text.lower()):
+            _push(href, text)
+
+    return links
+
+
+def _extract_child_feeds(html: str, page_url: str, same_host_only: bool = True) -> list[dict[str, str]]:
+    return _extract_feed_links_from_html(html, page_url, same_host_only=same_host_only)
+
+
+def _pick_child_feed(
+    feeds: list[dict[str, str]],
+    policy: Any,
+    keywords: list[str] | None = None,
+) -> str:
+    if not feeds:
+        return ""
+    mode = "pick_first"
+    kws = [str(x).strip().lower() for x in (keywords or []) if str(x).strip()]
+    if isinstance(policy, str):
+        mode = policy.strip().lower() or mode
+    elif isinstance(policy, dict):
+        mode = str(policy.get("mode") or policy.get("strategy") or mode).strip().lower()
+        raw = policy.get("keywords")
+        if isinstance(raw, list) and raw:
+            kws = [str(x).strip().lower() for x in raw if str(x).strip()]
+
+    if mode == "pick_all":
+        return str(feeds[0].get("url") or "")
+    if mode == "pick_by_keywords":
+        for row in feeds:
+            t = (str(row.get("name") or "") + " " + str(row.get("url") or "")).lower()
+            if any(k in t for k in kws):
+                return str(row.get("url") or "")
+        return str(feeds[0].get("url") or "")
+    return str(feeds[0].get("url") or "")
+
+
+def _is_probable_js_page(html: str) -> bool:
+    if not html:
+        return False
+    if re.search(r"id=['\"](__NEXT_DATA__|root|app)['\"]", html, flags=re.I):
+        return True
+    if len(re.findall(r"<script", html, flags=re.I)) >= 8 and len(re.findall(r"<a[^>]+href=", html, flags=re.I)) <= 3:
+        return True
+    return False
+
+
+def _generic_html_list_entries(
+    html: str,
+    page_url: str,
+    limit: int = 3,
+    selectors: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, str]], str]:
+    selectors = selectors if isinstance(selectors, dict) else {}
+    samples: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    # regex selectors (backward compatible)
+    item_regex = str(selectors.get("item_regex") or "").strip()
+    title_regex = str(selectors.get("title_regex") or "").strip()
+    link_regex = str(selectors.get("link_regex") or "").strip()
+    if item_regex and title_regex and link_regex:
+        for m in re.finditer(item_regex, html, flags=re.I | re.S):
+            block = m.group(0)
+            tm = re.search(title_regex, block, flags=re.I | re.S)
+            lm = re.search(link_regex, block, flags=re.I | re.S)
+            if not tm or not lm:
+                continue
+            title = re.sub(r"<[^>]+>", " ", str(tm.group(1) or ""))
+            title = re.sub(r"\s+", " ", title).strip()
+            u = str(lm.group(1) or "").strip()
+            if not u:
+                continue
+            if u.startswith("//"):
+                u = f"https:{u}"
+            elif not (u.startswith("http://") or u.startswith("https://")):
+                u = urljoin(page_url, u)
+            if not _is_valid_url(u):
+                continue
+            if not _same_host(page_url, u):
+                continue
+            if u in seen:
+                continue
+            seen.add(u)
+            samples.append({"title": title, "url": u})
+            if len(samples) >= limit:
+                return samples, "selector_regex"
+
+    cleaned = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", html)
+    # Prefer article blocks.
+    article_blocks = re.findall(r"(?is)<article[^>]*>.*?</article>", cleaned)
+    blocks = article_blocks if article_blocks else [cleaned]
+
+    for block in blocks:
+        for m in re.finditer(r"<a[^>]+href=['\"]([^'\"]+)['\"][^>]*>(.*?)</a>", block, flags=re.I | re.S):
+            href = str(m.group(1) or "").strip()
+            title = re.sub(r"<[^>]+>", " ", str(m.group(2) or ""))
+            title = re.sub(r"\s+", " ", title).strip()
+            if not href or not title or len(title) < 8:
+                continue
+            low = href.lower()
+            if any(x in low for x in ("javascript:", "mailto:", "#", "/login", "signin", "register")):
+                continue
+            if href.startswith("//"):
+                u = f"https:{href}"
+            elif href.startswith("http://") or href.startswith("https://"):
+                u = href
+            else:
+                u = urljoin(page_url, href)
+            if not _is_valid_url(u):
+                continue
+            if not _same_host(page_url, u):
+                continue
+            if u in seen:
+                continue
+            seen.add(u)
+            samples.append({"title": title, "url": u})
+            if len(samples) >= limit:
+                return samples, "generic_html"
+
+    return samples, "generic_html_empty"
+
+
+def _fetch_url_with_retry(url: str, headers: dict[str, str], timeout: int, retries: int) -> dict[str, Any]:
+    attempt = 0
+    last_err = ""
+    last_type = "network_error"
+    while attempt <= max(0, retries):
+        attempt += 1
+        req = Request(url, headers=headers)
+        try:
+            with urlopen(req, timeout=timeout) as r:
+                data = r.read()
+                status = int(getattr(r, "status", 200))
+                ctype = str(getattr(r, "headers", {}).get("Content-Type", "")) if getattr(r, "headers", None) else ""
+                return {
+                    "ok": True,
+                    "data": data,
+                    "http_status": status,
+                    "content_type": ctype,
+                    "error_type": "",
+                    "error_message": "",
+                }
+        except HTTPError as e:
+            last_type = "http_error"
+            last_err = f"HTTPError: {getattr(e, 'code', '')} {e}"
+            if int(getattr(e, "code", 0) or 0) in (403, 404):
+                break
+        except TimeoutError as e:
+            last_type = "timeout"
+            last_err = f"TimeoutError: {e}"
+        except URLError as e:
+            msg = str(getattr(e, "reason", e))
+            if "Name or service not known" in msg or "nodename nor servname provided" in msg:
+                last_type = "dns_error"
+            elif "timed out" in msg.lower():
+                last_type = "timeout"
+            else:
+                last_type = "network_error"
+            last_err = f"URLError: {msg}"
+        except Exception as e:
+            last_type = "network_error"
+            last_err = f"{type(e).__name__}: {e}"
+        if attempt <= retries:
+            time.sleep(min(1.5, 0.25 * (2 ** (attempt - 1))))
+    return {
+        "ok": False,
+        "data": b"",
+        "http_status": None,
+        "content_type": "",
+        "error_type": last_type,
+        "error_message": last_err,
+    }
 
 
 def _resolve_rules_root(project_root: Path, rules_root: Path | None = None) -> Path:
@@ -618,13 +860,52 @@ def set_source_enabled_override(
     return {"ok": True, "source": src2, "overrides_file": str(_overrides_path(project_root))}
 
 
-def test_source(source: dict[str, Any], limit: int = 3) -> dict[str, Any]:
+def _normalize_sample_rows(rows: list[dict[str, Any]], limit: int) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for x in rows[: max(1, limit)]:
+        t = str(x.get("title") or "").strip()
+        u = str(x.get("url") or x.get("link") or "").strip()
+        d = str(x.get("published_at") or x.get("date") or "").strip()
+        if not t and not u:
+            continue
+        row = {"title": t, "url": u}
+        if d:
+            row["published_at"] = d
+        out.append(row)
+    return out
+
+
+def _rss_entries_from_bytes(data: bytes, limit: int) -> list[dict[str, str]]:
+    feed = feedparser.parse(data)
+    rows: list[dict[str, str]] = []
+    for e in getattr(feed, "entries", [])[: max(1, limit)]:
+        rows.append(
+            {
+                "title": str(getattr(e, "title", "") or "").strip(),
+                "url": str(getattr(e, "link", "") or "").strip(),
+                "published_at": str(getattr(e, "published", "") or getattr(e, "updated", "") or "").strip(),
+            }
+        )
+    return _normalize_sample_rows(rows, limit)
+
+
+def fetch_source_entries(
+    source: dict[str, Any],
+    *,
+    limit: int = 50,
+    timeout_seconds: int | None = None,
+    retries: int | None = None,
+) -> dict[str, Any]:
+    """
+    Unified source fetch logic used by both test endpoint and runtime collectors.
+    """
     t0 = time.monotonic()
     connector = _canonical_fetcher(str(source.get("connector") or source.get("fetcher") or ""))
-    url = str(source.get("url", ""))
-    sid = str(source.get("id", ""))
+    url = str(source.get("url", "")).strip()
+    sid = str(source.get("id", "")).strip()
     fetch = source.get("fetch", {}) if isinstance(source.get("fetch"), dict) else {}
-    timeout = int(fetch.get("timeout_seconds") or 20)
+    timeout = _safe_int(timeout_seconds if timeout_seconds is not None else fetch.get("timeout_seconds"), 20)
+    retry_n = _safe_int(retries if retries is not None else fetch.get("retry"), 2)
     headers = fetch.get("headers_json", {}) if isinstance(fetch.get("headers_json"), dict) else {}
     auth_ref = str(fetch.get("auth_ref") or "").strip()
     if auth_ref:
@@ -633,184 +914,215 @@ def test_source(source: dict[str, Any], limit: int = 3) -> dict[str, Any]:
             headers = dict(headers)
             if "Authorization" not in headers:
                 headers["Authorization"] = token if (" " in token) else f"Bearer {token}"
-    out = {
+    h = {"User-Agent": "Mozilla/5.0 CodexIVD/1.0"}
+    h.update({str(k): str(v) for k, v in headers.items()})
+
+    out: dict[str, Any] = {
         "source_id": sid,
         "id": sid,
         "name": str(source.get("name", "")),
         "connector": connector,
         "fetcher": connector,
+        "enabled": bool(source.get("enabled", True)),
         "url": url,
         "ok": False,
-        "status": "failed",
+        "status": "fail",
         "items_count": 0,
         "samples": [],
+        "entries": [],
         "errors": [],
-        "sample": [],  # backward-compatible
+        "sample": [],
         "http_status": None,
-        "error": None,  # backward-compatible
+        "error": None,
+        "error_type": "",
+        "error_message": "",
         "duration_ms": 0,
         "discovered_feed_url": "",
+        "discovered_child_feeds": [],
     }
 
-    def _normalize_samples(samples: list[dict[str, str]]) -> list[dict[str, str]]:
-        out_samples: list[dict[str, str]] = []
-        for x in samples[: max(1, limit)]:
-            t = str(x.get("title") or "").strip()
-            u = str(x.get("url") or x.get("link") or "").strip()
-            d = str(x.get("date") or "").strip()
-            if not t and not u:
-                continue
-            row = {"title": t, "url": u}
-            if d:
-                row["date"] = d
-            out_samples.append(row)
-        return out_samples
-
-    def _extract_rss_discovery_url(html: str, page_url: str) -> str:
-        links = re.findall(
-            r"<link[^>]+rel=['\"][^'\"]*alternate[^'\"]*['\"][^>]+>",
-            html,
-            flags=re.I,
-        )
-        for tag in links:
-            if not re.search(r"type=['\"]application/(rss|atom)\+xml['\"]", tag, flags=re.I):
-                continue
-            m = re.search(r"href=['\"]([^'\"]+)['\"]", tag, flags=re.I)
-            if not m:
-                continue
-            href = m.group(1).strip()
-            if href.startswith("http://") or href.startswith("https://"):
-                return href
-            if href.startswith("//"):
-                return f"https:{href}"
-            return page_url.rstrip("/") + "/" + href.lstrip("/")
-        # common fallback
-        parsed = urlparse(page_url)
-        if parsed.scheme and parsed.netloc:
-            base = f"{parsed.scheme}://{parsed.netloc}"
-            for p in ("/rss", "/rss.xml", "/feed", "/atom.xml"):
-                candidate = base + p
-                if _is_valid_url(candidate):
-                    return candidate
-        return ""
+    rss_discovery_enabled = _env_bool("SOURCES_RSS_DISCOVERY_ENABLED", True)
+    index_discovery_enabled = _env_bool("SOURCES_INDEX_DISCOVERY_ENABLED", True)
+    html_fallback_enabled = _env_bool("SOURCES_HTML_FALLBACK_ENABLED", True)
 
     try:
         if connector == "rss":
-            h = {"User-Agent": "Mozilla/5.0 CodexIVD/1.0"}
-            h.update({str(k): str(v) for k, v in headers.items()})
-            req = Request(url, headers=h)
-            with urlopen(req, timeout=timeout) as r:
-                data = r.read()
-                out["http_status"] = int(getattr(r, "status", 200))
-            feed = feedparser.parse(data)
-            samples = _normalize_samples(
-                [{"title": getattr(e, "title", ""), "url": getattr(e, "link", "")} for e in feed.entries[: max(1, limit)]]
-            )
-            if not samples:
+            res = _fetch_url_with_retry(url, h, timeout, retry_n)
+            out["http_status"] = res.get("http_status")
+            if not res.get("ok"):
+                out["error_type"] = str(res.get("error_type") or "network_error")
+                out["error_message"] = str(res.get("error_message") or "request failed")
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+                return out
+
+            data = bytes(res.get("data") or b"")
+            samples = _rss_entries_from_bytes(data, limit)
+            if not samples and rss_discovery_enabled:
                 html = data.decode("utf-8", errors="ignore")
-                discovered = _extract_rss_discovery_url(html, url)
-                out["discovered_feed_url"] = discovered
-                if discovered:
-                    req2 = Request(discovered, headers=h)
-                    with urlopen(req2, timeout=timeout) as r2:
-                        data2 = r2.read()
-                        out["http_status"] = int(getattr(r2, "status", out["http_status"] or 200))
-                    feed2 = feedparser.parse(data2)
-                    samples = _normalize_samples(
-                        [{"title": getattr(e, "title", ""), "url": getattr(e, "link", "")} for e in feed2.entries[: max(1, limit)]]
-                    )
+                feeds = _extract_feed_links_from_html(html, url, same_host_only=True)
+                if not feeds:
+                    parsed = urlparse(url)
+                    if parsed.scheme and parsed.netloc:
+                        base = f"{parsed.scheme}://{parsed.netloc}"
+                        for p in ("/rss", "/rss.xml", "/feed", "/atom.xml"):
+                            candidate = base + p
+                            if _is_valid_url(candidate):
+                                feeds.append({"url": candidate, "name": p})
+                chosen = str(feeds[0]["url"]) if feeds else ""
+                out["discovered_feed_url"] = chosen
+                if chosen:
+                    r2 = _fetch_url_with_retry(chosen, h, timeout, retry_n)
+                    if r2.get("ok"):
+                        out["http_status"] = r2.get("http_status") or out["http_status"]
+                        samples = _rss_entries_from_bytes(bytes(r2.get("data") or b""), limit)
+                    else:
+                        out["error_type"] = str(r2.get("error_type") or "")
+                        out["error_message"] = str(r2.get("error_message") or "")
+            if not samples and html_fallback_enabled:
+                html = data.decode("utf-8", errors="ignore")
+                rows, parse_mode = _generic_html_list_entries(
+                    html, url, limit=limit, selectors=source.get("selectors", {})
+                )
+                samples = _normalize_sample_rows(rows, limit)
+                if not samples and _is_probable_js_page(html):
+                    out["status"] = "skip"
+                    out["error_type"] = "js_required"
+                    out["error_message"] = "page likely requires JS rendering"
+                    out["errors"] = [out["error_message"]]
+                    out["error"] = out["error_message"]
+                    return out
                 if not samples:
-                    samples = _normalize_samples(_extract_web_sample_entries(html, url, limit))
+                    out["error_type"] = "parse_empty" if parse_mode != "selector_regex" else "selector_miss"
+                    out["error_message"] = "no items parsed from rss/html fallback"
+                    out["errors"] = [out["error_message"]]
+                    out["error"] = out["error_message"]
+                    return out
             out["samples"] = samples
+            out["entries"] = samples
             out["sample"] = samples
             out["items_count"] = len(samples)
             out["ok"] = bool(samples)
-            out["status"] = "success" if out["ok"] else "failed"
-            if not out["ok"]:
-                out["errors"] = ["no items parsed from rss/web fallback"]
-                out["error"] = out["errors"][0]
+            out["status"] = "ok" if out["ok"] else "fail"
             return out
 
         if connector == "html":
-            h = {"User-Agent": "Mozilla/5.0 CodexIVD/1.0"}
-            h.update({str(k): str(v) for k, v in headers.items()})
-            req = Request(url, headers=h)
-            with urlopen(req, timeout=timeout) as r:
-                html = r.read().decode("utf-8", errors="ignore")
-                out["http_status"] = int(getattr(r, "status", 200))
-            selectors = source.get("selectors", {}) if isinstance(source.get("selectors"), dict) else {}
-            samples = []
-            item_regex = str(selectors.get("item_regex") or "").strip()
-            title_regex = str(selectors.get("title_regex") or "").strip()
-            link_regex = str(selectors.get("link_regex") or "").strip()
-            if item_regex and title_regex and link_regex:
-                for m in re.finditer(item_regex, html, flags=re.I | re.S):
-                    block = m.group(0)
-                    tm = re.search(title_regex, block, flags=re.I | re.S)
-                    lm = re.search(link_regex, block, flags=re.I | re.S)
-                    if not tm or not lm:
-                        continue
-                    samples.append({"title": re.sub(r"\s+", " ", tm.group(1)).strip(), "url": lm.group(1).strip()})
-                    if len(samples) >= limit:
-                        break
+            res = _fetch_url_with_retry(url, h, timeout, retry_n)
+            out["http_status"] = res.get("http_status")
+            if not res.get("ok"):
+                out["error_type"] = str(res.get("error_type") or "network_error")
+                out["error_message"] = str(res.get("error_message") or "request failed")
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+                return out
+            html = bytes(res.get("data") or b"").decode("utf-8", errors="ignore")
+
+            tags = [str(x).strip().lower() for x in source.get("tags", [])] if isinstance(source.get("tags"), list) else []
+            if index_discovery_enabled and "regulatory" in tags:
+                child = _extract_child_feeds(html, url, same_host_only=True)
+                out["discovered_child_feeds"] = child
+                if child:
+                    default_kws = ["medical devices", "devices", "cdrh", "ivd", "guidance", "alert", "news", "update"]
+                    policy = source.get("discovery_policy", "pick_by_keywords")
+                    chosen = _pick_child_feed(child, policy, keywords=default_kws)
+                    out["discovered_feed_url"] = chosen
+                    if chosen:
+                        r2 = _fetch_url_with_retry(chosen, h, timeout, retry_n)
+                        out["http_status"] = r2.get("http_status") or out["http_status"]
+                        if r2.get("ok"):
+                            samples = _rss_entries_from_bytes(bytes(r2.get("data") or b""), limit)
+                            if samples:
+                                out["samples"] = samples
+                                out["entries"] = samples
+                                out["sample"] = samples
+                                out["items_count"] = len(samples)
+                                out["ok"] = True
+                                out["status"] = "ok"
+                                return out
+
+            if not html_fallback_enabled:
+                out["status"] = "skip"
+                out["error_type"] = "html_fallback_disabled"
+                out["error_message"] = "html fallback parser disabled"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+                return out
+
+            rows, parse_mode = _generic_html_list_entries(
+                html, url, limit=limit, selectors=source.get("selectors", {})
+            )
+            samples = _normalize_sample_rows(rows, limit)
+            if not samples and _is_probable_js_page(html):
+                out["status"] = "skip"
+                out["error_type"] = "js_required"
+                out["error_message"] = "page likely requires JS rendering"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+                return out
             if not samples:
-                samples = _normalize_samples(_extract_web_sample_entries(html, url, limit))
-            if not samples:
-                title_match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
-                title = title_match.group(1).strip() if title_match else ""
-                samples = _normalize_samples([{"title": title, "url": url}])
+                out["error_type"] = "parse_empty" if parse_mode != "selector_regex" else "selector_miss"
+                out["error_message"] = "no items parsed from html page"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+                return out
             out["samples"] = samples
+            out["entries"] = samples
             out["sample"] = samples
             out["items_count"] = len(samples)
             out["ok"] = True
-            out["status"] = "success"
+            out["status"] = "ok"
             return out
 
         if connector == "rsshub":
             base = os.environ.get("RSSHUB_BASE_URL", "").strip().rstrip("/")
             route = str(fetch.get("rsshub_route") or source.get("rsshub_route") or "").strip()
             if not base:
-                msg = "skipped: missing base url"
-                out["status"] = "skipped"
-                out["errors"] = [msg]
-                out["error"] = msg
+                out["status"] = "skip"
+                out["error_type"] = "missing_config"
+                out["error_message"] = "skipped: missing base url"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
                 return out
             if not route:
-                msg = "missing rsshub_route"
-                out["errors"] = [msg]
-                out["error"] = msg
+                out["error_type"] = "missing_config"
+                out["error_message"] = "missing rsshub_route"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
                 return out
             full = f"{base}{route if route.startswith('/') else '/' + route}"
-            h = {"User-Agent": "Mozilla/5.0 CodexIVD/1.0", "Accept": "application/json"}
-            h.update({str(k): str(v) for k, v in headers.items()})
-            req = Request(full, headers=h)
-            with urlopen(req, timeout=timeout) as r:
-                data = r.read()
-                out["http_status"] = int(getattr(r, "status", 200))
-            feed = feedparser.parse(data)
-            samples = _normalize_samples(
-                [{"title": getattr(e, "title", ""), "url": getattr(e, "link", "")} for e in feed.entries[: max(1, limit)]]
-            )
+            out["url"] = full
+            res = _fetch_url_with_retry(full, h, timeout, retry_n)
+            out["http_status"] = res.get("http_status")
+            if not res.get("ok"):
+                out["error_type"] = str(res.get("error_type") or "network_error")
+                out["error_message"] = str(res.get("error_message") or "request failed")
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+                return out
+            samples = _rss_entries_from_bytes(bytes(res.get("data") or b""), limit)
             out["samples"] = samples
+            out["entries"] = samples
             out["sample"] = samples
             out["items_count"] = len(samples)
             out["ok"] = bool(samples)
-            out["status"] = "success" if out["ok"] else "failed"
-            out["url"] = full
+            out["status"] = "ok" if out["ok"] else "fail"
+            if not out["ok"]:
+                out["error_type"] = "parse_empty"
+                out["error_message"] = "rsshub feed parsed but empty"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
             return out
 
         if connector == "google_news":
-            h = {"User-Agent": "Mozilla/5.0 CodexIVD/1.0"}
-            h.update({str(k): str(v) for k, v in headers.items()})
-            req = Request(url, headers=h)
-            with urlopen(req, timeout=timeout) as r:
-                data = r.read()
-                out["http_status"] = int(getattr(r, "status", 200))
-            feed = feedparser.parse(data)
-            raw_samples = _normalize_samples(
-                [{"title": getattr(e, "title", ""), "url": getattr(e, "link", "")} for e in feed.entries[: max(1, limit * 5)]]
-            )
-            # stricter in-sample dedupe for noisy aggregator
+            res = _fetch_url_with_retry(url, h, timeout, retry_n)
+            out["http_status"] = res.get("http_status")
+            if not res.get("ok"):
+                out["error_type"] = str(res.get("error_type") or "network_error")
+                out["error_message"] = str(res.get("error_message") or "request failed")
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+                return out
+            raw_samples = _rss_entries_from_bytes(bytes(res.get("data") or b""), max(1, limit * 5))
             seen: set[tuple[str, str]] = set()
             samples: list[dict[str, str]] = []
             for row in raw_samples:
@@ -824,23 +1136,221 @@ def test_source(source: dict[str, Any], limit: int = 3) -> dict[str, Any]:
                 if len(samples) >= max(1, limit):
                     break
             out["samples"] = samples
+            out["entries"] = samples
             out["sample"] = samples
             out["items_count"] = len(samples)
             out["ok"] = bool(samples)
-            out["status"] = "success" if out["ok"] else "failed"
+            out["status"] = "ok" if out["ok"] else "fail"
+            if not out["ok"]:
+                out["error_type"] = "parse_empty"
+                out["error_message"] = "google_news feed parsed but empty"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
             return out
 
-        msg = f"unsupported fetcher={connector}"
-        out["errors"] = [msg]
-        out["error"] = msg
+        out["error_type"] = "unsupported_fetcher"
+        out["error_message"] = f"unsupported fetcher={connector}"
+        out["errors"] = [out["error_message"]]
+        out["error"] = out["error_message"]
         return out
     except Exception as e:
-        msg = str(e)
-        out["errors"] = [msg]
-        out["error"] = msg
+        out["error_type"] = "unexpected"
+        out["error_message"] = f"{type(e).__name__}: {e}"
+        out["errors"] = [out["error_message"]]
+        out["error"] = out["error_message"]
         return out
     finally:
         out["duration_ms"] = int((time.monotonic() - t0) * 1000)
+
+
+def test_source(
+    source: dict[str, Any],
+    limit: int = 3,
+    timeout_seconds: int | None = None,
+    retries: int | None = None,
+) -> dict[str, Any]:
+    """
+    Backward-compatible single-source test contract.
+    """
+    out = fetch_source_entries(
+        source,
+        limit=max(1, limit),
+        timeout_seconds=timeout_seconds,
+        retries=retries,
+    )
+    # backward-compatible status naming used by existing UI.
+    if out.get("status") == "ok":
+        out["status"] = "success"
+    elif out.get("status") == "fail":
+        out["status"] = "failed"
+    return out
+
+
+def _classify_failure_reason(row: dict[str, Any]) -> str:
+    et = str(row.get("error_type") or "").strip().lower()
+    msg = str(row.get("error_message") or row.get("error") or "").lower()
+    hs = int(row.get("http_status") or 0)
+    if et in {"js_required", "selector_miss", "parse_empty", "timeout", "dns_error"}:
+        return et
+    if hs == 403 or " 403" in msg:
+        return "http_403"
+    if hs == 404 or " 404" in msg:
+        return "http_404"
+    if "timed out" in msg:
+        return "timeout"
+    if "name or service not known" in msg or "nodename nor servname provided" in msg:
+        return "dns_error"
+    if "selector" in msg:
+        return "selector_miss"
+    if "empty" in msg:
+        return "parse_empty"
+    return et or "unknown"
+
+
+def _to_markdown_report(summary: dict[str, Any]) -> str:
+    lines: list[str] = []
+    lines.append("# Sources Test Health Report")
+    lines.append("")
+    lines.append(
+        f"- 总数: {summary.get('total',0)} | 成功: {summary.get('ok',0)} | 失败: {summary.get('fail',0)} | 跳过: {summary.get('skip',0)}"
+    )
+    lines.append("")
+    lines.append("## 按 Fetcher 成功率")
+    for k, v in (summary.get("by_fetcher") or {}).items():
+        total = int(v.get("total", 0))
+        ok = int(v.get("ok", 0))
+        rate = (ok / total * 100.0) if total else 0.0
+        lines.append(f"- {k}: {ok}/{total} ({rate:.1f}%)")
+    lines.append("")
+    lines.append("## 失败原因 TOP10")
+    for x in (summary.get("top_failure_reasons") or [])[:10]:
+        lines.append(f"- {x.get('reason')}: {x.get('count')}")
+    lines.append("")
+    lines.append("## items_count TOP10")
+    for x in (summary.get("top_items_count") or [])[:10]:
+        lines.append(f"- {x.get('id')}: {x.get('items_count')} ({x.get('fetcher')})")
+    lines.append("")
+    lines.append("## 需要人工确认")
+    for x in (summary.get("manual_review_sources") or []):
+        lines.append(f"- {x.get('id')}: {x.get('reason')}")
+    lines.append("")
+    lines.append("## TOP失败源")
+    for x in (summary.get("top_failed_sources") or [])[:10]:
+        lines.append(
+            f"- {x.get('id')} | {x.get('fetcher')} | http={x.get('http_status')} | reason={x.get('error_type') or x.get('error')}"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def run_sources_test_harness(
+    project_root: Path,
+    *,
+    rules_root: Path | None = None,
+    enabled_only: bool = True,
+    source_ids: list[str] | None = None,
+    limit: int = 3,
+    max_workers: int = 6,
+    timeout_seconds: int = 20,
+    retries: int = 2,
+) -> dict[str, Any]:
+    bundle = load_sources_registry_bundle(project_root, rules_root=rules_root)
+    rows = bundle.get("sources", []) if isinstance(bundle, dict) else []
+    ids = {str(x).strip() for x in (source_ids or []) if str(x).strip()}
+    targets: list[dict[str, Any]] = []
+    for s in rows:
+        sid = str(s.get("id", "")).strip()
+        if not sid:
+            continue
+        if enabled_only and not bool(s.get("enabled", True)):
+            continue
+        if ids and sid not in ids:
+            continue
+        targets.append(s)
+
+    workers = max(1, min(8, int(max_workers or 6)))
+    results: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        fut_map = {
+            ex.submit(test_source, src, max(1, limit), timeout_seconds, retries): str(src.get("id", ""))
+            for src in targets
+        }
+        for fut in as_completed(fut_map):
+            sid = fut_map[fut]
+            try:
+                row = fut.result()
+            except Exception as e:  # pragma: no cover - defensive
+                row = {
+                    "id": sid,
+                    "source_id": sid,
+                    "status": "failed",
+                    "ok": False,
+                    "http_status": None,
+                    "items_count": 0,
+                    "samples": [],
+                    "duration_ms": 0,
+                    "error_type": "unexpected",
+                    "error_message": f"{type(e).__name__}: {e}",
+                    "error": f"{type(e).__name__}: {e}",
+                    "fetcher": "",
+                    "enabled": True,
+                    "url": "",
+                    "name": sid,
+                }
+            results.append(row)
+
+    ok_n = sum(1 for r in results if bool(r.get("ok")))
+    skip_n = sum(1 for r in results if str(r.get("status", "")).lower() in {"skip", "skipped"})
+    fail_n = len(results) - ok_n - skip_n
+
+    by_fetcher: dict[str, dict[str, int]] = {}
+    reasons: dict[str, int] = {}
+    for r in results:
+        f = str(r.get("fetcher") or r.get("connector") or "unknown")
+        st = by_fetcher.setdefault(f, {"total": 0, "ok": 0, "fail": 0, "skip": 0})
+        st["total"] += 1
+        if bool(r.get("ok")):
+            st["ok"] += 1
+        elif str(r.get("status", "")).lower() in {"skip", "skipped"}:
+            st["skip"] += 1
+        else:
+            st["fail"] += 1
+            rr = _classify_failure_reason(r)
+            reasons[rr] = reasons.get(rr, 0) + 1
+
+    top_failed = [r for r in results if not bool(r.get("ok")) and str(r.get("status", "")).lower() not in {"skip", "skipped"}]
+    top_failed.sort(key=lambda x: int(x.get("duration_ms") or 0), reverse=True)
+    top_items = sorted(results, key=lambda x: int(x.get("items_count") or 0), reverse=True)
+
+    manual: list[dict[str, str]] = []
+    for r in results:
+        er = _classify_failure_reason(r)
+        if er in {"js_required", "http_403", "selector_miss"}:
+            manual.append({"id": str(r.get("id", "")), "reason": er})
+
+    summary = {
+        "total": len(results),
+        "ok": ok_n,
+        "fail": fail_n,
+        "skip": skip_n,
+        "coverage_enabled_only": bool(enabled_only),
+        "by_fetcher": by_fetcher,
+        "top_failure_reasons": [
+            {"reason": k, "count": v} for k, v in sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))
+        ],
+        "top_failed_sources": top_failed[:10],
+        "top_items_count": [
+            {"id": str(r.get("id", "")), "items_count": int(r.get("items_count") or 0), "fetcher": str(r.get("fetcher", ""))}
+            for r in top_items[:10]
+        ],
+        "manual_review_sources": manual[:20],
+    }
+    return {
+        "ok": True,
+        "summary": summary,
+        "results": results,
+        "markdown": _to_markdown_report(summary),
+    }
 
 
 # Prevent pytest from collecting service function as a test case.

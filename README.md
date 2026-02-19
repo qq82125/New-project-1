@@ -55,6 +55,24 @@ SMTP_FROM_NAME=全球IVD晨报
 
 ### 3.2 启动
 
+建议先做一键预检：
+
+```bash
+./scripts/docker_preflight.sh
+# 或
+make docker-preflight
+```
+
+可选参数：
+
+```bash
+SKIP_PULL=1 ./scripts/docker_preflight.sh
+```
+
+说明：`SKIP_PULL=1` 会跳过公网拉取测试（适合离线环境）。
+
+预检通过后再执行：
+
 ```bash
 docker compose up -d --build
 ```
@@ -157,6 +175,41 @@ python3 scripts/cloud_backup_send.py --dry-run --date 2026-02-16
 
 ---
 
-## 8. License
+## 8. 信源健康巡检（Sources Test Harness）
+
+可对 `sources_registry.v1.yaml` 中启用信源做全量可重复测试，并导出 JSON + Markdown 报告：
+
+```bash
+python3 -m app.workers.cli sources:test \
+  --enabled-only \
+  --limit 3 \
+  --workers 6 \
+  --timeout-seconds 20 \
+  --retries 2 \
+  --json-out artifacts/sources_test.json \
+  --md-out artifacts/sources_test.md
+```
+
+单源测试（与 `/admin/sources/{id}/test` 同逻辑）：
+
+```bash
+python3 -m app.workers.cli sources:test --source-id reuters-health-rss --limit 3
+```
+
+可回滚开关（默认都为 `true`）：
+
+- `SOURCES_RSS_DISCOVERY_ENABLED`：RSS 自动发现
+- `SOURCES_INDEX_DISCOVERY_ENABLED`：RSS 索引页子 feed 发现
+- `SOURCES_HTML_FALLBACK_ENABLED`：HTML 通用列表抓取
+
+示例（关闭某能力）：
+
+```bash
+SOURCES_HTML_FALLBACK_ENABLED=false python3 -m app.workers.cli sources:test --enabled-only
+```
+
+---
+
+## 9. License
 
 MIT

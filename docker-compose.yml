@@ -5,6 +5,7 @@ services:
     command: ["python3", "-m", "app.admin_server"]
     env_file:
       - .docker.env
+      - .mail.env
     environment:
       ADMIN_API_HOST: "0.0.0.0"
       ADMIN_API_PORT: "8789"
@@ -29,6 +30,7 @@ services:
     command: ["python3", "-m", "app.workers.scheduler_worker"]
     env_file:
       - .docker.env
+      - .mail.env
     environment:
       SCHEDULER_PROFILE: "enhanced"
       SCHEDULER_REFRESH_SECONDS: "60"

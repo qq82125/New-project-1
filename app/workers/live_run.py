@@ -15,6 +15,20 @@ from app.adapters.rule_bridge import load_runtime_rules
 from app.rules.engine import RuleEngine
 
 
+def _resolve_env_template(value: str, env: dict[str, str]) -> str:
+    """Resolve ${VAR} and ${VAR:-default} templates used in rules."""
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    if s.startswith("${") and s.endswith("}"):
+        inner = s[2:-1]
+        if ":-" in inner:
+            k, d = inner.split(":-", 1)
+            return str(env.get(k.strip(), d)).strip()
+        return str(env.get(inner.strip(), "")).strip()
+    return s
+
+
 def _utc_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
@@ -98,7 +112,7 @@ def run_digest(
                 # Backward-compatible: if TO_EMAIL absent, pick first configured recipient or fail.
                 rec = (rt.get("email", {}).get("recipients") or [])
                 if isinstance(rec, list) and rec:
-                    to_email = str(rec[0])
+                    to_email = _resolve_env_template(str(rec[0]), env)
             if not to_email:
                 raise RuntimeError("missing TO_EMAIL (and no recipients available)")
             send_cmd = ["./send_mail_icloud.sh", to_email, subject, str(out_file)]

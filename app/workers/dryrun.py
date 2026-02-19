@@ -501,6 +501,36 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             source_payload = json.loads(source_stats_file.read_text(encoding="utf-8"))
         except Exception:
             source_payload = {}
+    source_health_summary: dict[str, Any] = {"total_sources": 0, "ok_sources": 0, "fail_sources": 0, "skip_sources": 0, "by_fetcher": {}}
+    try:
+        rows = source_payload.get("sources", []) if isinstance(source_payload, dict) else []
+        if isinstance(rows, list):
+            source_health_summary["total_sources"] = len(rows)
+            byf: dict[str, dict[str, int]] = {}
+            ok_n = 0
+            fail_n = 0
+            skip_n = 0
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                f = str(r.get("connector", "unknown"))
+                rec = byf.setdefault(f, {"total": 0, "ok": 0, "fail": 0, "skip": 0})
+                rec["total"] += 1
+                if int(r.get("parse_ok", 0) or 0) > 0:
+                    rec["ok"] += 1
+                    ok_n += 1
+                elif int(r.get("parse_skip", 0) or 0) > 0:
+                    rec["skip"] += 1
+                    skip_n += 1
+                else:
+                    rec["fail"] += 1
+                    fail_n += 1
+            source_health_summary["ok_sources"] = ok_n
+            source_health_summary["fail_sources"] = fail_n
+            source_health_summary["skip_sources"] = skip_n
+            source_health_summary["by_fetcher"] = byf
+    except Exception:
+        source_health_summary = {"total_sources": 0, "ok_sources": 0, "fail_sources": 0, "skip_sources": 0, "by_fetcher": {}}
     event_explain_payload = {}
     if event_explain_file.exists():
         try:
@@ -890,6 +920,7 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         "items_after_count": int(cluster_payload.get("items_after_count", len(items))),
         "top_clusters": cluster_payload.get("top_clusters", []),
         "source_stats": source_payload.get("sources", []),
+        "source_health_summary": source_health_summary,
         "platform_diag": platform_diag,
         "lane_diag": lane_diag,
         "event_diag": event_diag,
