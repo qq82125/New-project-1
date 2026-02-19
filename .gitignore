@@ -12,3 +12,4 @@ data/*.db
 artifacts/
 ivd_morning_*.txt
 reports/
+pgdata/

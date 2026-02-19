@@ -518,6 +518,32 @@ def load_sources_registry_bundle(
 
         overrides = _load_overrides(project_root)
         merged = _apply_overrides(sources, overrides)
+        # Merge runtime fetch/test status from DB so /admin/sources can show "最近抓取" and status pills.
+        try:
+            store = RulesStore(project_root)
+            db_rows = store.list_sources()
+            by_id = {str(x.get("id", "")).strip(): x for x in db_rows if str(x.get("id", "")).strip()}
+            sync_fields = (
+                "last_fetched_at",
+                "last_fetch_status",
+                "last_fetch_http_status",
+                "last_fetch_error",
+                "last_success_at",
+                "last_http_status",
+                "last_error",
+                "updated_at",
+            )
+            for row in merged:
+                sid = str(row.get("id", "")).strip()
+                db = by_id.get(sid)
+                if not isinstance(db, dict):
+                    continue
+                for f in sync_fields:
+                    if f in db:
+                        row[f] = db.get(f)
+        except Exception:
+            # Keep registry loading resilient; UI can still operate without runtime stats.
+            pass
         return {
             "version": version,
             "sources": merged,

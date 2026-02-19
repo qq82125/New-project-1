@@ -210,6 +210,33 @@ SOURCES_HTML_FALLBACK_ENABLED=false python3 -m app.workers.cli sources:test --en
 
 ---
 
+## 9. 数据库迁移（SQLite -> PostgreSQL）
+
+已支持控制面数据库底座切换与灰度：
+
+- `DATABASE_URL`：主库（可 PostgreSQL 或 SQLite）
+- `DATABASE_URL_SECONDARY`：影子库（灰度对比/双写）
+- `DB_WRITE_MODE=single|dual`
+- `DB_READ_MODE=primary|shadow_compare`
+- `DB_DUAL_STRICT=false|true`（默认 `false`，secondary 写失败仅告警）
+
+一键脚本：
+
+```bash
+# 预检 + 迁移 + 校验 + 双库回放对比
+DATABASE_URL='postgresql+psycopg://USER:PASS@HOST:5432/DB' \
+DATABASE_URL_SECONDARY='sqlite:///data/rules.db' \
+./scripts/db_cutover.sh go
+
+# 输出 dual 模式 env
+./scripts/db_cutover.sh enable-dual
+
+# 输出回滚 SQLite env
+./scripts/db_cutover.sh rollback
+```
+
+详见：`docs/DB_MIGRATION_PLAN.md` 与 `docs/DB_SCHEMA.md`。
+
 ## 9. License
 
 MIT

@@ -735,24 +735,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         return rows
 
     def _config_for_version(ruleset: str, profile: str, version: str) -> dict[str, Any] | None:
-        table_map = {
-            "email_rules": "email_rules_versions",
-            "content_rules": "content_rules_versions",
-            "qc_rules": "qc_rules_versions",
-            "output_rules": "output_rules_versions",
-        }
-        table = table_map.get(ruleset, "")
-        if not table:
+        if ruleset not in {"email_rules", "content_rules", "qc_rules", "output_rules", "scheduler_rules"}:
             return None
-        with store._connect() as conn:  # noqa: SLF001
-            row = conn.execute(
-                f"SELECT config_json FROM {table} WHERE profile = ? AND version = ? LIMIT 1",
-                (profile, version),
-            ).fetchone()
-        if row is None:
-            return None
-        obj = json.loads(str(row["config_json"]))
-        return obj if isinstance(obj, dict) else None
+        return store.get_version_config(ruleset, profile, version)
 
     def _diff_keys(left: dict[str, Any], right: dict[str, Any]) -> list[str]:
         keys = sorted(set(left.keys()) | set(right.keys()))

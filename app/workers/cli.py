@@ -7,6 +7,7 @@ from subprocess import CalledProcessError
 from app.rules.errors import RULES_003_RULESET_MISMATCH, RuleEngineError
 from app.rules.engine import RuleEngine
 from app.rules.models import RuleSelection
+from app.services.db_migration import dual_replay_compare, migrate_sqlite_to_target, verify_sqlite_vs_target
 from app.services.source_registry import (
     SourceRegistryError,
     diff_sources_for_profiles,
@@ -230,13 +231,68 @@ def cmd_sources_retire(argv: list[str]) -> int:
     return 0
 
 
+def cmd_db_migrate(argv: list[str]) -> int:
+    from pathlib import Path
+    import os
+
+    target_url = _get_opt(argv, "--target-url") or os.environ.get("DATABASE_URL", "")
+    source_sqlite = _get_opt(argv, "--source-sqlite") or "data/rules.db"
+    batch_size = int(_get_opt(argv, "--batch-size") or "500")
+    resume = (_get_opt(argv, "--resume") or "true").strip().lower() != "false"
+    if not target_url:
+        print("--target-url (or DATABASE_URL) is required", file=sys.stderr)
+        return 2
+    out = migrate_sqlite_to_target(
+        project_root=Path.cwd(),
+        target_url=target_url,
+        source_sqlite_path=Path(source_sqlite),
+        batch_size=batch_size,
+        resume=resume,
+    )
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0 if bool(out.get("ok")) else 4
+
+
+def cmd_db_verify(argv: list[str]) -> int:
+    from pathlib import Path
+    import os
+
+    target_url = _get_opt(argv, "--target-url") or os.environ.get("DATABASE_URL", "")
+    source_sqlite = _get_opt(argv, "--source-sqlite") or "data/rules.db"
+    if not target_url:
+        print("--target-url (or DATABASE_URL) is required", file=sys.stderr)
+        return 2
+    out = verify_sqlite_vs_target(
+        project_root=Path.cwd(),
+        target_url=target_url,
+        source_sqlite_path=Path(source_sqlite),
+    )
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0 if bool(out.get("ok")) else 4
+
+
+def cmd_db_dual_replay(argv: list[str]) -> int:
+    from pathlib import Path
+    import os
+
+    primary_url = _get_opt(argv, "--primary-url") or os.environ.get("DATABASE_URL", "")
+    secondary_url = _get_opt(argv, "--secondary-url") or os.environ.get("DATABASE_URL_SECONDARY", "")
+    if not primary_url or not secondary_url:
+        print("--primary-url/--secondary-url (or DATABASE_URL/DATABASE_URL_SECONDARY) are required", file=sys.stderr)
+        return 2
+    out = dual_replay_compare(project_root=Path.cwd(), primary_url=primary_url, secondary_url=secondary_url)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0 if bool(out.get("ok")) else 4
+
+
 def main() -> int:
     argv = sys.argv[1:]
     if not argv:
         print(
             "Usage: python -m app.workers.cli "
             "rules:validate|rules:print|rules:dryrun|rules:replay|"
-            "sources:list|sources:validate|sources:test|sources:diff|sources:retire [options]",
+            "sources:list|sources:validate|sources:test|sources:diff|sources:retire|"
+            "db:migrate|db:verify|db:dual-replay [options]",
             file=sys.stderr,
         )
         return 2
@@ -262,6 +318,12 @@ def main() -> int:
             return cmd_sources_diff(tail)
         if cmd == "sources:retire":
             return cmd_sources_retire(tail)
+        if cmd == "db:migrate":
+            return cmd_db_migrate(tail)
+        if cmd == "db:verify":
+            return cmd_db_verify(tail)
+        if cmd == "db:dual-replay":
+            return cmd_db_dual_replay(tail)
         print(f"Unknown command: {cmd}", file=sys.stderr)
         return 2
     except RuleEngineError as e:

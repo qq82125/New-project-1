@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,36 @@ def _utc_now() -> str:
 
 
 class RulesStore:
+    def __new__(cls, project_root: Path, db_path: Path | None = None, auto_init: bool = True):  # type: ignore[override]
+        # Keep legacy default behavior (SQLite) by default.
+        # Switch to SQLAlchemy store when:
+        # - DATABASE_URL points to non-sqlite backend, or
+        # - dual/shadow mode is enabled, or
+        # - DATABASE_URL_SECONDARY is configured.
+        database_url_raw = os.environ.get("DATABASE_URL", "").strip()
+        database_url = database_url_raw.lower()
+        write_mode = os.environ.get("DB_WRITE_MODE", "single").strip().lower()
+        read_mode = os.environ.get("DB_READ_MODE", "primary").strip().lower()
+        has_secondary = bool(os.environ.get("DATABASE_URL_SECONDARY", "").strip())
+        use_sqlalchemy = (
+            db_path is None
+            and (
+                (bool(database_url) and (not database_url.startswith("sqlite")))
+                or has_secondary
+                or write_mode == "dual"
+                or read_mode == "shadow_compare"
+            )
+        )
+        if cls is RulesStore and use_sqlalchemy:
+            from app.services.rules_store_sa import SQLAlchemyRulesStore
+
+            return SQLAlchemyRulesStore(
+                project_root=project_root,
+                database_url=(database_url_raw or f"sqlite:///{(project_root / 'data' / 'rules.db').as_posix()}"),
+                auto_init=auto_init,
+            )
+        return super().__new__(cls)
+
     def __init__(self, project_root: Path, db_path: Path | None = None, auto_init: bool = True) -> None:
         self.project_root = project_root
         self.db_path = db_path or (project_root / "data" / "rules.db")
@@ -251,6 +282,18 @@ class RulesStore:
                 }
                 for r in rows
             ]
+
+    def get_version_config(self, ruleset: str, profile: str, version: str) -> dict[str, Any] | None:
+        table = self._table_name(ruleset)
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT config_json FROM {table} WHERE profile = ? AND version = ? LIMIT 1",
+                (profile, version),
+            ).fetchone()
+        if row is None:
+            return None
+        obj = json.loads(str(row["config_json"]))
+        return obj if isinstance(obj, dict) else None
 
     def create_version(
         self,

@@ -1,4 +1,22 @@
 services:
+  db:
+    image: postgres:15-alpine
+    container_name: ivd-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ivd}
+      POSTGRES_USER: ${POSTGRES_USER:-ivd}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ivd_dev_only_change_me}
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ivd} -d ${POSTGRES_DB:-ivd} -h 127.0.0.1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   admin-api:
     build: .
     container_name: ivd-admin-api
@@ -9,6 +27,14 @@ services:
     environment:
       ADMIN_API_HOST: "0.0.0.0"
       ADMIN_API_PORT: "8789"
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://ivd:ivd_dev_only_change_me@db:5432/ivd}
+      DATABASE_URL_SECONDARY: ${DATABASE_URL_SECONDARY:-sqlite:///data/rules.db}
+      DB_WRITE_MODE: ${DB_WRITE_MODE:-dual}
+      DB_READ_MODE: ${DB_READ_MODE:-shadow_compare}
+      DB_DUAL_STRICT: ${DB_DUAL_STRICT:-false}
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
       - "8090:8789"
     volumes:
@@ -34,6 +60,14 @@ services:
     environment:
       SCHEDULER_PROFILE: "enhanced"
       SCHEDULER_REFRESH_SECONDS: "60"
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://ivd:ivd_dev_only_change_me@db:5432/ivd}
+      DATABASE_URL_SECONDARY: ${DATABASE_URL_SECONDARY:-sqlite:///data/rules.db}
+      DB_WRITE_MODE: ${DB_WRITE_MODE:-dual}
+      DB_READ_MODE: ${DB_READ_MODE:-shadow_compare}
+      DB_DUAL_STRICT: ${DB_DUAL_STRICT:-false}
+    depends_on:
+      db:
+        condition: service_healthy
     volumes:
       # Run code from image to avoid macOS bind-mount import deadlock.
       - ./rules:/app/rules
