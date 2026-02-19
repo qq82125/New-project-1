@@ -86,6 +86,7 @@ docker compose up -d --build
 说明：
 - `docker-compose.yml` 会把 `./app`、`./rules`、`./data`、`./artifacts`、`./logs` 挂载进容器，方便迭代。
 - `scripts/` 和根目录脚本（如 `send_mail_icloud.sh`）在镜像内，改动后需要 `--build` 才会生效。
+- 默认数据库运行模式为：`PG 主库 + DB_WRITE_MODE=single + DB_READ_MODE=primary`（稳定态）。
 
 ---
 
@@ -220,6 +221,12 @@ SOURCES_HTML_FALLBACK_ENABLED=false python3 -m app.workers.cli sources:test --en
 - `DB_READ_MODE=primary|shadow_compare`
 - `DB_DUAL_STRICT=false|true`（默认 `false`，secondary 写失败仅告警）
 
+当前默认（docker-compose）：
+- `DATABASE_URL=postgresql+psycopg://...@db:5432/ivd`
+- `DATABASE_URL_SECONDARY=`（空）
+- `DB_WRITE_MODE=single`
+- `DB_READ_MODE=primary`
+
 一键脚本：
 
 ```bash
@@ -236,6 +243,30 @@ DATABASE_URL_SECONDARY='sqlite:///data/rules.db' \
 ```
 
 详见：`docs/DB_MIGRATION_PLAN.md` 与 `docs/DB_SCHEMA.md`。
+
+### 9.1 DB 层幂等唯一约束（已生效）
+
+- `profile + version`（5 张规则版本表）
+- `send_key`（`send_attempts`）
+- `run_key`（`run_executions`）
+- `dedupe_key`（`dedupe_keys`）
+
+### 9.2 上线后在线验收（推荐）
+
+```bash
+PYTHONPATH=. alembic upgrade head
+docker compose up -d --build
+
+# 容器内确认运行模式
+docker compose exec -T admin-api /bin/sh -lc 'echo DATABASE_URL=$DATABASE_URL; echo DATABASE_URL_SECONDARY=$DATABASE_URL_SECONDARY; echo DB_WRITE_MODE=$DB_WRITE_MODE; echo DB_READ_MODE=$DB_READ_MODE'
+
+# healthz 确认
+docker compose exec -T admin-api /bin/sh -lc 'curl -fsS http://127.0.0.1:8789/healthz'
+
+# PG 约束确认
+docker compose exec -T db psql -U ivd -d ivd -c "SELECT conname, conrelid::regclass::text AS table_name FROM pg_constraint WHERE conname IN ('uq_send_attempts_send_key','uq_dedupe_keys_dedupe_key','uq_email_rules_profile_version','uq_content_rules_profile_version','uq_qc_rules_profile_version','uq_output_rules_profile_version','uq_scheduler_rules_profile_version') ORDER BY conname;"
+docker compose exec -T db psql -U ivd -d ivd -c "SELECT indexname,indexdef FROM pg_indexes WHERE tablename='run_executions' AND indexname='uq_run_executions_run_key';"
+```
 
 ## 9. License
 
