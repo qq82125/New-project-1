@@ -375,6 +375,11 @@ def render_digest_from_assets(
     opportunity_enabled = bool(opportunity_cfg.get("enabled", profile == "enhanced"))
     opportunity_window_days = max(1, int(opportunity_cfg.get("window_days", 7) or 7))
     opportunity_asset_dir = str(opportunity_cfg.get("asset_dir", "artifacts/opportunity") or "artifacts/opportunity")
+    opportunity_dedupe_cfg = opportunity_cfg.get("dedupe", {}) if isinstance(opportunity_cfg.get("dedupe"), dict) else {}
+    opportunity_display_cfg = opportunity_cfg.get("display", {}) if isinstance(opportunity_cfg.get("display"), dict) else {}
+    opportunity_dedupe_enabled = bool(opportunity_dedupe_cfg.get("enabled", profile == "enhanced"))
+    opportunity_tail_lines_scan = max(1, int(opportunity_dedupe_cfg.get("tail_lines_scan", 2000) or 2000))
+    opportunity_top_n = max(1, int(opportunity_display_cfg.get("top_n", 5) or 5))
     opportunity_store = OpportunityStore(Path("."), asset_dir=opportunity_asset_dir) if opportunity_enabled else None
     relevance_runtime = {
         "profile": profile,
@@ -426,6 +431,9 @@ def render_digest_from_assets(
     evidence_missing_sources: dict[str, int] = {}
     evidence_present_core_count = 0
     opportunity_signals_written = 0
+    opportunity_signals_deduped = 0
+    opportunity_signals_dropped_probe = 0
+    opportunity_index_kpis: dict[str, Any] = {}
 
     lines: list[str] = [subject, ""]
 
@@ -462,7 +470,7 @@ def render_digest_from_assets(
             try:
                 et = str(rr.get("event_type", "")).strip() or "__unknown__"
                 wk = _event_weight_key(et)
-                opportunity_store.append_signal(
+                wres = opportunity_store.append_signal(
                     {
                         "date": date_str,
                         "region": str(rr.get("region", "")).strip() or "__unknown__",
@@ -472,8 +480,13 @@ def render_digest_from_assets(
                         "source_id": str(rr.get("source_id", "")).strip(),
                         "url_norm": url_norm(str(rr.get("url", "")).strip()),
                     }
+                    ,
+                    dedupe_enabled=opportunity_dedupe_enabled,
+                    tail_lines_scan=opportunity_tail_lines_scan,
                 )
-                opportunity_signals_written += 1
+                opportunity_signals_written += int((wres or {}).get("written", 0) or 0)
+                opportunity_signals_deduped += int((wres or {}).get("deduped", 0) or 0)
+                opportunity_signals_dropped_probe += int((wres or {}).get("dropped_probe", 0) or 0)
             except Exception:
                 pass
 
@@ -710,6 +723,11 @@ def render_digest_from_assets(
             f"dropped_by_source_policy_count：{source_policy_dropped_count} | dropped_by_source_policy_top3：{sp_top}"
         )
     if opportunity_enabled:
+        lines.append(
+            "opportunity_signals_written/deduped/dropped_probe："
+            f"{opportunity_signals_written}/{opportunity_signals_deduped}/{opportunity_signals_dropped_probe}"
+        )
+    if opportunity_enabled:
         lines.append("")
         lines.append(f"H. 机会强度指数（近{opportunity_window_days}天）")
         try:
@@ -718,22 +736,48 @@ def render_digest_from_assets(
                 window_days=opportunity_window_days,
                 asset_dir=opportunity_asset_dir,
                 as_of=date_str,
+                display=opportunity_display_cfg,
             )
-            rows_idx = list((idx.get("region_lane", {}) if isinstance(idx.get("region_lane", {}), dict) else {}).values())
-            rows_idx = [r for r in rows_idx if isinstance(r, dict)]
-            rows_idx.sort(key=lambda x: int(x.get("score", 0) or 0), reverse=True)
+            rows_idx = idx.get("top", []) if isinstance(idx, dict) else []
+            if not isinstance(rows_idx, list):
+                rows_idx = []
             if not rows_idx:
                 lines.append("- 暂无显著机会变化")
             else:
-                for r in rows_idx[:5]:
+                for r in rows_idx[:opportunity_top_n]:
                     delta = int(r.get("delta_vs_prev_window", 0) or 0)
                     arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "→")
                     region = str(r.get("region", "__unknown__")).strip() or "__unknown__"
                     lane = str(r.get("lane", "__unknown__")).strip() or "__unknown__"
-                    lines.append(f"- {lane}（{region}）：{arrow} {delta:+d}")
+                    score = int(r.get("score", 0) or 0)
+                    low_conf = " [LOW_CONF]" if bool(r.get("low_confidence", False)) else ""
+                    lines.append(f"- {lane}（{region}）：{arrow} {delta:+d} | score={score}{low_conf}")
+                    contrib_rows = r.get("contrib_top2", []) if isinstance(r.get("contrib_top2"), list) else []
+                    if contrib_rows:
+                        parts: list[str] = []
+                        for c in contrib_rows[:2]:
+                            if not isinstance(c, dict):
+                                continue
+                            et = str(c.get("event_type", "__unknown__")).strip() or "__unknown__"
+                            ws = int(c.get("weight_sum", 0) or 0)
+                            cnt = int(c.get("count", 0) or 0)
+                            parts.append(f"{et}={ws} ({cnt})")
+                        if parts:
+                            lines.append(f"  contrib: {'; '.join(parts)}")
+            kpis = idx.get("kpis", {}) if isinstance(idx.get("kpis"), dict) else {}
+            opportunity_index_kpis = dict(kpis)
+            lines.append(
+                "- kpis: "
+                + f"unknown_region_rate={float(kpis.get('unknown_region_rate', 0.0) or 0.0):.2f}, "
+                + f"unknown_lane_rate={float(kpis.get('unknown_lane_rate', 0.0) or 0.0):.2f}, "
+                + f"unknown_event_type_rate={float(kpis.get('unknown_event_type_rate', 0.0) or 0.0):.2f}"
+            )
         except Exception:
             lines.append("- 暂无显著机会变化")
-        lines.append(f"- opportunity_signals_written：{opportunity_signals_written}")
+        lines.append(
+            f"- opportunity_signals_written/deduped/dropped_probe："
+            f"{opportunity_signals_written}/{opportunity_signals_deduped}/{opportunity_signals_dropped_probe}"
+        )
     if not items:
         lines.append("分流规则缺口说明：collect 资产窗口内无条目，请检查 collect 调度、信源可达性和资产目录。")
     txt = "\n".join(lines).rstrip() + "\n"
@@ -766,6 +810,9 @@ def render_digest_from_assets(
         "opportunity_index_enabled": bool(opportunity_enabled),
         "opportunity_window_days": int(opportunity_window_days),
         "opportunity_signals_written": int(opportunity_signals_written),
+        "opportunity_signals_deduped": int(opportunity_signals_deduped),
+        "opportunity_signals_dropped_probe": int(opportunity_signals_dropped_probe),
+        "opportunity_index_kpis": opportunity_index_kpis,
         "dedupe_cluster_enabled": bool(items_before_dedupe),
         "items_before_dedupe": items_before_dedupe,
         "items_after_dedupe": items_after_dedupe,

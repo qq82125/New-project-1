@@ -63,6 +63,14 @@ defaults:
   opportunity_index:
     enabled: false
     window_days: 7
+    dedupe:
+      enabled: false
+      tail_lines_scan: 2000
+    display:
+      top_n: 5
+      suppress_unknown_both: true
+      unknown_min_score: 5
+      mark_low_conf: true
   frontier_policy:
     require_diagnostic_anchor: false
     drop_bio_general_without_diagnostic: false

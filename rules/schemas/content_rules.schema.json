@@ -215,7 +215,25 @@
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean", "default": true },
-            "window_days": { "type": "integer", "minimum": 1, "maximum": 30, "default": 7 }
+            "window_days": { "type": "integer", "minimum": 1, "maximum": 30, "default": 7 },
+            "dedupe": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean", "default": true },
+                "tail_lines_scan": { "type": "integer", "minimum": 1, "maximum": 20000, "default": 2000 }
+              },
+              "additionalProperties": true
+            },
+            "display": {
+              "type": "object",
+              "properties": {
+                "top_n": { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 },
+                "suppress_unknown_both": { "type": "boolean", "default": true },
+                "unknown_min_score": { "type": "integer", "minimum": 0, "maximum": 1000, "default": 5 },
+                "mark_low_conf": { "type": "boolean", "default": true }
+              },
+              "additionalProperties": true
+            }
           },
           "additionalProperties": true
         },

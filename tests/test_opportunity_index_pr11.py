@@ -47,6 +47,8 @@ class OpportunityIndexPR11Tests(unittest.TestCase):
                         "source_id": "fda",
                         "url_norm": "https://example.com/today",
                     }
+                    ,
+                    dedupe_enabled=False,
                 )
             store.append_signal(
                 {
@@ -128,4 +130,3 @@ class OpportunityIndexPR11Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

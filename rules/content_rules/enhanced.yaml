@@ -138,6 +138,14 @@ defaults:
   opportunity_index:
     enabled: true
     window_days: 7
+    dedupe:
+      enabled: true
+      tail_lines_scan: 2000
+    display:
+      top_n: 5
+      suppress_unknown_both: true
+      unknown_min_score: 5
+      mark_low_conf: true
   coverage_enforcement:
     a_core_min_items: 8
     f_frontier_quota: 3

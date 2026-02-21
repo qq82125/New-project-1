@@ -50,6 +50,9 @@ MODE_TO_CHECKS = {
         "opportunity_signals_written",
         "digest_structure_has_h",
         "opportunity_window_days_effective",
+        "opportunity_h_contrib_or_fallback",
+        "opportunity_unknown_kpis_valid",
+        "opportunity_signal_stats_valid",
     },
     "quality": {
         "collect_jsonl_written",
@@ -349,6 +352,33 @@ def _check_opportunity_window_days_effective(project_root: Path, as_of: str, *, 
     return ok, f"window_days={window_days}, probe_score={score}, keys={len(rows) if isinstance(rows, dict) else 0}"
 
 
+def _check_h_has_contrib_or_fallback(text: str) -> tuple[bool, str]:
+    t = str(text or "")
+    has_contrib = "contrib:" in t
+    has_fallback = "暂无显著机会变化" in t
+    ok = has_contrib or has_fallback
+    return ok, f"has_contrib={has_contrib}, has_fallback={has_fallback}"
+
+
+def _check_opportunity_unknown_kpis(meta: dict[str, Any]) -> tuple[bool, str]:
+    kpis = meta.get("opportunity_index_kpis", {}) if isinstance(meta.get("opportunity_index_kpis"), dict) else {}
+    keys = ["unknown_region_rate", "unknown_lane_rate", "unknown_event_type_rate"]
+    missing = [k for k in keys if k not in kpis]
+    if missing:
+        return False, f"missing_kpis={','.join(missing)}"
+    vals = [float(kpis.get(k, -1)) for k in keys]
+    ok = all(0.0 <= v <= 1.0 for v in vals)
+    return ok, f"unknown_rates={vals}"
+
+
+def _check_opportunity_signal_stats(meta: dict[str, Any]) -> tuple[bool, str]:
+    written = int(meta.get("opportunity_signals_written", -1) or 0)
+    deduped = int(meta.get("opportunity_signals_deduped", -1) or 0)
+    dropped_probe = int(meta.get("opportunity_signals_dropped_probe", -1) or 0)
+    ok = written > 0 and deduped >= 0 and dropped_probe >= 0
+    return ok, f"written={written}, deduped={deduped}, dropped_probe={dropped_probe}"
+
+
 def _load_analysis_cache_index(project_root: Path, *, asset_dir: str = "artifacts/analysis", keep_days: int = 7) -> dict[str, Any]:
     by_key: dict[str, dict[str, Any]] = {}
     by_url_norm: dict[str, dict[str, Any]] = {}
@@ -617,6 +647,13 @@ def run_acceptance(*, project_root: Path, mode: str = "smoke", as_of: str | None
         shutil.rmtree(acceptance_dir, ignore_errors=True)
     _ensure_dir(acceptance_dir)
     _ensure_dir(acceptance_dir / "logs")
+    if not keep_artifacts:
+        today_opp = project_root / "artifacts" / "opportunity" / f"opportunity_signals-{as_of.replace('-', '')}.jsonl"
+        if today_opp.exists():
+            try:
+                today_opp.unlink()
+            except Exception:
+                pass
 
     checks: list[dict[str, Any]] = []
     key_logs: list[str] = []
@@ -1049,6 +1086,7 @@ def run_acceptance(*, project_root: Path, mode: str = "smoke", as_of: str | None
         source_id="acceptance-source",
         source_name="Acceptance Synthetic Source",
         source_group="media",
+        source_trust_tier="B",
         items=seed_items,
     )
     collect_rows = collect_store.load_window_items(window_hours=48)
@@ -1068,6 +1106,7 @@ def run_acceptance(*, project_root: Path, mode: str = "smoke", as_of: str | None
         return_meta=True,
     )
     digest_text = str((digest_out or {}).get("text", "")) if isinstance(digest_out, dict) else str(digest_out or "")
+    digest_meta = (digest_out or {}).get("meta", {}) if isinstance(digest_out, dict) else {}
     (acceptance_dir / "logs" / "digest_preview.txt").write_text(digest_text, encoding="utf-8")
     key_logs.append(f"digest_preview={acceptance_dir / 'logs' / 'digest_preview.txt'}")
 
@@ -1149,6 +1188,27 @@ def run_acceptance(*, project_root: Path, mode: str = "smoke", as_of: str | None
             "检查 opportunity_index.window_days 与机会指数窗口过滤实现。",
             "预埋 10 天前 probe 信号后，窗口=7 天不应命中该 probe。",
             lambda: _check_opportunity_window_days_effective(project_root, as_of, window_days=7),
+        ),
+        (
+            "opportunity_h_contrib_or_fallback",
+            "H 段包含 contrib 解释或固定无数据文案",
+            "检查 H 段渲染逻辑，确保有数据时输出 contrib，无数据时输出固定文案。",
+            "digest_preview 需包含 contrib: 或“暂无显著机会变化”。",
+            lambda: _check_h_has_contrib_or_fallback(digest_text),
+        ),
+        (
+            "opportunity_unknown_kpis_valid",
+            "Opportunity unknown KPI 存在且范围有效",
+            "检查 opportunity_index KPI 计算与写入 meta。",
+            "meta 应包含 unknown_*_rate 且值在 [0,1]。",
+            lambda: _check_opportunity_unknown_kpis(digest_meta if isinstance(digest_meta, dict) else {}),
+        ),
+        (
+            "opportunity_signal_stats_valid",
+            "Opportunity 写入统计有效",
+            "检查 append_signal 返回值聚合逻辑（written/deduped/dropped_probe）。",
+            "meta 中 written>0 且 deduped/dropped_probe 为非负整数。",
+            lambda: _check_opportunity_signal_stats(digest_meta if isinstance(digest_meta, dict) else {}),
         ),
     ]
 
