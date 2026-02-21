@@ -468,10 +468,43 @@ def render_digest_from_assets(
 
     core_count = len([r for r in items if str(r.get("track", "")) == "core"])
     frontier_count = len([r for r in items if str(r.get("track", "")) == "frontier"])
+    items_before_dedupe = len(items)
+    dedupe_keys: set[str] = set()
+    for r in items:
+        sid = str(r.get("story_id", "")).strip()
+        if sid:
+            dedupe_keys.add(f"story:{sid}")
+            continue
+        u = url_norm(str(r.get("url", "")).strip())
+        if u:
+            dedupe_keys.add(f"url:{u}")
+            continue
+        t = str(r.get("title", "")).strip().lower()
+        if t:
+            dedupe_keys.add(f"title:{t}")
+    items_after_dedupe = len(dedupe_keys) if dedupe_keys else items_before_dedupe
+    clusters_total = items_after_dedupe
+    reduction_ratio = 0.0
+    if items_before_dedupe > 0:
+        reduction_ratio = max(0.0, (items_before_dedupe - items_after_dedupe) / float(items_before_dedupe))
+
+    primary_source_dist: dict[str, int] = {}
+    for r in items:
+        src = str(r.get("source", "")).strip() or str(r.get("source_id", "")).strip() or "unknown"
+        primary_source_dist[src] = primary_source_dist.get(src, 0) + 1
+    source_top = sorted(primary_source_dist.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+    source_top_s = "; ".join([f"{k}:{v}" for k, v in source_top]) or "无"
+
     lines.append("G. 质量指标 (Quality Audit)")
     lines.append(
         f"24H条目数 / 7D补充数：{len(top)} / 0 | 亚太占比：{(regs.get('亚太',0)+regs.get('中国',0))/max(1,len(top)):.0%} | "
         f"商业与监管事件比：待细分 | 必查信源命中清单：待接入 | core/frontier覆盖：{core_count}/{frontier_count}"
+    )
+    lines.append(
+        f"dedupe_cluster_enabled：{str(bool(items_before_dedupe)).lower()} | "
+        f"items_before_dedupe：{items_before_dedupe} | items_after_dedupe：{items_after_dedupe} | "
+        f"clusters_total：{clusters_total} | reduction_ratio：{reduction_ratio:.0%} | "
+        f"primary_source_distribution_top5：{source_top_s}"
     )
     reason_top = "; ".join([f"{k}:{v}" for k, v in sorted(degraded_reasons.items(), key=lambda kv: (-kv[1], kv[0]))[:3]]) or "无"
     lines.append(
@@ -493,6 +526,14 @@ def render_digest_from_assets(
         "analysis_prompt_version": prompt_version,
         "analysis_model": model_name,
         "analysis_cache_enabled": enable_analysis_cache,
+        "dedupe_cluster_enabled": bool(items_before_dedupe),
+        "items_before_dedupe": items_before_dedupe,
+        "items_after_dedupe": items_after_dedupe,
+        "clusters_total": clusters_total,
+        "reduction_ratio": reduction_ratio,
+        "primary_source_distribution_top5": [
+            {"source": k, "count": v} for k, v in source_top
+        ],
     }
     if return_meta:
         return {"text": txt, "meta": meta}

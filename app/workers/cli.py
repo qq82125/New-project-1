@@ -26,6 +26,7 @@ from app.services.source_registry import (
 from app.services.collect_asset_store import CollectAssetStore
 from app.services.analysis_cache_store import AnalysisCacheStore
 from app.services.analysis_generator import AnalysisGenerator, degraded_analysis
+from scripts.acceptance_run import run_acceptance
 from app.workers.dryrun import main as dryrun_main
 from app.workers.live_run import run_digest
 from app.workers.replay import main as replay_main
@@ -496,6 +497,16 @@ def cmd_digest_now(argv: list[str]) -> int:
     return 0 if bool(out.get("ok")) else 4
 
 
+def cmd_acceptance_run(argv: list[str]) -> int:
+    mode = (_get_opt(argv, "--mode") or "smoke").strip().lower()
+    as_of = _get_opt(argv, "--as-of")
+    keep_artifacts = "--keep-artifacts" in argv
+    root = Path(__file__).resolve().parents[2]
+    out = run_acceptance(project_root=root, mode=mode, as_of=as_of, keep_artifacts=keep_artifacts)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0 if bool(out.get("ok")) else 4
+
+
 def main() -> int:
     argv = sys.argv[1:]
     if not argv:
@@ -504,7 +515,7 @@ def main() -> int:
             "rules:validate|rules:print|rules:dryrun|rules:replay|"
             "sources:list|sources:validate|sources:test|sources:diff|sources:retire|"
             "db:migrate|db:verify|db:dual-replay|db:status|"
-            "collect-now|collect-clean|analysis-clean|analysis-recompute|digest-now [options]",
+            "collect-now|collect-clean|analysis-clean|analysis-recompute|digest-now|acceptance-run [options]",
             file=sys.stderr,
         )
         return 2
@@ -548,6 +559,8 @@ def main() -> int:
             return cmd_analysis_recompute(tail)
         if cmd == "digest-now":
             return cmd_digest_now(tail)
+        if cmd == "acceptance-run":
+            return cmd_acceptance_run(tail)
         print(f"Unknown command: {cmd}", file=sys.stderr)
         return 2
     except RuleEngineError as e:
