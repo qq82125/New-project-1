@@ -129,7 +129,12 @@ class CollectAssetStore:
             text = f"{title} {summary}".strip()
             track, level, explain = compute_relevance(
                 text,
-                {"source_group": source_group, "event_type": str(it.get("event_type", ""))},
+                {
+                    "source_group": source_group,
+                    "event_type": str(it.get("event_type", "")),
+                    "url": url,
+                    "title": title,
+                },
                 rules_runtime,
             )
             row = {

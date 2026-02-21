@@ -4,7 +4,8 @@ import re
 from typing import Any
 
 
-TRACK_VALUES = {"core", "frontier"}
+TRACK_VALUES = {"core", "frontier"}  # routing tracks
+ITEM_TRACK_VALUES = {"core", "frontier", "drop"}
 RELEVANCE_LEVEL_VALUES = {0, 1, 2, 3, 4}
 
 DEFAULT_RELEVANCE_THRESHOLDS = {
@@ -81,6 +82,35 @@ DEFAULT_NEGATIVES_PACK = [
     "vaccine",
 ]
 
+DEFAULT_NEGATIVE_STRONG = [
+    "earnings",
+    "lawsuit",
+    "securities",
+    "investor",
+    "acquisition",
+    "merger",
+    "share price",
+    "decline",
+    "sales",
+]
+
+NAV_URL_MARKERS = [
+    "/about",
+    "/portal",
+    "cookie",
+    "privacy",
+    "newsletter",
+    "mission",
+    "purpose",
+]
+
+NAV_TITLE_EXACT = {
+    "about us",
+    "learn more",
+    "portal",
+    "thought leadership",
+}
+
 
 def _has_term(text_lc: str, term_lc: str) -> bool:
     if not term_lc:
@@ -98,6 +128,16 @@ def _to_kw_list(v: Any) -> list[str]:
     return []
 
 
+def is_navigation_page(url: str, title: str) -> bool:
+    u = str(url or "").strip().lower()
+    t = str(title or "").strip().lower()
+    if any(m in u for m in NAV_URL_MARKERS):
+        return True
+    if t in NAV_TITLE_EXACT:
+        return True
+    return False
+
+
 def compute_relevance(
     text: str,
     source_meta: dict[str, Any] | None = None,
@@ -109,6 +149,8 @@ def compute_relevance(
     source_meta = source_meta or {}
     rules_runtime = rules_runtime or {}
     text_lc = str(text or "").lower()
+    title_lc = str(source_meta.get("title", "") or "").strip().lower()
+    url_lc = str(source_meta.get("url", "") or "").strip().lower()
 
     anchors_cfg = rules_runtime.get("anchors_pack", {})
     if not isinstance(anchors_cfg, dict) or not anchors_cfg:
@@ -116,19 +158,38 @@ def compute_relevance(
     negatives_cfg = rules_runtime.get("negatives_pack", [])
     if not isinstance(negatives_cfg, list) or not negatives_cfg:
         negatives_cfg = DEFAULT_NEGATIVES_PACK
+    negative_strong_cfg = rules_runtime.get("negatives_strong_pack", [])
+    if not isinstance(negative_strong_cfg, list) or not negative_strong_cfg:
+        negative_strong_cfg = DEFAULT_NEGATIVE_STRONG
 
     core_anchors = _to_kw_list(anchors_cfg.get("core"))
     frontier_anchors = _to_kw_list(anchors_cfg.get("frontier"))
     negatives = _to_kw_list(negatives_cfg)
+    negatives_strong = _to_kw_list(negative_strong_cfg)
 
     core_hits = [k for k in core_anchors if _has_term(text_lc, k)]
     frontier_hits = [k for k in frontier_anchors if _has_term(text_lc, k)]
     negative_hits = [k for k in negatives if _has_term(text_lc, k)]
+    negative_strong_hits = [k for k in negatives_strong if _has_term(text_lc, k)]
 
     source_group = str(source_meta.get("source_group", "")).lower()
     event_type = str(source_meta.get("event_type", ""))
     has_reg_signal = event_type == "监管审批与指南" or "regulatory" in source_group
     has_journal_signal = "journal" in source_group or "preprint" in source_group
+
+    # hard filter: static/navigation pages.
+    if is_navigation_page(url_lc, title_lc):
+        explain = {
+            "anchors_hit": sorted(set(core_hits + frontier_hits)),
+            "negatives_hit": sorted(set(negative_hits + negative_strong_hits)),
+            "rule_hits": ["navigation_filter"],
+            "rules_applied": ["navigation_filter"],
+            "final_reason": "navigation_or_static_page",
+            "raw_score": 0,
+            "source_group": source_group,
+            "event_type": event_type,
+        }
+        return "drop", 0, explain
 
     # scoring v1
     raw_score = (len(core_hits) * 2) + (len(frontier_hits) * 2)
@@ -137,6 +198,24 @@ def compute_relevance(
     if has_journal_signal:
         raw_score += 1
     raw_score -= len(negative_hits)
+
+    strong_diagnostic_anchor_hit = bool(core_hits)
+    frontier_anchor_hit = bool(frontier_hits)
+    any_anchor_hit = strong_diagnostic_anchor_hit or frontier_anchor_hit
+
+    # hard filter: strong business/legal noise without diagnostic anchors.
+    if negative_strong_hits and not any_anchor_hit:
+        explain = {
+            "anchors_hit": sorted(set(core_hits + frontier_hits)),
+            "negatives_hit": sorted(set(negative_hits + negative_strong_hits)),
+            "rule_hits": ["negative_strong_gate"],
+            "rules_applied": ["negative_strong_gate"],
+            "final_reason": "strong_negative_without_diagnostic_anchor",
+            "raw_score": raw_score,
+            "source_group": source_group,
+            "event_type": event_type,
+        }
+        return "drop", 0, explain
 
     if raw_score >= 9:
         level = 4
@@ -149,44 +228,55 @@ def compute_relevance(
     else:
         level = 0
 
-    # track decision
-    frontier_source_bias = ("preprint" in source_group) or ("journal" in source_group) or ("research" in source_group)
-    if frontier_hits and (len(frontier_hits) >= len(core_hits)):
-        track = "frontier"
-        final_reason = "frontier_anchor_dominant"
-    elif frontier_hits and frontier_source_bias and not has_reg_signal:
-        # Research-heavy sources with frontier signals should not be swallowed by core default.
-        track = "frontier"
-        final_reason = "frontier_source_bias"
-    elif frontier_hits and len(core_hits) <= 1 and not has_reg_signal:
-        # Light core overlap + any frontier anchor keeps item in frontier radar.
-        track = "frontier"
-        final_reason = "frontier_hit_light_core"
-    elif negative_hits and not core_hits and not has_reg_signal:
-        track = "frontier"
-        final_reason = "negative_only_or_business_noise"
-    else:
-        track = "core"
-        final_reason = "core_anchor_or_regulatory_signal"
+    # hard filter: raw score non-positive can never enter core/frontier.
+    if raw_score <= 0:
+        explain = {
+            "anchors_hit": sorted(set(core_hits + frontier_hits)),
+            "negatives_hit": sorted(set(negative_hits + negative_strong_hits)),
+            "rule_hits": ["raw_score_gate"],
+            "rules_applied": ["raw_score_gate"],
+            "final_reason": "raw_score_non_positive",
+            "raw_score": raw_score,
+            "source_group": source_group,
+            "event_type": event_type,
+        }
+        return "drop", 0, explain
 
-    # hard drop level when pure negative without diagnostic anchor
-    if negative_hits and not core_hits and not frontier_hits and not has_reg_signal:
-        level = 0
-        final_reason = "negative_without_diagnostic_anchor"
+    # track decision with strict anchor gate.
+    if strong_diagnostic_anchor_hit:
+        track = "core"
+        level = max(3, level)
+        final_reason = "core_anchor_hit"
+    elif frontier_anchor_hit:
+        track = "frontier"
+        level = max(2, level)
+        final_reason = "frontier_anchor_hit"
+    else:
+        explain = {
+            "anchors_hit": sorted(set(core_hits + frontier_hits)),
+            "negatives_hit": sorted(set(negative_hits + negative_strong_hits)),
+            "rule_hits": ["anchor_gate"],
+            "rules_applied": ["anchor_gate"],
+            "final_reason": "no_diagnostic_anchor",
+            "raw_score": raw_score,
+            "source_group": source_group,
+            "event_type": event_type,
+        }
+        return "drop", 0, explain
 
     level = max(0, min(4, int(level)))
     explain = {
         "anchors_hit": sorted(set(core_hits + frontier_hits)),
-        "negatives_hit": sorted(set(negative_hits)),
+        "negatives_hit": sorted(set(negative_hits + negative_strong_hits)),
         "rule_hits": [
             "compute_relevance_v1",
-            "track_core_frontier",
-            "negative_penalty",
+            "anchor_gate",
+            "raw_score_gate",
         ],
         "rules_applied": [
             "compute_relevance_v1",
-            "track_core_frontier",
-            "negative_penalty",
+            "anchor_gate",
+            "raw_score_gate",
         ],
         "final_reason": final_reason,
         "raw_score": raw_score,
@@ -217,9 +307,9 @@ def normalize_item_contract(track: Any, relevance_level: Any) -> tuple[str, int,
     warnings: list[str] = []
 
     t = str(track or "").strip().lower()
-    if t not in TRACK_VALUES:
-        warnings.append(f"invalid_track:{track!r}->core")
-        t = "core"
+    if t not in ITEM_TRACK_VALUES:
+        warnings.append(f"invalid_track:{track!r}->drop")
+        t = "drop"
 
     try:
         lv = int(relevance_level)

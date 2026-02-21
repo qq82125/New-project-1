@@ -41,6 +41,7 @@ from app.core.track_relevance import (
     normalize_item_contract,
     DEFAULT_ANCHORS_PACK,
     DEFAULT_NEGATIVES_PACK,
+    DEFAULT_NEGATIVE_STRONG,
 )
 from app.services.story_clusterer import StoryClusterer
 from app.services.source_registry import fetch_source_entries, load_sources_registry, select_sources
@@ -112,6 +113,7 @@ RUNTIME_CONTENT = {
     },
     "anchors_pack": deepcopy(DEFAULT_ANCHORS_PACK),
     "negatives_pack": list(DEFAULT_NEGATIVES_PACK),
+    "negatives_strong_pack": list(DEFAULT_NEGATIVE_STRONG),
     "dedupe_cluster": {
         "enabled": True,
         "window_hours": 72,
@@ -802,6 +804,8 @@ def compute_relevance(
         rr["anchors_pack"] = RUNTIME_CONTENT.get("anchors_pack") or DEFAULT_ANCHORS_PACK
     if not rr.get("negatives_pack"):
         rr["negatives_pack"] = RUNTIME_CONTENT.get("negatives_pack") or DEFAULT_NEGATIVES_PACK
+    if not rr.get("negatives_strong_pack"):
+        rr["negatives_strong_pack"] = RUNTIME_CONTENT.get("negatives_strong_pack") or DEFAULT_NEGATIVE_STRONG
     return core_compute_relevance(text, source_meta or {}, rr)
 
 
@@ -826,7 +830,13 @@ def is_ivd_relevant(text: str) -> bool:
             return False
     _track, level, explain = compute_relevance(text, {}, {})
     # preserve high recall while dropping pure noise
-    if str(explain.get("final_reason", "")).startswith("negative_without_diagnostic_anchor"):
+    if str(explain.get("final_reason", "")).strip() in {
+        "negative_without_diagnostic_anchor",
+        "strong_negative_without_diagnostic_anchor",
+        "raw_score_non_positive",
+        "no_diagnostic_anchor",
+        "navigation_or_static_page",
+    }:
         return False
     return int(level) >= 1
 
@@ -1886,6 +1896,7 @@ def main(dump_relevance_samples: int = 0) -> int:
     seen_links: set[str] = set()
     relaxed_pool: list[Item] = []
     track_contract_warnings: list[str] = []
+    drop_reason_counts: dict[str, int] = {}
     keyword_pack_stats: dict[str, Any] = {
         "packs": {},
         "matched_any": 0,
@@ -2099,13 +2110,22 @@ def main(dump_relevance_samples: int = 0) -> int:
                 platform = normalize_platform_label(platform, event_type, enhanced=bool(use_enhanced))
                 track, relevance_level, relevance_explain = compute_relevance(
                     combined,
-                    {"source_group": str(source_group or ""), "event_type": event_type},
+                    {
+                        "source_group": str(source_group or ""),
+                        "event_type": event_type,
+                        "url": link,
+                        "title": title,
+                    },
                     {
                         "anchors_pack": RUNTIME_CONTENT.get("anchors_pack", {}),
                         "negatives_pack": RUNTIME_CONTENT.get("negatives_pack", []),
                     },
                 )
                 relevance_why = str(relevance_explain.get("final_reason", ""))
+                if str(track).strip().lower() == "drop":
+                    why = str(relevance_explain.get("final_reason", "")).strip() or "drop"
+                    drop_reason_counts[why] = int(drop_reason_counts.get(why, 0)) + 1
+                    continue
                 platform_explain_rows.append(
                     {
                         "title": title,
@@ -2624,6 +2644,11 @@ def main(dump_relevance_samples: int = 0) -> int:
         topn=5,
     )
     filtered_top, borderline_count, borderline_top = _relevance_reason_stats(items, report_items, topn=3)
+    if drop_reason_counts:
+        drop_top = [
+            f"{k}:{v}" for k, v in sorted(drop_reason_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+        ]
+        filtered_top = (drop_top + filtered_top)[:3]
     print("G. 质量指标 (Quality Audit)")
     print(
         f"24H条目数 / 7D补充数：{n24} / {n7} | "

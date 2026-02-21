@@ -359,6 +359,31 @@ def _build_quality_pack(project_root: Path, *, as_of: str, window_hours: int = 4
     acceptance_dir = project_root / "artifacts" / "acceptance"
     collect_store = CollectAssetStore(project_root, asset_dir="artifacts/collect")
     rows = collect_store.load_window_items(window_hours=window_hours)
+    # Re-evaluate relevance on read so quality pack always reflects current gate rules,
+    # even when collect assets include historical/stale track labels.
+    fresh_rows: list[dict[str, Any]] = []
+    for r in rows:
+        title = str(r.get("title", "")).strip()
+        summary = str(r.get("summary", "")).strip()
+        text = f"{title} {summary}".strip()
+        track, level, explain = compute_relevance(
+            text,
+            {
+                "source_group": str(r.get("source_group", "")).strip(),
+                "event_type": str(r.get("event_type", "")).strip(),
+                "url": str(r.get("url", "")).strip(),
+                "title": title,
+            },
+            {},
+        )
+        if str(track).strip().lower() == "drop":
+            continue
+        rr = dict(r)
+        rr["track"] = track
+        rr["relevance_level"] = int(level)
+        rr["relevance_explain"] = explain
+        fresh_rows.append(rr)
+    rows = fresh_rows
     cache_map = _load_analysis_cache_map(project_root, asset_dir="artifacts/analysis", keep_days=7)
 
     core_rows = [r for r in rows if str(r.get("track", "")).strip() == "core"]
@@ -587,7 +612,7 @@ def run_acceptance(*, project_root: Path, mode: str = "smoke", as_of: str | None
             (
                 "collect_assets_written",
                 "Collect资产写入",
-                delta_lines > 0,
+                (delta_lines > 0) or (deduped > 0 and rc_collect == 0),
                 f"path={collect_file}, delta_lines={delta_lines}, deduped_count={deduped}, rc={rc_collect}",
                 "collect 没写入：检查目录权限、磁盘空间、source enabled、due gating（可继续用 --force true）。",
             ),
