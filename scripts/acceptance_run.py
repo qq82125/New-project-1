@@ -14,7 +14,7 @@ from app.core.track_relevance import compute_relevance
 from app.rules.engine import RuleEngine
 from app.services.analysis_cache_store import AnalysisCacheStore
 from app.services.analysis_generator import AnalysisGenerator, degraded_analysis
-from app.services.collect_asset_store import CollectAssetStore, render_digest_from_assets
+from app.services.collect_asset_store import CollectAssetStore, render_digest_from_assets, url_norm
 from app.services.story_clusterer import StoryClusterer
 
 
@@ -355,6 +355,34 @@ def _load_analysis_cache_map(project_root: Path, *, asset_dir: str = "artifacts/
     return out
 
 
+def _title_fingerprint(title: str) -> str:
+    t = str(title or "").strip().lower()
+    if not t:
+        return ""
+    t = re.sub(r"[\W_]+", " ", t, flags=re.UNICODE)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _dedupe_for_quality_pack(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen_title: set[str] = set()
+    seen_url: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        fp = _title_fingerprint(str(r.get("title", "")))
+        un = url_norm(str(r.get("url", "")))
+        if un and un in seen_url:
+            continue
+        if fp and fp in seen_title:
+            continue
+        if un:
+            seen_url.add(un)
+        if fp:
+            seen_title.add(fp)
+        out.append(r)
+    return out
+
+
 def _build_quality_pack(project_root: Path, *, as_of: str, window_hours: int = 48) -> dict[str, Any]:
     acceptance_dir = project_root / "artifacts" / "acceptance"
     collect_store = CollectAssetStore(project_root, asset_dir="artifacts/collect")
@@ -383,7 +411,7 @@ def _build_quality_pack(project_root: Path, *, as_of: str, window_hours: int = 4
         rr["relevance_level"] = int(level)
         rr["relevance_explain"] = explain
         fresh_rows.append(rr)
-    rows = fresh_rows
+    rows = _dedupe_for_quality_pack(fresh_rows)
     cache_map = _load_analysis_cache_map(project_root, asset_dir="artifacts/analysis", keep_days=7)
 
     core_rows = [r for r in rows if str(r.get("track", "")).strip() == "core"]
