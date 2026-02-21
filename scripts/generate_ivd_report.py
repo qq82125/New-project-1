@@ -15,6 +15,7 @@ import math
 import os
 import re
 import sys
+import time
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -45,7 +46,10 @@ from app.core.track_relevance import (
 )
 from app.services.story_clusterer import StoryClusterer
 from app.services.source_registry import fetch_source_entries, load_sources_registry, select_sources
+from app.services.opportunity_index import compute_opportunity_index
+from app.services.opportunity_store import EVENT_WEIGHT, OpportunityStore
 from app.services.rules_versioning import get_runtime_rules_root
+from app.utils.url_norm import url_norm
 
 
 @dataclass(frozen=True)
@@ -114,6 +118,10 @@ RUNTIME_CONTENT = {
     "anchors_pack": deepcopy(DEFAULT_ANCHORS_PACK),
     "negatives_pack": list(DEFAULT_NEGATIVES_PACK),
     "negatives_strong_pack": list(DEFAULT_NEGATIVE_STRONG),
+    "frontier_policy": {
+        "require_diagnostic_anchor": False,
+        "drop_bio_general_without_diagnostic": False,
+    },
     "dedupe_cluster": {
         "enabled": True,
         "window_hours": 72,
@@ -123,6 +131,7 @@ RUNTIME_CONTENT = {
     },
     "coverage_tracks": ["core", "frontier"],
     "output_tracks": {"enable_track_split": False},
+    "opportunity_index": {"enabled": False, "window_days": 7, "asset_dir": "artifacts/opportunity"},
 }
 
 
@@ -290,6 +299,27 @@ def dict_to_item(d: dict) -> Item:
 
 def env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
+
+
+def _opportunity_weight_key(event_type: str) -> str:
+    et = str(event_type or "").strip().lower()
+    if not et:
+        return ""
+    if et in EVENT_WEIGHT:
+        return et
+    if ("招采" in et) or ("procure" in et) or ("tender" in et) or ("bid" in et):
+        return "procurement"
+    if ("监管" in et) or ("指南" in et) or ("regulatory" in et):
+        return "regulatory"
+    if ("审批" in et) or ("批准" in et) or ("approval" in et) or ("clearance" in et):
+        return "approval"
+    if ("优先审评" in et) or ("priority review" in et):
+        return "priority_review"
+    if ("并购" in et) or ("融资" in et) or ("合作" in et) or ("ipo" in et) or ("company" in et):
+        return "company_move"
+    if ("paper" in et) or ("study" in et) or ("preprint" in et) or ("journal" in et) or ("科研" in et):
+        return "paper"
+    return "technology_update"
 
 
 def _write_progress(stage: str, *, total_sources: int | None = None, completed_sources: int | None = None, message: str = "", **extra: Any) -> None:
@@ -806,6 +836,12 @@ def compute_relevance(
         rr["negatives_pack"] = RUNTIME_CONTENT.get("negatives_pack") or DEFAULT_NEGATIVES_PACK
     if not rr.get("negatives_strong_pack"):
         rr["negatives_strong_pack"] = RUNTIME_CONTENT.get("negatives_strong_pack") or DEFAULT_NEGATIVE_STRONG
+    if not rr.get("frontier_policy"):
+        rr["frontier_policy"] = RUNTIME_CONTENT.get("frontier_policy", {})
+    rr.setdefault(
+        "profile",
+        "enhanced" if str(os.environ.get("ENHANCED_RULES_PROFILE", "")).strip().lower() == "enhanced" else "legacy",
+    )
     return core_compute_relevance(text, source_meta or {}, rr)
 
 
@@ -1802,6 +1838,10 @@ def main(dump_relevance_samples: int = 0) -> int:
             "negatives_pack",
             RUNTIME_CONTENT["negatives_pack"],
         )
+        RUNTIME_CONTENT["frontier_policy"] = content_cfg.get(
+            "frontier_policy",
+            RUNTIME_CONTENT["frontier_policy"],
+        )
         rk = content_cfg.get("relevance_keywords", {})
         if isinstance(rk, dict) and rk:
             strong = [str(x).strip() for x in rk.get("anchors_strong", []) if str(x).strip()]
@@ -1823,14 +1863,36 @@ def main(dump_relevance_samples: int = 0) -> int:
             base_cfg=RUNTIME_CONTENT.get("dedupe_cluster", {}),
         )
         RUNTIME_CONTENT["coverage_tracks"] = content_cfg.get("coverage_tracks", RUNTIME_CONTENT["coverage_tracks"])
+        opp_cfg = content_cfg.get("opportunity_index", {})
+        if isinstance(opp_cfg, dict):
+            RUNTIME_CONTENT["opportunity_index"] = {
+                "enabled": bool(opp_cfg.get("enabled", use_enhanced)),
+                "window_days": max(1, int(opp_cfg.get("window_days", 7) or 7)),
+                "asset_dir": str(opp_cfg.get("asset_dir", "artifacts/opportunity") or "artifacts/opportunity"),
+            }
+        else:
+            RUNTIME_CONTENT["opportunity_index"] = {
+                "enabled": bool(use_enhanced),
+                "window_days": 7,
+                "asset_dir": "artifacts/opportunity",
+            }
     else:
         # Explicitly enforce legacy default.
         RUNTIME_CONTENT["output_tracks"] = {"enable_track_split": False}
+        RUNTIME_CONTENT["frontier_policy"] = {
+            "require_diagnostic_anchor": False,
+            "drop_bio_general_without_diagnostic": False,
+        }
         RUNTIME_CONTENT["dedupe_cluster"] = _resolve_dedupe_cluster_config(
             use_enhanced=False,
             content_cfg={},
             base_cfg=RUNTIME_CONTENT.get("dedupe_cluster", {}),
         )
+        RUNTIME_CONTENT["opportunity_index"] = {
+            "enabled": False,
+            "window_days": 7,
+            "asset_dir": "artifacts/opportunity",
+        }
 
     # Media + official feeds, with APAC/China reinforcement.
     sources = [
@@ -1908,6 +1970,11 @@ def main(dump_relevance_samples: int = 0) -> int:
         "excluded_by_keyword": {},
         "samples": [],
     }
+    opp_cfg = RUNTIME_CONTENT.get("opportunity_index", {}) if isinstance(RUNTIME_CONTENT.get("opportunity_index"), dict) else {}
+    opportunity_enabled = bool(opp_cfg.get("enabled", False))
+    opportunity_window_days = max(1, int(opp_cfg.get("window_days", 7) or 7))
+    opportunity_asset_dir = str(opp_cfg.get("asset_dir", "artifacts/opportunity") or "artifacts/opportunity")
+    opportunity_store = OpportunityStore(root_dir, asset_dir=opportunity_asset_dir) if opportunity_enabled else None
 
     lite_mode = env("DRYRUN_LITE", "").lower() in {"1", "true", "yes", "on"}
     fetch_limit = max(1, int(env("DRYRUN_FETCH_LIMIT", "50") or "50"))
@@ -2126,6 +2193,22 @@ def main(dump_relevance_samples: int = 0) -> int:
                     why = str(relevance_explain.get("final_reason", "")).strip() or "drop"
                     drop_reason_counts[why] = int(drop_reason_counts.get(why, 0)) + 1
                     continue
+                if opportunity_store is not None:
+                    try:
+                        wk = _opportunity_weight_key(event_type)
+                        opportunity_store.append_signal(
+                            {
+                                "date": date_str,
+                                "region": str(region or "__unknown__"),
+                                "lane": str(lane or "__unknown__"),
+                                "event_type": str(event_type or "__unknown__"),
+                                "weight": int(EVENT_WEIGHT.get(wk, 1)),
+                                "source_id": str(source_id or ""),
+                                "url_norm": url_norm(link),
+                            }
+                        )
+                    except Exception:
+                        pass
                 platform_explain_rows.append(
                     {
                         "title": title,
@@ -2699,6 +2782,31 @@ def main(dump_relevance_samples: int = 0) -> int:
         except Exception:
             pass
 
+    if opportunity_enabled:
+        print()
+        print(f"H. 机会强度指数（近{opportunity_window_days}天）")
+        try:
+            opp = compute_opportunity_index(
+                root_dir,
+                window_days=opportunity_window_days,
+                asset_dir=opportunity_asset_dir,
+                as_of=date_str,
+            )
+            rows = list((opp.get("region_lane", {}) if isinstance(opp.get("region_lane", {}), dict) else {}).values())
+            rows = [r for r in rows if isinstance(r, dict)]
+            rows.sort(key=lambda x: int(x.get("score", 0) or 0), reverse=True)
+            if not rows:
+                print("- 暂无显著机会变化")
+            else:
+                for row in rows[:5]:
+                    delta = int(row.get("delta_vs_prev_window", 0) or 0)
+                    arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "→")
+                    lane = str(row.get("lane", "__unknown__")).strip() or "__unknown__"
+                    region = str(row.get("region", "__unknown__")).strip() or "__unknown__"
+                    print(f"- {lane}（{region}）：{arrow} {delta:+d}")
+        except Exception:
+            print("- 暂无显著机会变化")
+
     artifacts_dir = env("DRYRUN_ARTIFACTS_DIR", "")
     if artifacts_dir:
         p = Path(artifacts_dir)
@@ -2830,6 +2938,11 @@ def main(dump_relevance_samples: int = 0) -> int:
                         "items_before_count": items_before_cluster_count,
                         "items_after_count": items_after_cluster_count,
                         "top_clusters_count": len(top_clusters),
+                    },
+                    "opportunity_index": {
+                        "enabled": opportunity_enabled,
+                        "window_days": opportunity_window_days,
+                        "asset_dir": opportunity_asset_dir,
                     },
                 },
                 ensure_ascii=False,

@@ -123,6 +123,21 @@ defaults:
     retries: 1
     backoff_seconds: 0.5
     asset_dir: artifacts/analysis
+  source_policy:
+    enabled: true
+    min_trust_tier:
+      legacy: C
+      enhanced: B
+    exclude_domains: []
+    exclude_source_ids: []
+    drop_if_url_matches: []
+  evidence_policy:
+    require_evidence_for_core: true
+    min_snippet_chars: 80
+    degrade_if_missing: true
+  opportunity_index:
+    enabled: true
+    window_days: 7
   coverage_enforcement:
     a_core_min_items: 8
     f_frontier_quota: 3
@@ -174,6 +189,13 @@ defaults:
     - phase 3 drug
     - therapy only
     - vaccine only
+  frontier_policy:
+    require_diagnostic_anchor: true
+    drop_bio_general_without_diagnostic: true
+  evidence_policy:
+    require_evidence_for_core: true
+    min_snippet_chars: 80
+    degrade_if_missing: true
   track_routing:
     A:
       track: core

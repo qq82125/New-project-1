@@ -20,6 +20,10 @@
 | analysis cache | 不依赖 | 启用（PR4A） |
 | 模型分层调用（高模/低模） | 不变 | 启用（PR5B） |
 | prompt_version 固定并可比对 | 非强制 | 强制记录（PR5B） |
+| source policy（min_trust_tier/exclude） | 默认宽松（C） | 默认更严格（B，PR8） |
+| frontier policy（诊断锚点必需） | 关闭（兼容旧口径） | 开启（PR9，抑制泛生物学论文） |
+| evidence policy（core 证据片段必需） | 关闭（兼容旧口径） | 开启（PR10，缺证据自动降级） |
+| opportunity index（机会指数/H段） | 关闭（兼容旧口径） | 开启（PR11，新增非破坏性信号层） |
 
 ## 3. 不可破坏项（验收基线）
 - A–G 结构：legacy 不变。
@@ -55,4 +59,3 @@ python3 -m app.workers.cli rules:dryrun --profile enhanced
 - collect 契约：`/Users/GY/Documents/New project 1/docs/COLLECT_ASSET_CONTRACT.md`
 - analysis cache 契约：`/Users/GY/Documents/New project 1/docs/ANALYSIS_CACHE_CONTRACT.md`
 - 规则系统总览：`/Users/GY/Documents/New project 1/docs/RULES_SYSTEM.md`
-

@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import feedparser
 import yaml
 
+from app.services.source_policy import normalize_source_policy, source_passes_min_trust_tier
 from app.services.rules_store import RulesStore
 
 
@@ -26,6 +27,13 @@ class SourceRegistryError(RuntimeError):
 REGISTRY_FILE_NAME = "sources_registry.v1.yaml"
 OVERRIDES_FILE_NAME = "sources_overrides.json"
 ALLOWED_FETCHERS = {"rss", "html", "rsshub", "google_news", "web", "api"}
+GROUP_DEFAULT_INTERVAL = {
+    "regulatory": 20,
+    "media": 60,
+    "evidence": 720,
+    "company": 240,
+    "procurement": 60,
+}
 
 
 def _canonical_fetcher(value: str) -> str:
@@ -84,8 +92,66 @@ def _normalize_source(raw: dict[str, Any], file_path: Path) -> dict[str, Any]:
     src["enabled"] = bool(src.get("enabled", True))
     src["source_file"] = str(file_path)
     src["tags"] = src.get("tags", []) if isinstance(src.get("tags", []), list) else []
+    if not str(src.get("source_group", "")).strip():
+        tags = {str(x).strip().lower() for x in src["tags"]}
+        if "regulatory" in tags:
+            src["source_group"] = "regulatory"
+        elif tags & {"journal", "preprint", "literature", "translational"}:
+            src["source_group"] = "evidence"
+        elif tags & {"procurement", "bid", "tender"}:
+            src["source_group"] = "procurement"
+        elif tags & {"company", "pressrelease", "investor"}:
+            src["source_group"] = "company"
+        else:
+            src["source_group"] = "media"
     src["priority"] = int(src.get("priority", 0))
     return src
+
+
+def _infer_source_group(source: dict[str, Any]) -> str:
+    sg = str(source.get("source_group", "")).strip().lower()
+    if sg:
+        return sg
+    tags = {str(x).strip().lower() for x in (source.get("tags", []) if isinstance(source.get("tags", []), list) else [])}
+    if "regulatory" in tags:
+        return "regulatory"
+    if tags & {"journal", "preprint", "literature", "translational"}:
+        return "evidence"
+    if tags & {"procurement", "bid", "tender"}:
+        return "procurement"
+    if tags & {"company", "pressrelease", "investor"}:
+        return "company"
+    return "media"
+
+
+def _resolve_interval_minutes(
+    source: dict[str, Any],
+    *,
+    group_defaults: dict[str, dict[str, Any]],
+    default_minutes: int = 60,
+) -> tuple[int, str]:
+    source_override = source.get("fetch_interval_minutes")
+    if source_override is not None and str(source_override).strip() != "":
+        try:
+            return max(1, int(source_override)), "source"
+        except Exception:
+            pass
+    sg = _infer_source_group(source)
+    g = group_defaults.get(sg, {})
+    g_interval = g.get("default_interval_minutes")
+    if g_interval is not None and str(g_interval).strip() != "":
+        try:
+            return max(1, int(g_interval)), "group"
+        except Exception:
+            pass
+    fetch = source.get("fetch", {}) if isinstance(source.get("fetch"), dict) else {}
+    y_interval = fetch.get("interval_minutes")
+    if y_interval is not None and str(y_interval).strip() != "":
+        try:
+            return max(1, int(y_interval)), "yaml"
+        except Exception:
+            pass
+    return max(1, int(default_minutes)), "default"
 
 
 def _extract_web_sample_entries(html: str, base_url: str, limit: int = 3) -> list[dict[str, str]]:
@@ -473,6 +539,8 @@ def _infer_groups_from_tags(sources: list[dict[str, Any]]) -> dict[str, list[str
 def load_sources_registry_bundle(
     project_root: Path,
     rules_root: Path | None = None,
+    *,
+    include_deleted: bool = False,
 ) -> dict[str, Any]:
     """
     Returns a merged registry bundle:
@@ -485,6 +553,11 @@ def load_sources_registry_bundle(
     }
     """
     reg_path = _first_existing(_candidate_registry_paths(project_root, rules_root=rules_root))
+    base_sources: list[dict[str, Any]] = []
+    base_groups: dict[str, list[str]] = {}
+    source_file = ""
+    version = "split.v1"
+
     if reg_path is not None:
         doc = _load_yaml(reg_path)
         version = str(doc.get("version", "1.0.0"))
@@ -494,8 +567,6 @@ def load_sources_registry_bundle(
         groups = doc.get("groups", {})
         if not isinstance(groups, dict):
             raise SourceRegistryError(f"{reg_path}: groups must be object")
-
-        sources: list[dict[str, Any]] = []
         id_set: set[str] = set()
         for s in raw_sources:
             if not isinstance(s, dict):
@@ -507,8 +578,7 @@ def load_sources_registry_bundle(
             if sid in id_set:
                 raise SourceRegistryError(f"{reg_path}: duplicate source id={sid}")
             id_set.add(sid)
-            sources.append(row)
-
+            base_sources.append(row)
         gid_to_ids: dict[str, list[str]] = {}
         sid_to_groups: dict[str, list[str]] = {}
         for g, raw_ids in groups.items():
@@ -525,78 +595,133 @@ def load_sources_registry_bundle(
                 ids.append(sid)
                 sid_to_groups.setdefault(sid, []).append(gid)
             gid_to_ids[gid] = ids
-
-        for row in sources:
+        for row in base_sources:
             sid = str(row.get("id", "")).strip()
             row["registry_groups"] = sid_to_groups.get(sid, [])
+        base_groups = gid_to_ids
+        source_file = str(reg_path)
+    else:
+        root = _resolve_rules_root(project_root, rules_root)
+        split_sources = _load_split_sources(root)
+        base_sources = split_sources
+        base_groups = _infer_groups_from_tags(split_sources)
+        source_file = str(root / "sources")
 
-        overrides = _load_overrides(project_root)
-        merged = _apply_overrides(sources, overrides)
-        # Merge runtime fetch/test status from DB so /admin/sources can show "最近抓取" and status pills.
-        try:
-            store = RulesStore(project_root)
-            db_rows = store.list_sources()
-            by_id = {str(x.get("id", "")).strip(): x for x in db_rows if str(x.get("id", "")).strip()}
-            sync_fields = (
-                "last_fetched_at",
-                "last_fetch_status",
-                "last_fetch_http_status",
-                "last_fetch_error",
-                "last_success_at",
-                "last_http_status",
-                "last_error",
-                "updated_at",
-            )
-            for row in merged:
-                sid = str(row.get("id", "")).strip()
-                db = by_id.get(sid)
-                if not isinstance(db, dict):
-                    continue
-                for f in sync_fields:
-                    if f in db:
-                        row[f] = db.get(f)
-        except Exception:
-            # Keep registry loading resilient; UI can still operate without runtime stats.
-            pass
-        return {
-            "version": version,
-            "sources": merged,
-            "groups": gid_to_ids,
-            "source_file": str(reg_path),
-            "overrides_file": str(_overrides_path(project_root)),
+    overrides = _load_overrides(project_root)
+    merged_base = _apply_overrides(base_sources, overrides)
+
+    # DB-first overrides layer (non-breaking fallback when DB unavailable).
+    group_defaults: dict[str, dict[str, Any]] = {}
+    for k, v in GROUP_DEFAULT_INTERVAL.items():
+        group_defaults[k] = {
+            "group_key": k,
+            "display_name": k.capitalize(),
+            "default_interval_minutes": int(v),
+            "enabled": True,
         }
-
-    # Legacy fallback path: existing DB-first behavior, then split yaml.
-    if rules_root is None and not os.environ.get("RULES_WORKSPACE_DIR", "").strip():
+    db_rows: list[dict[str, Any]] = []
+    try:
         store = RulesStore(project_root)
-        db_sources = store.list_sources()
-        if db_sources:
-            out: list[dict[str, Any]] = []
-            for s in db_sources:
-                ss = dict(s)
-                ss["source_file"] = "db://sources"
-                out.append(ss)
-            return {
-                "version": "db",
-                "sources": out,
-                "groups": _infer_groups_from_tags(out),
-                "source_file": "db://sources",
-                "overrides_file": str(_overrides_path(project_root)),
-            }
+        db_rows = store.list_sources(enabled_only=False, include_deleted=True)
+        for g in store.list_source_groups():
+            if not isinstance(g, dict):
+                continue
+            key = str(g.get("group_key", "")).strip().lower()
+            if not key:
+                continue
+            group_defaults[key] = dict(g)
+    except Exception:
+        db_rows = []
 
-    root = _resolve_rules_root(project_root, rules_root)
-    split_sources = _load_split_sources(root)
+    by_id: dict[str, dict[str, Any]] = {
+        str(s.get("id", "")).strip(): dict(s)
+        for s in merged_base
+        if str(s.get("id", "")).strip()
+    }
+    for db in db_rows:
+        sid = str(db.get("id", "")).strip()
+        if not sid:
+            continue
+        cur = dict(by_id.get(sid, {}))
+        # DB > rules > yaml for mutable source fields.
+        for k in (
+            "id",
+            "name",
+            "connector",
+            "fetcher",
+            "url",
+            "enabled",
+            "source_group",
+            "trust_tier",
+            "tags",
+            "fetch",
+            "rate_limit",
+            "parsing",
+            "region",
+            "priority",
+            "fetch_interval_minutes",
+            "deleted_at",
+            "last_fetched_at",
+            "last_fetch_status",
+            "last_fetch_http_status",
+            "last_fetch_error",
+            "last_success_at",
+            "last_http_status",
+            "last_error",
+            "updated_at",
+        ):
+            if k in db and db.get(k) is not None:
+                cur[k] = db.get(k)
+        if not isinstance(cur.get("fetch"), dict):
+            cur["fetch"] = {}
+        if cur.get("fetcher") in {"", None}:
+            cur["fetcher"] = cur.get("connector", "")
+        if cur.get("connector") in {"", None}:
+            cur["connector"] = cur.get("fetcher", "")
+        cur["source_file"] = cur.get("source_file", "db://sources")
+        by_id[sid] = cur
+
+    out_sources: list[dict[str, Any]] = []
+    for sid in sorted(by_id.keys()):
+        row = dict(by_id[sid])
+        row["source_group"] = _infer_source_group(row)
+        fetch = row.get("fetch", {}) if isinstance(row.get("fetch"), dict) else {}
+        row["fetch"] = dict(fetch)
+        if "fetch_interval_minutes" in row and row.get("fetch_interval_minutes") is not None:
+            row["fetch"]["interval_minutes"] = int(row.get("fetch_interval_minutes"))
+        eff, src = _resolve_interval_minutes(row, group_defaults=group_defaults, default_minutes=60)
+        row["effective_interval_minutes"] = int(eff)
+        row["interval_source"] = str(src)
+        row["effective"] = {"fetch": {"interval_minutes": int(eff)}}
+        row["source_overrides"] = {"interval_from": str(src)}
+        deleted_at = str(row.get("deleted_at", "") or "").strip()
+        if deleted_at and not include_deleted:
+            continue
+        out_sources.append(row)
+
     return {
-        "version": "split.v1",
-        "sources": split_sources,
-        "groups": _infer_groups_from_tags(split_sources),
-        "source_file": str(root / "sources"),
+        "version": version,
+        "sources": out_sources,
+        "groups": base_groups,
+        "source_groups": sorted(group_defaults.values(), key=lambda x: str(x.get("group_key", ""))),
+        "source_file": source_file,
         "overrides_file": str(_overrides_path(project_root)),
     }
 
 
-def load_sources_registry(project_root: Path, rules_root: Path | None = None) -> list[dict[str, Any]]:
-    return list(load_sources_registry_bundle(project_root, rules_root=rules_root).get("sources", []))
+def load_sources_registry(
+    project_root: Path,
+    rules_root: Path | None = None,
+    *,
+    include_deleted: bool = False,
+) -> list[dict[str, Any]]:
+    return list(
+        load_sources_registry_bundle(
+            project_root,
+            rules_root=rules_root,
+            include_deleted=include_deleted,
+        ).get("sources", [])
+    )
 
 
 def _validate_bundle_v1(bundle: dict[str, Any], schema_path: Path) -> dict[str, Any]:
@@ -728,9 +853,7 @@ def select_sources(
     selector: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     selector = selector or {}
-    trust_rank = {"A": 3, "B": 2, "C": 1}
     min_tt = str(selector.get("min_trust_tier", "C")).strip().upper() or "C"
-    min_rank = trust_rank.get(min_tt, 1)
     include_tags = set(str(x) for x in selector.get("include_tags", []))
     exclude_tags = set(str(x) for x in selector.get("exclude_tags", []))
     include_ids = set(str(x) for x in selector.get("include_source_ids", []))
@@ -742,7 +865,7 @@ def select_sources(
     out = []
     for s in sources:
         tt = str(s.get("trust_tier", "C")).strip().upper() or "C"
-        if trust_rank.get(tt, 0) < min_rank:
+        if not source_passes_min_trust_tier(tt, {"min_trust_tier": min_tt, "enabled": True}):
             continue
         sid = str(s.get("id", ""))
         if enabled_only and not bool(s.get("enabled", True)):
@@ -753,6 +876,18 @@ def select_sources(
             continue
 
         src_groups = {str(x) for x in s.get("registry_groups", [])}
+        sg = _infer_source_group(s)
+        src_groups.add(sg)
+        if sg == "media":
+            src_groups.add("media_global")
+        elif sg == "regulatory":
+            src_groups.update({"regulatory", "regulatory_cn", "regulatory_apac", "regulatory_us_eu"})
+        elif sg == "evidence":
+            src_groups.update({"evidence", "journals_preprints", "journals", "preprints"})
+        elif sg == "company":
+            src_groups.update({"company", "company_major"})
+        elif sg == "procurement":
+            src_groups.update({"procurement", "procurement_global"})
         if include_groups and not (include_groups & src_groups):
             continue
         if exclude_groups and (exclude_groups & src_groups):
@@ -778,15 +913,23 @@ def _read_profile_selector(
     doc = _load_yaml(path)
     defaults = doc.get("defaults", {}) if isinstance(doc.get("defaults"), dict) else {}
     sel = defaults.get("content_sources", {})
-    return sel if isinstance(sel, dict) else {}
+    out = dict(sel) if isinstance(sel, dict) else {}
+    src_policy = normalize_source_policy(defaults.get("source_policy", {}), profile=profile)
+    out.setdefault("min_trust_tier", src_policy.get("min_trust_tier", "C"))
+    ex_ids = set(str(x) for x in out.get("exclude_source_ids", []) if str(x).strip())
+    ex_ids.update(str(x) for x in src_policy.get("exclude_source_ids", []) if str(x).strip())
+    out["exclude_source_ids"] = sorted(ex_ids)
+    return out
 
 
 def list_sources_for_profile(
     project_root: Path,
     profile: str,
     rules_root: Path | None = None,
+    *,
+    include_deleted: bool = False,
 ) -> list[dict[str, Any]]:
-    bundle = load_sources_registry_bundle(project_root, rules_root=rules_root)
+    bundle = load_sources_registry_bundle(project_root, rules_root=rules_root, include_deleted=include_deleted)
     sources = bundle.get("sources", []) if isinstance(bundle, dict) else []
     groups = bundle.get("groups", {}) if isinstance(bundle, dict) else {}
     # Ensure each source carries reverse group membership.

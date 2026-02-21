@@ -121,6 +121,10 @@ def run_digest(
             thresh = content_cfg.get("relevance_thresholds", {}) if isinstance(content_cfg.get("relevance_thresholds"), dict) else {}
             quota_cfg = content_cfg.get("frontier_quota", {}) if isinstance(content_cfg.get("frontier_quota"), dict) else {}
             analysis_cfg = content_cfg.get("analysis_cache", {}) if isinstance(content_cfg.get("analysis_cache"), dict) else {}
+            source_policy = content_cfg.get("source_policy", {}) if isinstance(content_cfg.get("source_policy"), dict) else {}
+            frontier_policy = content_cfg.get("frontier_policy", {}) if isinstance(content_cfg.get("frontier_policy"), dict) else {}
+            evidence_policy = content_cfg.get("evidence_policy", {}) if isinstance(content_cfg.get("evidence_policy"), dict) else {}
+            opportunity_index = content_cfg.get("opportunity_index", {}) if isinstance(content_cfg.get("opportunity_index"), dict) else {}
             collector = CollectAssetStore(root, asset_dir=collect_asset_dir)
             rows = collector.load_window_items(window_hours=int(collect_window_hours or 24))
             rendered = render_digest_from_assets(
@@ -145,6 +149,13 @@ def run_digest(
                     "timeout_seconds": int(analysis_cfg.get("timeout_seconds", 20) or 20),
                     "backoff_seconds": float(analysis_cfg.get("backoff_seconds", 0.5) or 0.5),
                     "asset_dir": str(analysis_cfg.get("asset_dir", "artifacts/analysis")),
+                    "source_policy": source_policy,
+                    "profile": str(rt.get("active_profile", profile)),
+                    "anchors_pack": content_cfg.get("anchors_pack", {}) if isinstance(content_cfg.get("anchors_pack"), dict) else {},
+                    "negatives_pack": content_cfg.get("negatives_pack", []) if isinstance(content_cfg.get("negatives_pack"), list) else [],
+                    "frontier_policy": frontier_policy,
+                    "evidence_policy": evidence_policy,
+                    "opportunity_index": opportunity_index,
                 },
                 return_meta=True,
             )

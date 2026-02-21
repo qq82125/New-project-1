@@ -533,6 +533,34 @@ class RuleEngine:
             ),
             "anchors_pack": deepcopy(defaults.get("anchors_pack", {})),
             "negatives_pack": deepcopy(defaults.get("negatives_pack", [])),
+            "frontier_policy": deepcopy(
+                defaults.get(
+                    "frontier_policy",
+                    {
+                        "require_diagnostic_anchor": str(content.profile).strip().lower() == "enhanced",
+                        "drop_bio_general_without_diagnostic": str(content.profile).strip().lower() == "enhanced",
+                    },
+                )
+            ),
+            "evidence_policy": deepcopy(
+                defaults.get(
+                    "evidence_policy",
+                    {
+                        "require_evidence_for_core": str(content.profile).strip().lower() == "enhanced",
+                        "min_snippet_chars": 80,
+                        "degrade_if_missing": True,
+                    },
+                )
+            ),
+            "opportunity_index": deepcopy(
+                defaults.get(
+                    "opportunity_index",
+                    {
+                        "enabled": str(content.profile).strip().lower() == "enhanced",
+                        "window_days": 7,
+                    },
+                )
+            ),
             # Optional: URL path hints for platform tagging (weak signal).
             # Must not affect inclusion/selection, only tagging/explain downstream.
             "platform_url_hints": deepcopy(defaults.get("platform_url_hints", {})),
@@ -557,6 +585,18 @@ class RuleEngine:
                 )
             ),
             "content_sources": deepcopy(defaults.get("content_sources", {})),
+            "source_policy": deepcopy(
+                defaults.get(
+                    "source_policy",
+                    {
+                        "enabled": True,
+                        "min_trust_tier": {"legacy": "C", "enhanced": "B"},
+                        "exclude_domains": [],
+                        "exclude_source_ids": [],
+                        "drop_if_url_matches": [],
+                    },
+                )
+            ),
             "track_routing": deepcopy(defaults.get("track_routing", {})),
         }
 
@@ -736,6 +776,12 @@ class RuleEngine:
                 if isinstance(params, dict):
                     return [("negatives_pack", _as_list(params.get("terms")))]
                 return [("negatives_pack", _as_list(params))]
+            if rule_type == "frontier_policy":
+                return [("frontier_policy", params)]
+            if rule_type == "evidence_policy":
+                return [("evidence_policy", params)]
+            if rule_type == "opportunity_index":
+                return [("opportunity_index", params)]
             if rule_type == "track_routing":
                 return [("track_routing", params)]
 

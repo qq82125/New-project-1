@@ -19,6 +19,10 @@
           "name": { "type": "string", "minLength": 1 },
           "region": { "type": "string", "minLength": 1 },
           "trust_tier": { "type": "string", "enum": ["A", "B", "C"] },
+          "source_group": {
+            "type": "string",
+            "enum": ["regulatory", "evidence", "procurement", "company", "media"]
+          },
           "priority": { "type": "integer", "minimum": 0, "maximum": 1000 },
           "tags": {
             "type": "array",

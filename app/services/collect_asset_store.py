@@ -6,33 +6,19 @@ import json
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from app.core.track_relevance import compute_relevance
 from app.services.analysis_cache_store import AnalysisCacheStore
 from app.services.analysis_generator import AnalysisGenerator, degraded_analysis
+from app.services.opportunity_index import compute_opportunity_index
+from app.services.opportunity_store import EVENT_WEIGHT, OpportunityStore
+from app.services.source_policy import exclusion_reason, filter_rows_for_digest, normalize_source_policy
+from app.utils.url_norm import url_norm
 
 
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
-
-
-def url_norm(url: str) -> str:
-    try:
-        p = urlparse(str(url or ""))
-        host = (p.netloc or "").lower()
-        path = (p.path or "").rstrip("/")
-        query = p.query.strip()
-        # Keep query only for common RSS/article identifiers; drop tracking-like noise.
-        kept_query = ""
-        if query:
-            low = query.lower()
-            if any(k in low for k in ("id=", "article=", "story=", "p=", "item=")):
-                kept_query = "?" + query
-        return f"{host}{path}{kept_query}"
-    except Exception:
-        return str(url or "").strip().lower()
 
 
 def append_jsonl(file: Path, obj: dict[str, Any]) -> None:
@@ -61,6 +47,43 @@ def _to_iso_utc(d: dt.datetime) -> str:
     if d.tzinfo is None:
         d = d.replace(tzinfo=dt.timezone.utc)
     return d.astimezone(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _extract_evidence_snippet(item: dict[str, Any], *, max_chars: int = 240) -> tuple[str, str]:
+    # Prefer RSS summary/description, then body-like fields.
+    candidates = [
+        ("summary", str(item.get("summary", "")).strip()),
+        ("description", str(item.get("description", "")).strip()),
+        ("body", str(item.get("body", "")).strip()),
+        ("content", str(item.get("content", "")).strip()),
+        ("raw_text", str(item.get("raw_text", "")).strip()),
+    ]
+    for src, txt in candidates:
+        if txt:
+            snippet = re.sub(r"\s+", " ", txt).strip()
+            return snippet[: max(1, int(max_chars))], src
+    return "", ""
+
+
+def _event_weight_key(event_type: str) -> str:
+    et = str(event_type or "").strip().lower()
+    if not et:
+        return ""
+    if et in EVENT_WEIGHT:
+        return et
+    if ("招采" in et) or ("procure" in et) or ("tender" in et) or ("bid" in et):
+        return "procurement"
+    if ("监管" in et) or ("指南" in et) or ("regulatory" in et):
+        return "regulatory"
+    if ("审批" in et) or ("批准" in et) or ("approval" in et) or ("clearance" in et):
+        return "approval"
+    if ("优先审评" in et) or ("priority review" in et):
+        return "priority_review"
+    if ("并购" in et) or ("融资" in et) or ("合作" in et) or ("ipo" in et) or ("company" in et):
+        return "company_move"
+    if ("paper" in et) or ("study" in et) or ("preprint" in et) or ("journal" in et) or ("科研" in et):
+        return "paper"
+    return "technology_update"
 
 
 class CollectAssetStore:
@@ -100,15 +123,22 @@ class CollectAssetStore:
         source_group: str,
         items: list[dict[str, Any]],
         rules_runtime: dict[str, Any] | None = None,
+        source_trust_tier: str = "C",
         now_utc: dt.datetime | None = None,
     ) -> dict[str, int]:
         rules_runtime = rules_runtime or {}
+        source_policy = normalize_source_policy(
+            rules_runtime.get("source_policy", {}) if isinstance(rules_runtime.get("source_policy"), dict) else {},
+            profile=str(rules_runtime.get("profile", "legacy")),
+        )
         now_utc = now_utc or dt.datetime.now(dt.timezone.utc)
         day = now_utc.date()
         index = self._load_day_index(day)
         target = self._day_file(day)
         written = 0
         skipped = 0
+        dropped_by_source_policy = 0
+        dropped_reasons: dict[str, int] = {}
 
         rows: list[str] = []
         for it in items:
@@ -116,6 +146,12 @@ class CollectAssetStore:
             url = str(it.get("url", it.get("link", ""))).strip()
             if not title or not url:
                 skipped += 1
+                continue
+            drop_reason = exclusion_reason(source_id, url, source_policy)
+            if drop_reason:
+                skipped += 1
+                dropped_by_source_policy += 1
+                dropped_reasons[drop_reason] = dropped_reasons.get(drop_reason, 0) + 1
                 continue
             summary = str(it.get("summary", "")).strip()
             published = str(it.get("published_at", "")).strip()
@@ -143,6 +179,7 @@ class CollectAssetStore:
                 "source_id": source_id,
                 "source": source_name,
                 "source_group": source_group,
+                "trust_tier": str(source_trust_tier or "C").strip().upper() or "C",
                 "url": url,
                 "url_norm": url_norm(url),
                 "canonical_url": str(it.get("canonical_url", "")).strip(),
@@ -170,7 +207,12 @@ class CollectAssetStore:
                 for ln in rows:
                     f.write(ln + "\n")
         self._save_day_index(day, index)
-        return {"written": written, "skipped": skipped}
+        return {
+            "written": written,
+            "skipped": skipped,
+            "dropped_by_source_policy": dropped_by_source_policy,
+            "dropped_by_source_policy_reasons": dropped_reasons,
+        }
 
     def append_stub_item(
         self,
@@ -320,6 +362,26 @@ def render_digest_from_assets(
     _generator: AnalysisGenerator | None = None,
 ) -> Any:
     analysis_cfg = analysis_cfg or {}
+    source_policy = normalize_source_policy(
+        analysis_cfg.get("source_policy", {}) if isinstance(analysis_cfg.get("source_policy"), dict) else {},
+        profile=str(analysis_cfg.get("profile", "legacy")),
+    )
+    evidence_policy_cfg = analysis_cfg.get("evidence_policy", {}) if isinstance(analysis_cfg.get("evidence_policy"), dict) else {}
+    profile = str(analysis_cfg.get("profile", "legacy")).strip().lower() or "legacy"
+    require_evidence_for_core = bool(evidence_policy_cfg.get("require_evidence_for_core", profile == "enhanced"))
+    min_snippet_chars = int(evidence_policy_cfg.get("min_snippet_chars", 80) or 80)
+    degrade_if_missing_evidence = bool(evidence_policy_cfg.get("degrade_if_missing", True))
+    opportunity_cfg = analysis_cfg.get("opportunity_index", {}) if isinstance(analysis_cfg.get("opportunity_index"), dict) else {}
+    opportunity_enabled = bool(opportunity_cfg.get("enabled", profile == "enhanced"))
+    opportunity_window_days = max(1, int(opportunity_cfg.get("window_days", 7) or 7))
+    opportunity_asset_dir = str(opportunity_cfg.get("asset_dir", "artifacts/opportunity") or "artifacts/opportunity")
+    opportunity_store = OpportunityStore(Path("."), asset_dir=opportunity_asset_dir) if opportunity_enabled else None
+    relevance_runtime = {
+        "profile": profile,
+        "anchors_pack": analysis_cfg.get("anchors_pack", {}) if isinstance(analysis_cfg.get("anchors_pack"), dict) else {},
+        "negatives_pack": analysis_cfg.get("negatives_pack", []) if isinstance(analysis_cfg.get("negatives_pack"), list) else [],
+        "frontier_policy": analysis_cfg.get("frontier_policy", {}) if isinstance(analysis_cfg.get("frontier_policy"), dict) else {},
+    }
     enable_analysis_cache = bool(analysis_cfg.get("enable_analysis_cache", True))
     always_generate = bool(analysis_cfg.get("always_generate", False))
     prompt_version = str(analysis_cfg.get("prompt_version", "v1"))
@@ -353,11 +415,67 @@ def render_digest_from_assets(
 
     cache_hit = 0
     cache_miss = 0
+    cache_key_mismatch = 0
     generated_count = 0
     degraded_count = 0
     degraded_reasons: dict[str, int] = {}
+    source_policy_dropped_rows: dict[str, int] = {}
+    dropped_bio_general_count = 0
+    bio_general_terms_count: dict[str, int] = {}
+    evidence_missing_core_count = 0
+    evidence_missing_sources: dict[str, int] = {}
+    evidence_present_core_count = 0
+    opportunity_signals_written = 0
 
     lines: list[str] = [subject, ""]
+
+    items_filtered, source_policy_dropped_count, source_policy_dropped_rows = filter_rows_for_digest(items, policy=source_policy)
+    items = []
+    for r in items_filtered:
+        title = str(r.get("title", "")).strip()
+        summary = str(r.get("summary", "")).strip()
+        text = f"{title} {summary}".strip()
+        track, level, explain = compute_relevance(
+            text,
+            {
+                "source_group": str(r.get("source_group", "")).strip(),
+                "event_type": str(r.get("event_type", "")).strip(),
+                "url": str(r.get("url", "")).strip(),
+                "title": title,
+            },
+            relevance_runtime,
+        )
+        if str(track).strip().lower() == "drop":
+            if str(explain.get("final_reason", "")).strip() == "bio_general_without_diagnostic_anchor":
+                dropped_bio_general_count += 1
+                for t in explain.get("bio_general_anchors_hit", []) if isinstance(explain.get("bio_general_anchors_hit", []), list) else []:
+                    tt = str(t).strip().lower()
+                    if tt:
+                        bio_general_terms_count[tt] = bio_general_terms_count.get(tt, 0) + 1
+            continue
+        rr = dict(r)
+        rr["track"] = track
+        rr["relevance_level"] = int(level)
+        rr["relevance_explain"] = explain
+        items.append(rr)
+        if opportunity_store is not None:
+            try:
+                et = str(rr.get("event_type", "")).strip() or "__unknown__"
+                wk = _event_weight_key(et)
+                opportunity_store.append_signal(
+                    {
+                        "date": date_str,
+                        "region": str(rr.get("region", "")).strip() or "__unknown__",
+                        "lane": str(rr.get("lane", "")).strip() or "__unknown__",
+                        "event_type": et,
+                        "weight": int(EVENT_WEIGHT.get(wk, 1)),
+                        "source_id": str(rr.get("source_id", "")).strip(),
+                        "url_norm": url_norm(str(rr.get("url", "")).strip()),
+                    }
+                )
+                opportunity_signals_written += 1
+            except Exception:
+                pass
 
     core_items = [r for r in items if str(r.get("track", "")) == "core" and int(r.get("relevance_level", 0) or 0) >= int(core_min_level_for_A)]
     frontier_items = [r for r in items if str(r.get("track", "")) == "frontier" and int(r.get("relevance_level", 0) or 0) >= int(frontier_min_level_for_F)]
@@ -378,12 +496,45 @@ def render_digest_from_assets(
         for idx, r in enumerate(top, 1):
             analysis = None
             item_key = ""
+            evidence_snippet, evidence_from = _extract_evidence_snippet(r, max_chars=240)
+            evidence_ok = len(str(evidence_snippet or "").strip()) >= max(1, min_snippet_chars)
+            if require_evidence_for_core and not evidence_ok and degrade_if_missing_evidence:
+                evidence_missing_core_count += 1
+                src = str(r.get("source", "")).strip() or str(r.get("source_id", "")).strip() or "unknown"
+                evidence_missing_sources[src] = evidence_missing_sources.get(src, 0) + 1
+                analysis = {
+                    "summary": f"[NO_EVIDENCE] {str(r.get('title', '')).strip()}",
+                    "impact": "影响：证据片段不足，暂不输出结论性判断。",
+                    "action": "建议：需打开原文核查并补充可引用证据后再采用。",
+                    "used_model": "",
+                    "model": "",
+                    "prompt_version": str(prompt_version),
+                    "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                    "generated_at": _to_iso_utc(dt.datetime.now(dt.timezone.utc)),
+                    "degraded": True,
+                    "degraded_reason": "missing_evidence",
+                    "ok": False,
+                    "evidence_snippet": "",
+                    "evidence_from": "",
+                }
+                degraded_count += 1
+                degraded_reasons["missing_evidence"] = degraded_reasons.get("missing_evidence", 0) + 1
+            else:
+                if evidence_ok:
+                    evidence_present_core_count += 1
             if enable_analysis_cache:
                 item_key = AnalysisCacheStore.item_key(r)
-                if not always_generate and cache_store is not None:
+                if analysis is not None:
+                    cache_miss += 1
+                elif not always_generate and cache_store is not None:
                     analysis = cache_store.get(item_key, run_day)
                     if analysis:
                         cache_hit += 1
+                        computed_un = url_norm(str(r.get("url", "")).strip())
+                        payload_un = str((analysis or {}).get("url_norm", "")).strip() or url_norm(str((analysis or {}).get("url", "")).strip())
+                        payload_key = str((analysis or {}).get("cache_key", (analysis or {}).get("item_key", ""))).strip()
+                        if computed_un and ((payload_un and payload_un != computed_un) or (payload_key and payload_key != computed_un)):
+                            cache_key_mismatch += 1
                     else:
                         cache_miss += 1
                 else:
@@ -402,18 +553,47 @@ def render_digest_from_assets(
                     payload = dict(analysis)
                     payload.update(
                         {
+                            "cache_key": item_key,
                             "item_key": item_key,
                             "url": str(r.get("url", "")),
+                            "url_norm": url_norm(str(r.get("url", ""))),
                             "story_id": str(r.get("story_id", "")),
                             "source_id": str(r.get("source_id", "")),
                             "title": str(r.get("title", "")),
+                            "model": str(analysis.get("used_model", analysis.get("model", model_name))),
+                            "prompt_version": str(analysis.get("prompt_version", prompt_version)),
+                            "generated_at": str(analysis.get("generated_at", "")) or _to_iso_utc(dt.datetime.now(dt.timezone.utc)),
+                            "token_usage": analysis.get("token_usage", {}) if isinstance(analysis.get("token_usage", {}), dict) else {},
+                            "evidence_snippet": evidence_snippet if evidence_ok else "",
+                            "evidence_from": evidence_from if evidence_ok else "",
                         }
                     )
                     cache_store.put(item_key, payload, run_day)
+            elif enable_analysis_cache and cache_store is not None and item_key:
+                payload = dict(analysis)
+                payload.update(
+                    {
+                        "cache_key": item_key,
+                        "item_key": item_key,
+                        "url": str(r.get("url", "")),
+                        "url_norm": url_norm(str(r.get("url", ""))),
+                        "story_id": str(r.get("story_id", "")),
+                        "source_id": str(r.get("source_id", "")),
+                        "title": str(r.get("title", "")),
+                        "model": str(analysis.get("used_model", analysis.get("model", ""))),
+                        "prompt_version": str(analysis.get("prompt_version", prompt_version)),
+                        "generated_at": str(analysis.get("generated_at", "")) or _to_iso_utc(dt.datetime.now(dt.timezone.utc)),
+                        "token_usage": analysis.get("token_usage", {}) if isinstance(analysis.get("token_usage", {}), dict) else {},
+                        "evidence_snippet": evidence_snippet if evidence_ok else "",
+                        "evidence_from": evidence_from if evidence_ok else "",
+                    }
+                )
+                cache_store.put(item_key, payload, run_day)
 
             lines.append(f"{idx}) [24小时内] {str(r.get('title',''))}")
             sm = str((analysis or {}).get("summary", "")).strip() or str(r.get("summary", "")).strip() or "摘要：由 collect 资产生成。"
             lines.append(sm if sm.startswith("摘要") else f"摘要：{sm}")
+            lines.append(f"证据摘录：{evidence_snippet if evidence_ok else '[缺失]'}")
             lines.append(f"发布日期：{str(r.get('published_at',''))}")
             lines.append(f"来源：{str(r.get('source',''))} | {str(r.get('url',''))}")
             if str(r.get("region", "")).strip():
@@ -513,15 +693,54 @@ def render_digest_from_assets(
     )
     reason_top = "; ".join([f"{k}:{v}" for k, v in sorted(degraded_reasons.items(), key=lambda kv: (-kv[1], kv[0]))[:3]]) or "无"
     lines.append(
-        f"analysis_cache_hit/miss：{cache_hit}/{cache_miss} | generated_count：{generated_count} | "
+        f"analysis_cache_hit/miss：{cache_hit}/{cache_miss} | analysis_cache_key_mismatch：{cache_key_mismatch} | generated_count：{generated_count} | "
         f"degraded_count：{degraded_count} | degraded_reason_top3：{reason_top}"
     )
+    bio_top = "; ".join([f"{k}:{v}" for k, v in sorted(bio_general_terms_count.items(), key=lambda kv: (-kv[1], kv[0]))[:5]]) or "无"
+    lines.append(
+        f"dropped_bio_general_count：{dropped_bio_general_count} | top_bio_general_terms：{bio_top}"
+    )
+    evidence_top = "; ".join([f"{k}:{v}" for k, v in sorted(evidence_missing_sources.items(), key=lambda kv: (-kv[1], kv[0]))[:5]]) or "无"
+    lines.append(
+        f"evidence_missing_core_count：{evidence_missing_core_count} | evidence_missing_sources_topN：{evidence_top}"
+    )
+    if source_policy_dropped_count > 0:
+        sp_top = "; ".join([f"{k}:{v}" for k, v in sorted(source_policy_dropped_rows.items(), key=lambda kv: (-kv[1], kv[0]))[:3]])
+        lines.append(
+            f"dropped_by_source_policy_count：{source_policy_dropped_count} | dropped_by_source_policy_top3：{sp_top}"
+        )
+    if opportunity_enabled:
+        lines.append("")
+        lines.append(f"H. 机会强度指数（近{opportunity_window_days}天）")
+        try:
+            idx = compute_opportunity_index(
+                Path("."),
+                window_days=opportunity_window_days,
+                asset_dir=opportunity_asset_dir,
+                as_of=date_str,
+            )
+            rows_idx = list((idx.get("region_lane", {}) if isinstance(idx.get("region_lane", {}), dict) else {}).values())
+            rows_idx = [r for r in rows_idx if isinstance(r, dict)]
+            rows_idx.sort(key=lambda x: int(x.get("score", 0) or 0), reverse=True)
+            if not rows_idx:
+                lines.append("- 暂无显著机会变化")
+            else:
+                for r in rows_idx[:5]:
+                    delta = int(r.get("delta_vs_prev_window", 0) or 0)
+                    arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "→")
+                    region = str(r.get("region", "__unknown__")).strip() or "__unknown__"
+                    lane = str(r.get("lane", "__unknown__")).strip() or "__unknown__"
+                    lines.append(f"- {lane}（{region}）：{arrow} {delta:+d}")
+        except Exception:
+            lines.append("- 暂无显著机会变化")
+        lines.append(f"- opportunity_signals_written：{opportunity_signals_written}")
     if not items:
         lines.append("分流规则缺口说明：collect 资产窗口内无条目，请检查 collect 调度、信源可达性和资产目录。")
     txt = "\n".join(lines).rstrip() + "\n"
     meta = {
         "analysis_cache_hit": cache_hit,
         "analysis_cache_miss": cache_miss,
+        "analysis_cache_key_mismatch": cache_key_mismatch,
         "analysis_generated_count": generated_count,
         "analysis_degraded_count": degraded_count,
         "analysis_degraded_reason_top3": [
@@ -531,6 +750,22 @@ def render_digest_from_assets(
         "analysis_prompt_version": prompt_version,
         "analysis_model": model_name,
         "analysis_cache_enabled": enable_analysis_cache,
+        "dropped_by_source_policy_count": int(source_policy_dropped_count),
+        "dropped_by_source_policy_reasons": source_policy_dropped_rows,
+        "dropped_bio_general_count": int(dropped_bio_general_count),
+        "top_bio_general_terms": [
+            {"term": k, "count": v}
+            for k, v in sorted(bio_general_terms_count.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+        ],
+        "evidence_missing_core_count": int(evidence_missing_core_count),
+        "evidence_present_core_count": int(evidence_present_core_count),
+        "evidence_missing_sources_topN": [
+            {"source": k, "count": v}
+            for k, v in sorted(evidence_missing_sources.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+        ],
+        "opportunity_index_enabled": bool(opportunity_enabled),
+        "opportunity_window_days": int(opportunity_window_days),
+        "opportunity_signals_written": int(opportunity_signals_written),
         "dedupe_cluster_enabled": bool(items_before_dedupe),
         "items_before_dedupe": items_before_dedupe,
         "items_after_dedupe": items_after_dedupe,

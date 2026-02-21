@@ -17,6 +17,11 @@ DEFAULT_FRONTIER_QUOTA = {
     "max_items_per_day": 3,
 }
 
+DEFAULT_FRONTIER_POLICY = {
+    "require_diagnostic_anchor": False,
+    "drop_bio_general_without_diagnostic": False,
+}
+
 DEFAULT_ANCHORS_PACK = {
     "core": [
         "ivd",
@@ -67,6 +72,32 @@ DEFAULT_ANCHORS_PACK = {
         "lab automation",
     ],
 }
+
+DEFAULT_BIO_GENERAL_ANCHORS = [
+    "single-cell",
+    "single cell",
+    "spatial",
+    "multi-omics",
+    "multiomics",
+    "proteomics",
+    "transcriptomics",
+]
+
+DEFAULT_IVD_FRONTIER_ANCHORS = [
+    "cfdna",
+    "mced",
+    "dpcr",
+    "ddpcr",
+    "digital pcr",
+    "library prep",
+    "sample prep",
+    "sample preparation",
+    "qc",
+    "workflow",
+    "automation",
+    "variant calling",
+    "multiplex",
+]
 
 DEFAULT_NEGATIVES_PACK = [
     "earnings",
@@ -148,6 +179,7 @@ def compute_relevance(
     """
     source_meta = source_meta or {}
     rules_runtime = rules_runtime or {}
+    profile = str(rules_runtime.get("profile", "legacy")).strip().lower() or "legacy"
     text_lc = str(text or "").lower()
     title_lc = str(source_meta.get("title", "") or "").strip().lower()
     url_lc = str(source_meta.get("url", "") or "").strip().lower()
@@ -166,9 +198,31 @@ def compute_relevance(
     frontier_anchors = _to_kw_list(anchors_cfg.get("frontier"))
     negatives = _to_kw_list(negatives_cfg)
     negatives_strong = _to_kw_list(negative_strong_cfg)
+    frontier_policy_cfg = rules_runtime.get("frontier_policy", {})
+    if not isinstance(frontier_policy_cfg, dict):
+        frontier_policy_cfg = {}
+    require_diagnostic_anchor = bool(frontier_policy_cfg.get("require_diagnostic_anchor", profile == "enhanced"))
+    drop_bio_general_without_diagnostic = bool(
+        frontier_policy_cfg.get("drop_bio_general_without_diagnostic", profile == "enhanced")
+    )
+    bio_general_anchors = _to_kw_list(rules_runtime.get("bio_general_anchors", DEFAULT_BIO_GENERAL_ANCHORS))
+    ivd_frontier_anchors = _to_kw_list(rules_runtime.get("ivd_frontier_anchors", DEFAULT_IVD_FRONTIER_ANCHORS))
+    bio_set = set(bio_general_anchors)
+    ivd_frontier_set = set(ivd_frontier_anchors)
 
     core_hits = [k for k in core_anchors if _has_term(text_lc, k)]
     frontier_hits = [k for k in frontier_anchors if _has_term(text_lc, k)]
+    bio_general_hits = [k for k in frontier_hits if k in bio_set]
+    ivd_frontier_hits = [k for k in frontier_hits if k not in bio_set]
+    for k in ivd_frontier_set:
+        if _has_term(text_lc, k):
+            ivd_frontier_hits.append(k)
+    for k in bio_set:
+        if _has_term(text_lc, k):
+            bio_general_hits.append(k)
+    ivd_frontier_hits = sorted(set(ivd_frontier_hits))
+    bio_general_hits = sorted(set(bio_general_hits))
+    frontier_all_hits = sorted(set(frontier_hits + ivd_frontier_hits + bio_general_hits))
     negative_hits = [k for k in negatives if _has_term(text_lc, k)]
     negative_strong_hits = [k for k in negatives_strong if _has_term(text_lc, k)]
 
@@ -180,7 +234,10 @@ def compute_relevance(
     # hard filter: static/navigation pages.
     if is_navigation_page(url_lc, title_lc):
         explain = {
-            "anchors_hit": sorted(set(core_hits + frontier_hits)),
+            "anchors_hit": sorted(set(core_hits + frontier_all_hits)),
+            "diagnostic_anchors_hit": sorted(set(core_hits)),
+            "ivd_frontier_anchors_hit": ivd_frontier_hits,
+            "bio_general_anchors_hit": bio_general_hits,
             "negatives_hit": sorted(set(negative_hits + negative_strong_hits)),
             "rule_hits": ["navigation_filter"],
             "rules_applied": ["navigation_filter"],
@@ -192,7 +249,7 @@ def compute_relevance(
         return "drop", 0, explain
 
     # scoring v1
-    raw_score = (len(core_hits) * 2) + (len(frontier_hits) * 2)
+    raw_score = (len(core_hits) * 2) + (len(frontier_all_hits) * 2)
     if has_reg_signal:
         raw_score += 2
     if has_journal_signal:
@@ -200,13 +257,16 @@ def compute_relevance(
     raw_score -= len(negative_hits)
 
     strong_diagnostic_anchor_hit = bool(core_hits)
-    frontier_anchor_hit = bool(frontier_hits)
+    frontier_anchor_hit = bool(ivd_frontier_hits or bio_general_hits)
     any_anchor_hit = strong_diagnostic_anchor_hit or frontier_anchor_hit
 
     # hard filter: strong business/legal noise without diagnostic anchors.
     if negative_strong_hits and not any_anchor_hit:
         explain = {
-            "anchors_hit": sorted(set(core_hits + frontier_hits)),
+            "anchors_hit": sorted(set(core_hits + frontier_all_hits)),
+            "diagnostic_anchors_hit": sorted(set(core_hits)),
+            "ivd_frontier_anchors_hit": ivd_frontier_hits,
+            "bio_general_anchors_hit": bio_general_hits,
             "negatives_hit": sorted(set(negative_hits + negative_strong_hits)),
             "rule_hits": ["negative_strong_gate"],
             "rules_applied": ["negative_strong_gate"],
@@ -231,11 +291,30 @@ def compute_relevance(
     # hard filter: raw score non-positive can never enter core/frontier.
     if raw_score <= 0:
         explain = {
-            "anchors_hit": sorted(set(core_hits + frontier_hits)),
+            "anchors_hit": sorted(set(core_hits + frontier_all_hits)),
+            "diagnostic_anchors_hit": sorted(set(core_hits)),
+            "ivd_frontier_anchors_hit": ivd_frontier_hits,
+            "bio_general_anchors_hit": bio_general_hits,
             "negatives_hit": sorted(set(negative_hits + negative_strong_hits)),
             "rule_hits": ["raw_score_gate"],
             "rules_applied": ["raw_score_gate"],
             "final_reason": "raw_score_non_positive",
+            "raw_score": raw_score,
+            "source_group": source_group,
+            "event_type": event_type,
+        }
+        return "drop", 0, explain
+
+    if drop_bio_general_without_diagnostic and bio_general_hits and not strong_diagnostic_anchor_hit:
+        explain = {
+            "anchors_hit": sorted(set(core_hits + frontier_all_hits)),
+            "diagnostic_anchors_hit": sorted(set(core_hits)),
+            "ivd_frontier_anchors_hit": ivd_frontier_hits,
+            "bio_general_anchors_hit": bio_general_hits,
+            "negatives_hit": sorted(set(negative_hits + negative_strong_hits)),
+            "rule_hits": ["frontier_policy_gate"],
+            "rules_applied": ["frontier_policy_gate"],
+            "final_reason": "bio_general_without_diagnostic_anchor",
             "raw_score": raw_score,
             "source_group": source_group,
             "event_type": event_type,
@@ -248,12 +327,30 @@ def compute_relevance(
         level = max(3, level)
         final_reason = "core_anchor_hit"
     elif frontier_anchor_hit:
+        if require_diagnostic_anchor and not strong_diagnostic_anchor_hit:
+            explain = {
+                "anchors_hit": sorted(set(core_hits + frontier_all_hits)),
+                "diagnostic_anchors_hit": sorted(set(core_hits)),
+                "ivd_frontier_anchors_hit": ivd_frontier_hits,
+                "bio_general_anchors_hit": bio_general_hits,
+                "negatives_hit": sorted(set(negative_hits + negative_strong_hits)),
+                "rule_hits": ["frontier_policy_gate"],
+                "rules_applied": ["frontier_policy_gate"],
+                "final_reason": "no_diagnostic_anchor",
+                "raw_score": raw_score,
+                "source_group": source_group,
+                "event_type": event_type,
+            }
+            return "drop", 0, explain
         track = "frontier"
         level = max(2, level)
         final_reason = "frontier_anchor_hit"
     else:
         explain = {
-            "anchors_hit": sorted(set(core_hits + frontier_hits)),
+            "anchors_hit": sorted(set(core_hits + frontier_all_hits)),
+            "diagnostic_anchors_hit": sorted(set(core_hits)),
+            "ivd_frontier_anchors_hit": ivd_frontier_hits,
+            "bio_general_anchors_hit": bio_general_hits,
             "negatives_hit": sorted(set(negative_hits + negative_strong_hits)),
             "rule_hits": ["anchor_gate"],
             "rules_applied": ["anchor_gate"],
@@ -266,17 +363,22 @@ def compute_relevance(
 
     level = max(0, min(4, int(level)))
     explain = {
-        "anchors_hit": sorted(set(core_hits + frontier_hits)),
+        "anchors_hit": sorted(set(core_hits + frontier_all_hits)),
+        "diagnostic_anchors_hit": sorted(set(core_hits)),
+        "ivd_frontier_anchors_hit": ivd_frontier_hits,
+        "bio_general_anchors_hit": bio_general_hits,
         "negatives_hit": sorted(set(negative_hits + negative_strong_hits)),
         "rule_hits": [
             "compute_relevance_v1",
             "anchor_gate",
             "raw_score_gate",
+            "frontier_policy_gate",
         ],
         "rules_applied": [
             "compute_relevance_v1",
             "anchor_gate",
             "raw_score_gate",
+            "frontier_policy_gate",
         ],
         "final_reason": final_reason,
         "raw_score": raw_score,

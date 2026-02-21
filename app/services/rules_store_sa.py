@@ -47,6 +47,7 @@ REQUIRED_TABLES = (
     "scheduler_rules_versions",
     "rules_drafts",
     "sources",
+    "source_groups",
     "dual_write_failures",
     "db_compare_log",
     "run_executions",
@@ -445,14 +446,14 @@ class SQLAlchemyRulesStore:
         self._dual_write("upsert_sources", sources, replace=replace)
         return {"ok": True, "source_count": cnt}
 
-    def list_sources(self, *, enabled_only: bool = False) -> list[dict[str, Any]]:
-        out = self.sources_repo.list(enabled_only=enabled_only)
+    def list_sources(self, *, enabled_only: bool = False, include_deleted: bool = False) -> list[dict[str, Any]]:
+        out = self.sources_repo.list(enabled_only=enabled_only, include_deleted=include_deleted)
         if self._secondary_store is not None and self.read_mode == "shadow_compare":
             self._shadow_compare(
                 "list_sources",
                 out,
-                self._secondary_store.list_sources(enabled_only=enabled_only),
-                params={"enabled_only": bool(enabled_only)},
+                self._secondary_store.list_sources(enabled_only=enabled_only, include_deleted=include_deleted),
+                params={"enabled_only": bool(enabled_only), "include_deleted": bool(include_deleted)},
             )
         return out
 
@@ -531,6 +532,57 @@ class SQLAlchemyRulesStore:
         source["enabled"] = (not bool(source["enabled"])) if enabled is None else bool(enabled)
         out = self.upsert_source(source)
         return {"ok": True, "source": out["source"]}
+
+    def soft_delete_source(self, source_id: str) -> dict[str, Any]:
+        now = _utc_now()
+        row = self.sources_repo.soft_delete(source_id, now=now)
+        if row is None:
+            raise RuntimeError(f"source not found: {source_id}")
+        self._dual_write("soft_delete_source", source_id)
+        return {"ok": True, "source": row}
+
+    def restore_source(self, source_id: str) -> dict[str, Any]:
+        now = _utc_now()
+        row = self.sources_repo.restore(source_id, now=now)
+        if row is None:
+            raise RuntimeError(f"source not found: {source_id}")
+        self._dual_write("restore_source", source_id)
+        return {"ok": True, "source": row}
+
+    def list_source_groups(self) -> list[dict[str, Any]]:
+        out = self.sources_repo.list_groups()
+        if not out:
+            for key, display, interval in [
+                ("regulatory", "Regulatory", 20),
+                ("media", "Media", 60),
+                ("evidence", "Evidence", 720),
+                ("company", "Company", 240),
+                ("procurement", "Procurement", 60),
+            ]:
+                self.sources_repo.upsert_group(
+                    {
+                        "group_key": key,
+                        "display_name": display,
+                        "default_interval_minutes": interval,
+                        "enabled": True,
+                    },
+                    now=_utc_now(),
+                )
+            out = self.sources_repo.list_groups()
+        if self._secondary_store is not None and self.read_mode == "shadow_compare":
+            self._shadow_compare(
+                "list_source_groups",
+                out,
+                self._secondary_store.list_source_groups(),
+                params={},
+            )
+        return out
+
+    def upsert_source_group(self, group: dict[str, Any]) -> dict[str, Any]:
+        now = _utc_now()
+        row = self.sources_repo.upsert_group(group, now=now)
+        self._dual_write("upsert_source_group", group)
+        return {"ok": True, "group": row}
 
     def create_draft(
         self,

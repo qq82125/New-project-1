@@ -14,9 +14,11 @@ from urllib.parse import urlparse
 
 import yaml
 
+from app.adapters.rule_bridge import load_runtime_rules
 from app.services.run_lock import RunLockError, acquire_run_lock
 from app.services.rules_store import RulesStore
-from app.services.source_registry import fetch_source_entries
+from app.services.source_policy import exclusion_reason, filter_entries_for_collect, normalize_source_policy, source_passes_min_trust_tier
+from app.services.source_registry import fetch_source_entries, list_sources_for_profile
 from app.workers.live_run import run_digest
 from app.services.collect_asset_store import CollectAssetStore
 
@@ -53,6 +55,20 @@ def _load_schema(project_root: Path) -> dict[str, Any]:
     # For now, repo schema is sufficient for sanity checks.
     schema_path = project_root / "rules" / "schemas" / "scheduler_rules.schema.json"
     return json.loads(schema_path.read_text(encoding="utf-8"))
+
+
+def _is_due(*, last_fetched_at: str, interval_min: int, now_ts: float) -> bool:
+    if int(interval_min or 0) <= 0:
+        return True
+    lf = str(last_fetched_at or "").strip()
+    if not lf:
+        return True
+    try:
+        dt_last = datetime.fromisoformat(lf.replace("Z", "+00:00"))
+        age = now_ts - dt_last.timestamp()
+        return age >= int(interval_min) * 60
+    except Exception:
+        return True
 
 
 def _extract_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -315,32 +331,59 @@ class SchedulerWorker:
         sources_fetched_count = 0
         sources_failed_count = 0
         collector = CollectAssetStore(self.project_root, asset_dir=self._collect_asset_dir)
+        env_for_rules = os.environ.copy()
+        if str(profile).strip().lower() == "enhanced":
+            env_for_rules["ENHANCED_RULES_PROFILE"] = "enhanced"
+        else:
+            env_for_rules.pop("ENHANCED_RULES_PROFILE", None)
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        rt = load_runtime_rules(date_str=date_str, env=env_for_rules, run_id=run_id)
+        content_cfg = rt.get("content", {}) if isinstance(rt.get("content"), dict) else {}
+        source_policy = normalize_source_policy(
+            content_cfg.get("source_policy", {}) if isinstance(content_cfg.get("source_policy"), dict) else {},
+            profile=str(rt.get("active_profile", profile)),
+        )
+        dropped_by_source_policy_count = 0
+        dropped_by_source_policy_reasons: dict[str, int] = {}
+        interval_defaulted_count = 0
 
-        rows = self.store.list_sources(enabled_only=True)
+        rows = list_sources_for_profile(self.project_root, profile)
+        rows = [r for r in rows if bool(r.get("enabled", True))]
         if isinstance(max_sources, int) and max_sources > 0:
             rows = rows[: int(max_sources)]
         for s in rows:
             sid = str(s.get("id", "")).strip()
             if not sid:
                 continue
+            source_url = str(s.get("url", "")).strip()
+            source_tt = str(s.get("trust_tier", "C")).strip().upper() or "C"
+            if not source_passes_min_trust_tier(source_tt, source_policy):
+                skipped += 1
+                dropped_by_source_policy_count += 1
+                dropped_by_source_policy_reasons["below_min_trust_tier"] = (
+                    dropped_by_source_policy_reasons.get("below_min_trust_tier", 0) + 1
+                )
+                continue
+            rs = exclusion_reason(sid, source_url, source_policy)
+            if rs:
+                skipped += 1
+                dropped_by_source_policy_count += 1
+                dropped_by_source_policy_reasons[rs] = dropped_by_source_policy_reasons.get(rs, 0) + 1
+                continue
             t0 = time.time()
             fetch_cfg = s.get("fetch", {}) if isinstance(s.get("fetch"), dict) else {}
-            interval_m = fetch_cfg.get("interval_minutes")
+            interval_m = s.get("effective_interval_minutes", fetch_cfg.get("interval_minutes"))
             try:
                 interval_min = int(interval_m) if interval_m is not None and str(interval_m).strip() != "" else 0
             except Exception:
                 interval_min = 0
+            if interval_min <= 0:
+                interval_min = 60
+                interval_defaulted_count += 1
+                errors.append(f"{sid}:interval_defaulted_to_60")
 
             last_fetched_at = str(s.get("last_fetched_at") or "").strip()
-            due = True
-            if interval_min > 0 and last_fetched_at:
-                try:
-                    # stored as isoformat from _utc_now (timezone aware)
-                    dt_last = datetime.fromisoformat(last_fetched_at.replace("Z", "+00:00"))
-                    age = now - dt_last.timestamp()
-                    due = age >= interval_min * 60
-                except Exception:
-                    due = True
+            due = _is_due(last_fetched_at=last_fetched_at, interval_min=interval_min, now_ts=now)
 
             if not force and not due:
                 skipped += 1
@@ -443,16 +486,39 @@ class SchedulerWorker:
                 fetched += 1
                 sources_fetched_count += 1
                 try:
+                    entries_raw = list(result.get("entries", [])) if isinstance(result.get("entries", []), list) else []
+                    entries_kept, pre_dropped, pre_reasons = filter_entries_for_collect(
+                        entries_raw,
+                        source_id=sid,
+                        policy=source_policy,
+                    )
+                    if pre_dropped > 0:
+                        dropped_by_source_policy_count += int(pre_dropped)
+                        for rk, rv in pre_reasons.items():
+                            dropped_by_source_policy_reasons[str(rk)] = dropped_by_source_policy_reasons.get(str(rk), 0) + int(rv or 0)
                     wr = collector.append_items(
                         run_id=run_id,
                         source_id=sid,
                         source_name=str(s.get("name", sid)),
-                        source_group="regulatory" if "regulatory" in str(s.get("tags", "")) else "media",
-                        items=list(result.get("entries", [])) if isinstance(result.get("entries", []), list) else [],
-                        rules_runtime={},
+                        source_group=str(s.get("source_group", "")).strip()
+                        or ("regulatory" if "regulatory" in str(s.get("tags", "")) else "media"),
+                        items=entries_kept,
+                        rules_runtime={
+                            "source_policy": source_policy,
+                            "profile": str(rt.get("active_profile", profile)),
+                            "anchors_pack": content_cfg.get("anchors_pack", {}) if isinstance(content_cfg.get("anchors_pack"), dict) else {},
+                            "negatives_pack": content_cfg.get("negatives_pack", []) if isinstance(content_cfg.get("negatives_pack"), list) else [],
+                            "frontier_policy": content_cfg.get("frontier_policy", {}) if isinstance(content_cfg.get("frontier_policy"), dict) else {},
+                        },
+                        source_trust_tier=source_tt,
                     )
                     assets_written += int(wr.get("written", 0))
                     deduped_count += int(wr.get("skipped", 0))
+                    dropped_by_source_policy_count += int(wr.get("dropped_by_source_policy", 0) or 0)
+                    wr_reasons = wr.get("dropped_by_source_policy_reasons", {})
+                    if isinstance(wr_reasons, dict):
+                        for rk, rv in wr_reasons.items():
+                            dropped_by_source_policy_reasons[str(rk)] = dropped_by_source_policy_reasons.get(str(rk), 0) + int(rv or 0)
 
                     # For non-RSS sources, keep at least one observable stub if parser produced no rows.
                     connector = str(source_for_fetch.get("connector") or source_for_fetch.get("fetcher") or "").lower()
@@ -505,6 +571,8 @@ class SchedulerWorker:
                 "failed": failed,
                 "assets_written": assets_written,
                 "assets_skipped": deduped_count,
+                "dropped_by_source_policy": dropped_by_source_policy_count,
+                "interval_defaulted": interval_defaulted_count,
             },
             "collect_asset_dir": self._collect_asset_dir,
             "assets_path": str(collector.base_dir),
@@ -512,6 +580,9 @@ class SchedulerWorker:
             "deduped_count": deduped_count,
             "sources_fetched_count": sources_fetched_count,
             "sources_failed_count": sources_failed_count,
+            "dropped_by_source_policy_count": dropped_by_source_policy_count,
+            "dropped_by_source_policy_reasons": dropped_by_source_policy_reasons,
+            "interval_defaulted_count": interval_defaulted_count,
             "errors": errors,
         }
         meta_path = artifacts_dir / "run_meta.json"

@@ -14,8 +14,12 @@ from app.core.track_relevance import compute_relevance
 from app.rules.engine import RuleEngine
 from app.services.analysis_cache_store import AnalysisCacheStore
 from app.services.analysis_generator import AnalysisGenerator, degraded_analysis
-from app.services.collect_asset_store import CollectAssetStore, render_digest_from_assets, url_norm
+from app.services.collect_asset_store import CollectAssetStore, render_digest_from_assets
+from app.services.opportunity_index import compute_opportunity_index
+from app.services.opportunity_store import OpportunityStore
+from app.services.source_policy import filter_rows_for_digest, normalize_source_policy
 from app.services.story_clusterer import StoryClusterer
+from app.utils.url_norm import url_norm
 
 
 MODE_TO_CHECKS = {
@@ -43,6 +47,9 @@ MODE_TO_CHECKS = {
         "analysis_cache_hit_after_second_run",
         "model_fallback_and_degraded_path",
         "rules_validate_enhanced_ok",
+        "opportunity_signals_written",
+        "digest_structure_has_h",
+        "opportunity_window_days_effective",
     },
     "quality": {
         "collect_jsonl_written",
@@ -120,6 +127,11 @@ def _check_digest_structure(text: str) -> tuple[bool, str]:
     required = [f"{x}." for x in "ABCDEFG"]
     missing = [x for x in required if x not in text]
     return (not missing), ("missing=" + ",".join(missing) if missing else "A-G all present")
+
+
+def _check_digest_has_h(text: str) -> tuple[bool, str]:
+    ok = "H. 机会强度指数" in str(text or "")
+    return ok, ("H section present" if ok else "H section missing")
 
 
 def _section_g(text: str) -> str:
@@ -319,9 +331,35 @@ def _check_rules_validate_enhanced() -> tuple[bool, str]:
         return False, f"RuleEngine.validate_profile_pair(enhanced) failed: {e}"
 
 
-def _load_analysis_cache_map(project_root: Path, *, asset_dir: str = "artifacts/analysis", keep_days: int = 7) -> dict[str, dict[str, Any]]:
-    out: dict[str, dict[str, Any]] = {}
+def _check_opportunity_signals_written(project_root: Path, as_of: str) -> tuple[bool, str]:
+    p = project_root / "artifacts" / "opportunity" / f"opportunity_signals-{as_of.replace('-', '')}.jsonl"
+    if not p.exists():
+        return False, f"{p} not found"
+    lines = sum(1 for ln in p.read_text(encoding="utf-8", errors="ignore").splitlines() if ln.strip())
+    return lines > 0, f"{p} lines={lines}"
+
+
+def _check_opportunity_window_days_effective(project_root: Path, as_of: str, *, window_days: int = 7) -> tuple[bool, str]:
+    idx = compute_opportunity_index(project_root, window_days=window_days, as_of=as_of)
+    rows = idx.get("region_lane", {}) if isinstance(idx, dict) else {}
+    probe_key = "__window_probe__region|__window_probe__lane"
+    probe = rows.get(probe_key, {}) if isinstance(rows, dict) else {}
+    score = int((probe or {}).get("score", 0) or 0)
+    ok = score == 0
+    return ok, f"window_days={window_days}, probe_score={score}, keys={len(rows) if isinstance(rows, dict) else 0}"
+
+
+def _load_analysis_cache_index(project_root: Path, *, asset_dir: str = "artifacts/analysis", keep_days: int = 7) -> dict[str, Any]:
+    by_key: dict[str, dict[str, Any]] = {}
+    by_url_norm: dict[str, dict[str, Any]] = {}
     base = project_root / asset_dir
+    out: dict[str, Any] = {
+        "base_exists": base.exists(),
+        "files_scanned": 0,
+        "rows_total": 0,
+        "by_key": by_key,
+        "by_url_norm": by_url_norm,
+    }
     if not base.exists():
         return out
     today = dt.date.today()
@@ -336,6 +374,7 @@ def _load_analysis_cache_map(project_root: Path, *, asset_dir: str = "artifacts/
             continue
         if (today - d).days > keep_days:
             continue
+        out["files_scanned"] = int(out.get("files_scanned", 0) or 0) + 1
         try:
             with p.open("r", encoding="utf-8") as f:
                 for ln in f:
@@ -346,10 +385,15 @@ def _load_analysis_cache_map(project_root: Path, *, asset_dir: str = "artifacts/
                         row = json.loads(ln)
                     except Exception:
                         continue
-                    k = str(row.get("item_key", "")).strip()
+                    out["rows_total"] = int(out.get("rows_total", 0) or 0) + 1
+                    k = str(row.get("cache_key", row.get("item_key", ""))).strip()
                     if not k:
-                        continue
-                    out[k] = row
+                        k = AnalysisCacheStore.item_key(row)
+                    if k:
+                        by_key[k] = row
+                    un = str(row.get("url_norm", "")).strip() or url_norm(str(row.get("url", "")).strip())
+                    if un:
+                        by_url_norm[un] = row
         except Exception:
             continue
     return out
@@ -387,9 +431,20 @@ def _build_quality_pack(project_root: Path, *, as_of: str, window_hours: int = 4
     acceptance_dir = project_root / "artifacts" / "acceptance"
     collect_store = CollectAssetStore(project_root, asset_dir="artifacts/collect")
     rows = collect_store.load_window_items(window_hours=window_hours)
+    source_policy = normalize_source_policy({}, profile="enhanced")
+    rows, source_policy_dropped_count, source_policy_dropped_reasons = filter_rows_for_digest(rows, policy=source_policy)
+    relevance_runtime = {
+        "profile": "enhanced",
+        "frontier_policy": {
+            "require_diagnostic_anchor": True,
+            "drop_bio_general_without_diagnostic": True,
+        },
+    }
     # Re-evaluate relevance on read so quality pack always reflects current gate rules,
     # even when collect assets include historical/stale track labels.
     fresh_rows: list[dict[str, Any]] = []
+    dropped_bio_general_count = 0
+    bio_general_terms_count: dict[str, int] = {}
     for r in rows:
         title = str(r.get("title", "")).strip()
         summary = str(r.get("summary", "")).strip()
@@ -402,9 +457,15 @@ def _build_quality_pack(project_root: Path, *, as_of: str, window_hours: int = 4
                 "url": str(r.get("url", "")).strip(),
                 "title": title,
             },
-            {},
+            relevance_runtime,
         )
         if str(track).strip().lower() == "drop":
+            if str(explain.get("final_reason", "")).strip() == "bio_general_without_diagnostic_anchor":
+                dropped_bio_general_count += 1
+                for t in explain.get("bio_general_anchors_hit", []) if isinstance(explain.get("bio_general_anchors_hit", []), list) else []:
+                    tt = str(t).strip().lower()
+                    if tt:
+                        bio_general_terms_count[tt] = bio_general_terms_count.get(tt, 0) + 1
             continue
         rr = dict(r)
         rr["track"] = track
@@ -412,7 +473,9 @@ def _build_quality_pack(project_root: Path, *, as_of: str, window_hours: int = 4
         rr["relevance_explain"] = explain
         fresh_rows.append(rr)
     rows = _dedupe_for_quality_pack(fresh_rows)
-    cache_map = _load_analysis_cache_map(project_root, asset_dir="artifacts/analysis", keep_days=7)
+    cache_index = _load_analysis_cache_index(project_root, asset_dir="artifacts/analysis", keep_days=7)
+    cache_map = cache_index.get("by_key", {}) if isinstance(cache_index.get("by_key"), dict) else {}
+    cache_by_url_norm = cache_index.get("by_url_norm", {}) if isinstance(cache_index.get("by_url_norm"), dict) else {}
 
     core_rows = [r for r in rows if str(r.get("track", "")).strip() == "core"]
     frontier_rows = [r for r in rows if str(r.get("track", "")).strip() == "frontier"]
@@ -428,11 +491,19 @@ def _build_quality_pack(project_root: Path, *, as_of: str, window_hours: int = 4
 
     samples: list[dict[str, Any]] = []
     cache_hits = 0
+    cache_miss = 0
+    cache_mismatch = 0
     for r in picked:
-        key = AnalysisCacheStore.item_key(r)
-        c = cache_map.get(key, {})
-        if c:
+        computed_key = url_norm(str(r.get("url", "")))
+        c_by_key = cache_map.get(computed_key, {})
+        c_by_url = cache_by_url_norm.get(computed_key, {})
+        c = c_by_key if c_by_key else {}
+        if c_by_key:
             cache_hits += 1
+        else:
+            cache_miss += 1
+            if c_by_url:
+                cache_mismatch += 1
         sample = {
             "title": str(r.get("title", "")),
             "url": str(r.get("url", "")),
@@ -443,12 +514,27 @@ def _build_quality_pack(project_root: Path, *, as_of: str, window_hours: int = 4
             "summary": str(c.get("summary", "")),
             "impact": str(c.get("impact", "")),
             "action": str(c.get("action", "")),
-            "evidence_snippet": str(r.get("summary", ""))[:240],
-            "analysis_cache_hit": bool(c),
+            "evidence_snippet": str(c.get("evidence_snippet", "")).strip() or str(r.get("summary", ""))[:240],
+            "needs_quote_suspected": len((str(c.get("evidence_snippet", "")).strip() or str(r.get("summary", ""))[:240]).strip()) < 80,
+            "analysis_cache_hit": bool(c_by_key),
+            "analysis_cache_key_mismatch": bool((not c_by_key) and c_by_url),
+            "computed_cache_key": computed_key,
+            "cache_row_key": str((c_by_key or c_by_url or {}).get("cache_key", (c_by_key or c_by_url or {}).get("item_key", ""))),
             "used_model": str(c.get("used_model", c.get("model", ""))),
             "prompt_version": str(c.get("prompt_version", "")),
         }
         samples.append(sample)
+
+    zero_hit_reason = ""
+    if samples and cache_hits == 0:
+        if not bool(cache_index.get("base_exists")) or int(cache_index.get("files_scanned", 0) or 0) == 0:
+            zero_hit_reason = "cache_file_missing"
+        elif int(cache_index.get("rows_total", 0) or 0) == 0:
+            zero_hit_reason = "cache_empty"
+        elif cache_mismatch > 0:
+            zero_hit_reason = "key_mismatch"
+        else:
+            zero_hit_reason = "cache_miss"
 
     md_lines: list[str] = []
     md_lines.append("# Quality Review Pack")
@@ -456,7 +542,11 @@ def _build_quality_pack(project_root: Path, *, as_of: str, window_hours: int = 4
     md_lines.append(f"- as_of: {as_of}")
     md_lines.append(f"- requested: core=20, frontier=10")
     md_lines.append(f"- selected: core={len(core_pick)}, frontier={len(frontier_pick)}, total={len(samples)}")
-    md_lines.append(f"- analysis_cache_hit: {cache_hits}/{len(samples) if samples else 0}")
+    md_lines.append(
+        f"- analysis_cache_hit/miss/mismatch: {cache_hits}/{cache_miss}/{cache_mismatch} (total={len(samples) if samples else 0})"
+    )
+    if zero_hit_reason:
+        md_lines.append(f"- analysis_cache_zero_hit_reason: {zero_hit_reason}")
     if insufficient_reasons:
         md_lines.append(f"- insufficient_reasons: {'；'.join(insufficient_reasons)}")
     md_lines.append("")
@@ -481,7 +571,26 @@ def _build_quality_pack(project_root: Path, *, as_of: str, window_hours: int = 4
         "requested": {"core": 20, "frontier": 10},
         "selected": {"core": len(core_pick), "frontier": len(frontier_pick), "total": len(samples)},
         "insufficient_reasons": insufficient_reasons,
-        "analysis_cache_hit": {"hit": cache_hits, "total": len(samples)},
+        "analysis_cache": {
+            "hit": cache_hits,
+            "miss": cache_miss,
+            "mismatch": cache_mismatch,
+            "total": len(samples),
+            "zero_hit_reason": zero_hit_reason,
+            "cache_file_missing": not bool(cache_index.get("base_exists")) or int(cache_index.get("files_scanned", 0) or 0) == 0,
+            "cache_rows_total": int(cache_index.get("rows_total", 0) or 0),
+        },
+        "source_policy": {
+            "dropped_by_source_policy_count": int(source_policy_dropped_count),
+            "dropped_by_source_policy_reasons": source_policy_dropped_reasons,
+        },
+        "frontier_policy": {
+            "dropped_bio_general_count": int(dropped_bio_general_count),
+            "top_bio_general_terms": [
+                {"term": k, "count": v}
+                for k, v in sorted(bio_general_terms_count.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+            ],
+        },
         "samples": samples,
     }
     qj = acceptance_dir / "quality_pack.json"
@@ -493,6 +602,9 @@ def _build_quality_pack(project_root: Path, *, as_of: str, window_hours: int = 4
         "quality_pack_md": str(qm),
         "selected_total": len(samples),
         "insufficient_reasons": insufficient_reasons,
+        "analysis_cache": quality_json.get("analysis_cache", {}),
+        "source_policy": quality_json.get("source_policy", {}),
+        "frontier_policy": quality_json.get("frontier_policy", {}),
     }
 
 
@@ -899,6 +1011,19 @@ def run_acceptance(*, project_root: Path, mode: str = "smoke", as_of: str | None
 
     # Seed collect assets with local synthetic rows (no network dependency).
     collect_store = CollectAssetStore(project_root, asset_dir="artifacts/acceptance/collect")
+    opp_store = OpportunityStore(project_root, asset_dir="artifacts/opportunity")
+    as_of_date = dt.date.fromisoformat(as_of)
+    opp_store.append_signal(
+        {
+            "date": (as_of_date - dt.timedelta(days=10)).isoformat(),
+            "region": "__window_probe__region",
+            "lane": "__window_probe__lane",
+            "event_type": "procurement",
+            "weight": 99,
+            "source_id": "acceptance-probe",
+            "url_norm": "https://acceptance.local/opportunity/probe-old",
+        }
+    )
     seed_items = [
         {
             "title": "FDA clears core IVD assay for oncology panel",
@@ -934,7 +1059,12 @@ def run_acceptance(*, project_root: Path, mode: str = "smoke", as_of: str | None
         date_str=as_of,
         items=collect_rows,
         subject=f"Acceptance Digest - {as_of}",
-        analysis_cfg={"enable_analysis_cache": True, "asset_dir": "artifacts/acceptance/analysis"},
+        analysis_cfg={
+            "profile": "enhanced",
+            "enable_analysis_cache": True,
+            "asset_dir": "artifacts/acceptance/analysis",
+            "opportunity_index": {"enabled": True, "window_days": 7, "asset_dir": "artifacts/opportunity"},
+        },
         return_meta=True,
     )
     digest_text = str((digest_out or {}).get("text", "")) if isinstance(digest_out, dict) else str(digest_out or "")
@@ -999,6 +1129,27 @@ def run_acceptance(*, project_root: Path, mode: str = "smoke", as_of: str | None
             "调用 CLI rules:validate --profile enhanced。",
             _check_rules_validate_enhanced,
         ),
+        (
+            "opportunity_signals_written",
+            "Opportunity signals 已写入",
+            "检查 opportunity_index.enabled、track drop 过滤和输出目录权限。",
+            "读取 artifacts/opportunity/opportunity_signals-YYYYMMDD.jsonl 行数。",
+            lambda: _check_opportunity_signals_written(project_root, as_of),
+        ),
+        (
+            "digest_structure_has_h",
+            "Digest 包含 H 段（机会强度指数）",
+            "检查 opportunity_index 开关和 H 段渲染逻辑。",
+            "查看 digest_preview 是否包含“H. 机会强度指数”。",
+            lambda: _check_digest_has_h(digest_text),
+        ),
+        (
+            "opportunity_window_days_effective",
+            "Opportunity window_days 生效",
+            "检查 opportunity_index.window_days 与机会指数窗口过滤实现。",
+            "预埋 10 天前 probe 信号后，窗口=7 天不应命中该 probe。",
+            lambda: _check_opportunity_window_days_effective(project_root, as_of, window_days=7),
+        ),
     ]
 
     enabled_ids = MODE_TO_CHECKS[mode]
@@ -1042,7 +1193,13 @@ def run_acceptance(*, project_root: Path, mode: str = "smoke", as_of: str | None
         report["quality_pack"] = {
             "selected_total": qp.get("selected_total", 0),
             "insufficient_reasons": qp.get("insufficient_reasons", []),
+            "analysis_cache": qp.get("analysis_cache", {}),
+            "source_policy": qp.get("source_policy", {}),
+            "frontier_policy": qp.get("frontier_policy", {}),
         }
+        report["dropped_by_source_policy_count"] = int(
+            ((qp.get("source_policy", {}) if isinstance(qp.get("source_policy", {}), dict) else {}).get("dropped_by_source_policy_count", 0) or 0)
+        )
         report["artifacts"]["quality_pack_md"] = qp.get("quality_pack_md", "")
         report["artifacts"]["quality_pack_json"] = qp.get("quality_pack_json", "")
     md = _render_md(report)

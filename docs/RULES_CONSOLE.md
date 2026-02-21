@@ -203,6 +203,77 @@ Sources 支持通过 `fetch.auth_ref` 引用环境变量名，用于请求鉴权
   - 若 env 值不含空格（例如纯 token），将按 `Bearer <token>` 写入。
 - 控制台 UI 只显示“鉴权✓/鉴权×”（是否已配置），不会展示明文。
 
+## Source Policy（PR8）
+`content_rules.defaults.source_policy` 用于在 relevance gate 之前做源级排噪，减少无效抓取与 drop。
+
+示例（建议 enhanced 使用）：
+```yaml
+defaults:
+  source_policy:
+    enabled: true
+    min_trust_tier:
+      legacy: C
+      enhanced: B
+    exclude_domains:
+      - prnewswire.com
+      - globenewswire.com
+    exclude_source_ids: []
+    drop_if_url_matches: []
+```
+
+规则说明：
+- `exclude_domains`: URL host 命中即排除（`final_reason=excluded_domain`）。
+- `exclude_source_ids`: source_id 命中即排除（`final_reason=excluded_source`）。
+- `min_trust_tier`: 源级最小可信等级阈值（enhanced 默认更严格）。
+- 采集阶段与 digest 阶段都会应用（双保险）；关闭或清空可回滚到旧行为。
+
+## Frontier Narrowing（PR9）
+`content_rules.defaults.frontier_policy` 用于将 frontier 收敛为 IVD 技术雷达，避免泛生物学论文淹没。
+
+```yaml
+defaults:
+  frontier_policy:
+    require_diagnostic_anchor: true
+    drop_bio_general_without_diagnostic: true
+```
+
+行为：
+- 命中 `bio_general`（single-cell/spatial/multi-omics/proteomics/transcriptomics）但无诊断锚点时，直接 drop，`final_reason=bio_general_without_diagnostic_anchor`。
+- frontier 需同时具备 frontier 锚点与诊断锚点（enhanced 默认启用）。
+- 回滚：`frontier_policy.require_diagnostic_anchor=false`。
+
+## Evidence Enforcement（PR10）
+`content_rules.defaults.evidence_policy` 用于约束 core 条目的证据片段，缺证据时走降级模板，避免硬编。
+
+```yaml
+defaults:
+  evidence_policy:
+    require_evidence_for_core: true
+    min_snippet_chars: 80
+    degrade_if_missing: true
+```
+
+行为：
+- 证据来源优先级：`RSS summary/description` > `正文截断` > 空。
+- 若 core 条目证据长度不足且开启降级：`summary=[NO_EVIDENCE] <title>`，并输出“需打开原文核查”动作。
+- G 段审计包含：`evidence_missing_core_count`、`evidence_missing_sources_topN`。
+- 回滚：`evidence_policy.require_evidence_for_core=false`。
+
+## Opportunity Index（PR11）
+`content_rules.defaults.opportunity_index` 用于控制机会指数信号层（非破坏性增量）。
+
+```yaml
+defaults:
+  opportunity_index:
+    enabled: true
+    window_days: 7
+```
+
+行为：
+- track 非 `drop` 的条目会写入 `artifacts/opportunity/opportunity_signals-YYYYMMDD.jsonl`。
+- 晨报新增 `H. 机会强度指数（近N天）` 段，按 score Top5 输出增减箭头。
+- 回滚：`opportunity_index.enabled=false`（不影响 A-G 既有逻辑）。
+
 ### Docker Compose 里配置 env（推荐）
 本项目默认用 `docker-compose.yml` 加载 `.docker.env`：
 1) 在 `.docker.env` 增加一行（示例）：

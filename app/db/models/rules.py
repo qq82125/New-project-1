@@ -85,12 +85,15 @@ class Source(Base):
     enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     trust_tier: Mapped[str] = mapped_column(String, nullable=False)
+    source_group: Mapped[str] = mapped_column(String, nullable=False, default="media")
+    fetch_interval_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     tags_json: Mapped[list[Any]] = mapped_column(JSONText(), nullable=False, default=list)
     rate_limit_json: Mapped[dict[str, Any]] = mapped_column(JSONText(), nullable=False, default=dict)
     fetch_json: Mapped[dict[str, Any]] = mapped_column(JSONText(), nullable=False, default=dict)
     parsing_json: Mapped[dict[str, Any]] = mapped_column(JSONText(), nullable=False, default=dict)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
+    deleted_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     last_fetched_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     last_fetch_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -103,6 +106,21 @@ class Source(Base):
 
     __table_args__ = (
         Index("idx_sources_enabled_priority", "enabled", "priority"),
+        Index("idx_sources_deleted_enabled", "deleted_at", "enabled"),
+    )
+
+
+class SourceGroup(Base):
+    __tablename__ = "source_groups"
+
+    group_key: Mapped[str] = mapped_column(String, primary_key=True)
+    display_name: Mapped[str] = mapped_column(String, nullable=False)
+    default_interval_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    __table_args__ = (
+        Index("idx_source_groups_enabled", "enabled", "group_key"),
     )
 
 

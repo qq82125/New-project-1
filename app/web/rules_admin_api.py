@@ -24,9 +24,7 @@ from app.services.rules_store import RulesStore
 from app.services.rules_versioning import get_workspace_rules_root
 from app.services.source_registry import (
     load_sources_registry_bundle,
-    set_source_enabled_override,
     test_source,
-    upsert_source_registry,
 )
 from app.workers.dryrun import run_dryrun
 
@@ -193,6 +191,9 @@ def _source_errors(source: dict[str, Any], store: RulesStore) -> list[dict[str, 
     tt = str(source.get("trust_tier", "")).strip()
     if tt not in {"A", "B", "C"}:
         out.append({"path": "$.trust_tier", "message": "trust_tier 必须为 A|B|C"})
+    sg = str(source.get("source_group", "")).strip().lower()
+    if sg and sg not in {"regulatory", "media", "evidence", "company", "procurement"}:
+        out.append({"path": "$.source_group", "message": "source_group 必须为 regulatory|media|evidence|company|procurement"})
 
     try:
         pr = int(source.get("priority", 0))
@@ -208,6 +209,7 @@ def _source_errors(source: dict[str, Any], store: RulesStore) -> list[dict[str, 
     fetch = source.get("fetch", {})
     if fetch is not None and not isinstance(fetch, dict):
         out.append({"path": "$.fetch", "message": "fetch 必须是对象"})
+        f: dict[str, Any] = {}
     else:
         f = fetch if isinstance(fetch, dict) else {}
         if "interval_minutes" in f:
@@ -227,6 +229,13 @@ def _source_errors(source: dict[str, Any], store: RulesStore) -> list[dict[str, 
         headers = f.get("headers_json", {})
         if headers is not None and not isinstance(headers, dict):
             out.append({"path": "$.fetch.headers_json", "message": "headers_json 必须是对象"})
+    if "fetch_interval_minutes" in source and source.get("fetch_interval_minutes") is not None:
+        try:
+            im = int(source.get("fetch_interval_minutes") or 0)
+            if im < 1 or im > 1440:
+                out.append({"path": "$.fetch_interval_minutes", "message": "fetch_interval_minutes 超出范围 1..1440"})
+        except Exception:
+            out.append({"path": "$.fetch_interval_minutes", "message": "fetch_interval_minutes 必须是整数"})
     auth_ref = f.get("auth_ref")
     if auth_ref is not None and not isinstance(auth_ref, str):
         out.append({"path": "$.fetch.auth_ref", "message": "auth_ref 必须是字符串（引用 env/secret 名称）"})
@@ -290,11 +299,36 @@ class SourcePayload(BaseModel):
     region: str = "全球"
     enabled: bool = True
     priority: int = 0
+    source_group: str = "media"
+    fetch_interval_minutes: int | None = None
     trust_tier: str
     tags: list[str] = Field(default_factory=list)
     rate_limit: dict[str, Any] = Field(default_factory=dict)
     fetch: dict[str, Any] = Field(default_factory=dict)
     parsing: dict[str, Any] = Field(default_factory=dict)
+
+
+class SourcePatchPayload(BaseModel):
+    name: str | None = None
+    connector: str | None = None
+    fetcher: str | None = None
+    url: str | None = None
+    region: str | None = None
+    enabled: bool | None = None
+    priority: int | None = None
+    source_group: str | None = None
+    fetch_interval_minutes: int | None = None
+    trust_tier: str | None = None
+    tags: list[str] | None = None
+    rate_limit: dict[str, Any] | None = None
+    fetch: dict[str, Any] | None = None
+    parsing: dict[str, Any] | None = None
+
+
+class SourceGroupPatchPayload(BaseModel):
+    display_name: str | None = None
+    default_interval_minutes: int | None = None
+    enabled: bool | None = None
 
 
 class TogglePayload(BaseModel):
@@ -739,6 +773,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           <a class="nav" href="/admin/output">输出规则</a>
           <a class="nav" href="/admin/scheduler">调度规则</a>
           <a class="nav" href="/admin/sources">信源管理</a>
+          <a class="nav" href="/admin/source-groups">信源分组</a>
           <a class="nav" href="/admin/runs">运行状态</a>
           <a class="nav" href="/admin/versions">版本与回滚</a>
           <div class="sidehint">必须先通过草稿校验，才允许发布生效</div>
@@ -1419,9 +1454,21 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         )
         return {"ok": True, "enqueued": True, "file": fname}
 
+    def _effective_source_row(source_id: str, *, include_deleted: bool = True) -> dict[str, Any] | None:
+        bundle = load_sources_registry_bundle(root, rules_root=engine.rules_root, include_deleted=include_deleted)
+        rows = bundle.get("sources", []) if isinstance(bundle, dict) else []
+        return next((dict(x) for x in rows if str(x.get("id", "")).strip() == str(source_id).strip()), None)
+
     @app.get("/admin/api/sources")
-    def sources_list(_: dict[str, str] = Depends(_auth_guard)) -> dict[str, Any]:
-        bundle = load_sources_registry_bundle(root, rules_root=engine.rules_root)
+    def sources_list(
+        include_deleted: int = 0,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        bundle = load_sources_registry_bundle(
+            root,
+            rules_root=engine.rules_root,
+            include_deleted=bool(int(include_deleted or 0)),
+        )
         rows = bundle.get("sources", []) if isinstance(bundle, dict) else []
         out = []
         for s in rows:
@@ -1437,6 +1484,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "sources": out,
             "registry_file": (bundle.get("source_file") if isinstance(bundle, dict) else None),
             "overrides_file": (bundle.get("overrides_file") if isinstance(bundle, dict) else None),
+            "source_groups": (bundle.get("source_groups") if isinstance(bundle, dict) else []),
         }
 
     @app.post("/admin/api/sources")
@@ -1450,10 +1498,38 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         if str(source.get("fetcher", "")).strip() == "web":
             source["fetcher"] = "html"
         source["connector"] = "web" if source.get("fetcher") == "html" else source.get("fetcher", "")
+        source["source_group"] = str(source.get("source_group", "media") or "media").strip().lower() or "media"
+        fim = source.get("fetch_interval_minutes")
+        if fim is None and isinstance(source.get("fetch"), dict):
+            fim = source.get("fetch", {}).get("interval_minutes")
+        source["fetch_interval_minutes"] = int(fim) if fim is not None and str(fim).strip() != "" else None
         errs = _source_errors(source, store)
         if errs:
             return {"ok": False, "error": {"code": "SOURCE_VALIDATION_FAILED", "details": errs}}
-        return upsert_source_registry(root, source, rules_root=engine.rules_root)
+        out = store.upsert_source(source)
+        eff = _effective_source_row(str(source.get("id", "")), include_deleted=True)
+        return {"ok": True, "source": eff or out.get("source", {})}
+
+    @app.patch("/admin/api/sources/{source_id}")
+    def sources_patch(
+        source_id: str,
+        payload: SourcePatchPayload,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        cur = store.get_source(source_id)
+        if not isinstance(cur, dict):
+            raise HTTPException(status_code=404, detail="source not found")
+        patch = payload.model_dump(exclude_unset=True)
+        nxt = dict(cur)
+        nxt.update(patch)
+        if "fetch_interval_minutes" in patch and patch.get("fetch_interval_minutes") is None:
+            nxt["fetch_interval_minutes"] = None
+        errs = _source_errors(nxt, store)
+        if errs:
+            return {"ok": False, "error": {"code": "SOURCE_VALIDATION_FAILED", "details": errs}}
+        out = store.upsert_source(nxt)
+        eff = _effective_source_row(source_id, include_deleted=True)
+        return {"ok": True, "source": eff or out.get("source", {})}
 
     @app.post("/admin/api/sources/{source_id}/toggle")
     def sources_toggle(
@@ -1461,7 +1537,43 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         payload: TogglePayload,
         _: dict[str, str] = Depends(_auth_guard),
     ) -> dict[str, Any]:
-        return set_source_enabled_override(root, source_id, enabled=payload.enabled, rules_root=engine.rules_root)
+        out = store.toggle_source(source_id, enabled=payload.enabled)
+        eff = _effective_source_row(source_id, include_deleted=True)
+        return {"ok": True, "source": eff or out.get("source", {})}
+
+    @app.delete("/admin/api/sources/{source_id}")
+    def sources_delete(
+        source_id: str,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        out = store.soft_delete_source(source_id)
+        return {"ok": True, "source": out.get("source", {})}
+
+    @app.post("/admin/api/sources/{source_id}/restore")
+    def sources_restore(
+        source_id: str,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        out = store.restore_source(source_id)
+        eff = _effective_source_row(source_id, include_deleted=True)
+        return {"ok": True, "source": eff or out.get("source", {})}
+
+    @app.get("/admin/api/source-groups")
+    def source_groups_list(_: dict[str, str] = Depends(_auth_guard)) -> dict[str, Any]:
+        return {"ok": True, "groups": store.list_source_groups()}
+
+    @app.patch("/admin/api/source-groups/{group_key}")
+    def source_groups_patch(
+        group_key: str,
+        payload: SourceGroupPatchPayload,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        cur = {str(x.get("group_key", "")): x for x in store.list_source_groups()}
+        base = cur.get(group_key, {"group_key": group_key, "display_name": group_key, "enabled": True})
+        patch = payload.model_dump(exclude_unset=True)
+        base.update(patch)
+        out = store.upsert_source_group(base)
+        return {"ok": True, "group": out.get("group", {})}
 
     @app.post("/admin/api/sources/{source_id}/test")
     def sources_test(source_id: str, _: dict[str, str] = Depends(_auth_guard)) -> dict[str, Any]:
@@ -3362,6 +3474,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 <option value="enabled">仅启用</option>
                 <option value="disabled">仅停用</option>
               </select>
+              <label class="small" style="display:flex;align-items:center;gap:6px"><input id="show_deleted" type="checkbox"/>显示已删除</label>
               <input id="filter_tag" style="width:160px" placeholder="按标签过滤"/>
               <input id="filter_region" style="width:140px" placeholder="按地区过滤"/>
             </div>
@@ -3379,7 +3492,15 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 	            <label>地区</label><input id="region" placeholder="例如：中国/亚太/北美/欧洲/全球"/>
 	            <label>API endpoint（仅 api 需要，如 /v1/news）</label><input id="api_endpoint" placeholder="/v1/news"/>
 
-	            <label>采集频率 interval_minutes（1..1440，留空=跟随全局/调度）</label><input id="fetch_interval" type="number" min="1" max="1440" placeholder="例如：60"/>
+            <label>source_group</label>
+            <select id="source_group">
+              <option value="regulatory">regulatory</option>
+              <option value="media">media</option>
+              <option value="evidence">evidence</option>
+              <option value="company">company</option>
+              <option value="procurement">procurement</option>
+            </select>
+	            <label>源级抓取频率 fetch_interval_minutes（1..1440，留空=继承组默认）</label><input id="fetch_interval" type="number" min="1" max="1440" placeholder="例如：60"/>
               <div class="small">表示该信源“最小抓取间隔”。例如：媒体 60，监管公告 360-1440。</div>
 	            <label>超时 timeout_seconds（1..120）</label><input id="fetch_timeout" type="number" min="1" max="120" placeholder="例如：20"/>
 	            <label>请求头 headers_json（可选，JSON 对象）</label><textarea id="fetch_headers" rows="3" placeholder='{"User-Agent":"..."}'></textarea>
@@ -3504,7 +3625,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 	          const statusPills = mainLabel ? `<span class="pill ${mainClass}" title="${esc(mainTitle)}">${esc(mainLabel)}</span>` : '';
 	          const urlText = prettyUrl(s.url||'');
 	          const urlCell = s.url ? `<a class="url" href="${esc(s.url)}" target="_blank" title="${esc(s.url)}">${esc(urlText)}</a>` : '';
-	          const toggleLabel = s.enabled ? '停用' : '启用';
+          const toggleLabel = s.enabled ? '停用' : '启用';
+          const delLabel = s.deleted_at ? '恢复' : '删除';
             const f = s.fetch || {};
             const authRef = (f.auth_ref || '').trim();
             const authPill = authRef
@@ -3518,6 +3640,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 	              <td class="urlcol">${urlCell}</td>
 	              <td class="nowrap">${s.priority}</td>
 	              <td class="nowrap">${esc(s.region||'')}</td>
+                <td class="nowrap">${esc(s.source_group||'')}</td>
+                <td class="nowrap">${esc(String(s.effective_interval_minutes ?? s.fetch_interval_minutes ?? '-'))} <span class="small">(${esc(s.interval_source||'-')})</span></td>
+                <td class="nowrap">${s.deleted_at ? '已删除' : '-'}</td>
 	              <td class="tagcol">${esc((s.tags||[]).join(','))}</td>
 	              <td>${lastFetch}</td>
 	              <td class="actionscol">
@@ -3526,12 +3651,14 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   <option value="edit">编辑</option>
                   <option value="toggle">${toggleLabel}</option>
                   <option value="test">测试</option>
+                  <option value="${s.deleted_at ? 'restore' : 'delete'}">${delLabel}</option>
                 </select>
               </td>
             </tr>`;
         }
 	        async function loadSources() {
-          const j = await api('/admin/api/sources');
+          const includeDeleted = document.getElementById('show_deleted').checked ? 1 : 0;
+          const j = await api('/admin/api/sources?include_deleted='+includeDeleted);
           if (!j || !j.ok) { document.getElementById('table').textContent = JSON.stringify(j,null,2); return; }
           const q = (document.getElementById('q').value||'').trim();
           const fe = document.getElementById('filter_enabled').value;
@@ -3551,7 +3678,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             return matchQ(s,q);
           });
           const rows = filtered.map(renderRow).join('');
-		          document.getElementById('table').innerHTML = `<table><thead><tr><th>状态</th><th>名称</th><th>方式</th><th>链接</th><th>优先级</th><th>地区</th><th>标签</th><th>最近抓取</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`;
+		          document.getElementById('table').innerHTML = `<table><thead><tr><th>状态</th><th>名称</th><th>方式</th><th>链接</th><th>优先级</th><th>地区</th><th>分组</th><th>有效间隔</th><th>删除状态</th><th>标签</th><th>最近抓取</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`;
 	          window._sources = j.sources||[];
 	        }
         function editSource(id){
@@ -3563,7 +3690,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('region').value = s.region||'全球';
           const f = s.fetch||{};
           document.getElementById('api_endpoint').value = f.endpoint||'';
-          document.getElementById('fetch_interval').value = (f.interval_minutes ?? '');
+          document.getElementById('fetch_interval').value = (s.fetch_interval_minutes ?? f.interval_minutes ?? '');
           document.getElementById('fetch_timeout').value = (f.timeout_seconds ?? '');
           document.getElementById('fetch_headers').value = (f.headers_json && Object.keys(f.headers_json||{}).length) ? JSON.stringify(f.headers_json||{}) : '';
           document.getElementById('fetch_auth_ref').value = f.auth_ref||'';
@@ -3575,6 +3702,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           const p = s.parsing||{};
           document.getElementById('parse_profile').value = p.parse_profile||'';
           document.getElementById('priority').value = s.priority??0;
+          document.getElementById('source_group').value = s.source_group||'media';
           document.getElementById('trust_tier').value = s.trust_tier||'B';
           document.getElementById('tags').value = (s.tags||[]).join(',');
           document.getElementById('enabled').value = String(!!s.enabled);
@@ -3596,6 +3724,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('rl_burst').value = '';
           document.getElementById('parse_profile').value = '';
           document.getElementById('priority').value = '50';
+          document.getElementById('source_group').value = 'media';
           document.getElementById('trust_tier').value = 'B';
           document.getElementById('tags').value = '';
           document.getElementById('enabled').value = 'true';
@@ -3614,6 +3743,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             url: document.getElementById('url').value.trim(),
             region: document.getElementById('region').value.trim() || '全球',
             priority: Number(document.getElementById('priority').value||0),
+            source_group: document.getElementById('source_group').value,
+            fetch_interval_minutes: document.getElementById('fetch_interval').value ? Number(document.getElementById('fetch_interval').value) : null,
             trust_tier: document.getElementById('trust_tier').value,
             tags: arr(document.getElementById('tags').value),
             enabled: document.getElementById('enabled').value === 'true',
@@ -3646,6 +3777,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             return;
           }
           if(action==='test'){ await testSource(id); return; }
+          if(action==='delete'){ await deleteSource(id); return; }
+          if(action==='restore'){ await restoreSource(id); return; }
         }
         async function toggleSource(id, enabled){
           const j = await api(`/admin/api/sources/${encodeURIComponent(id)}/toggle`,'POST',{enabled});
@@ -3658,13 +3791,62 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           else toast('err','测试失败',id);
           loadSources();
         }
+        async function deleteSource(id){
+          const j = await api(`/admin/api/sources/${encodeURIComponent(id)}`,'DELETE',{});
+          if(j && j.ok) { toast('ok','已软删除',id); loadSources(); } else { toast('err','删除失败',JSON.stringify(j)); }
+        }
+        async function restoreSource(id){
+          const j = await api(`/admin/api/sources/${encodeURIComponent(id)}/restore`,'POST',{});
+          if(j && j.ok) { toast('ok','已恢复',id); loadSources(); } else { toast('err','恢复失败',JSON.stringify(j)); }
+        }
         document.getElementById('q').addEventListener('input', ()=>{ loadSources(); });
         document.getElementById('filter_enabled').addEventListener('change', ()=>{ loadSources(); });
+        document.getElementById('show_deleted').addEventListener('change', ()=>{ loadSources(); });
         document.getElementById('filter_tag').addEventListener('input', ()=>{ loadSources(); });
         document.getElementById('filter_region').addEventListener('input', ()=>{ loadSources(); });
         loadSources();
         """
         return _page_shell("信源管理", style + body, js)
+
+    @app.get("/admin/source-groups", response_class=HTMLResponse)
+    def page_source_groups(_: dict[str, str] = Depends(_auth_guard)) -> str:
+        body = """
+        <div class="card">
+          <h4>信源分组默认配置</h4>
+          <p class="small">修改 group 默认 interval 后，所有“源级 interval 为空”的 source 会立即继承新值。</p>
+          <button onclick="loadGroups()">刷新</button>
+          <div id="tb"></div>
+        </div>
+        """
+        js = """
+        function esc(s){ return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+        async function loadGroups(){
+          const j = await api('/admin/api/source-groups');
+          if(!j || !j.ok){ document.getElementById('tb').textContent = JSON.stringify(j,null,2); return; }
+          const rows = (j.groups||[]).map(g => `
+            <tr>
+              <td>${esc(g.group_key)}</td>
+              <td><input id="n_${esc(g.group_key)}" value="${esc(g.display_name||'')}" /></td>
+              <td><input id="i_${esc(g.group_key)}" type="number" min="1" max="1440" value="${g.default_interval_minutes ?? ''}" /></td>
+              <td><select id="e_${esc(g.group_key)}"><option value="true" ${g.enabled?'selected':''}>启用</option><option value="false" ${!g.enabled?'selected':''}>停用</option></select></td>
+              <td><button onclick="saveGroup('${esc(g.group_key)}')">保存</button></td>
+            </tr>
+          `).join('');
+          document.getElementById('tb').innerHTML = `<table><thead><tr><th>group_key</th><th>display_name</th><th>default_interval_minutes</th><th>enabled</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`;
+        }
+        async function saveGroup(key){
+          const payload = {
+            display_name: document.getElementById('n_'+key).value.trim() || key,
+            default_interval_minutes: document.getElementById('i_'+key).value ? Number(document.getElementById('i_'+key).value) : null,
+            enabled: document.getElementById('e_'+key).value === 'true'
+          };
+          const j = await api('/admin/api/source-groups/'+encodeURIComponent(key),'PATCH',payload);
+          if(j && j.ok){ toast('ok','分组已保存',key); loadGroups(); }
+          else { toast('err','保存失败', JSON.stringify(j)); }
+        }
+        loadGroups();
+        """
+        return _page_shell("信源分组", body, js)
 
     @app.get("/admin/versions", response_class=HTMLResponse)
     def page_versions(_: dict[str, str] = Depends(_auth_guard)) -> str:

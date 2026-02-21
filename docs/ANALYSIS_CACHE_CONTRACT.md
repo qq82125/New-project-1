@@ -10,17 +10,20 @@
 
 ## 2. Cache Key 设计（稳定可复现）
 - key 组成（当前实现）：
-  - `story_id + "|" + url_norm`（优先）
-  - 回退：`url_norm`
+  - `cache_key = url_norm(url)`（唯一主键）
+- `url_norm` 单一实现来源：`app/utils/url_norm.py`
+  - `analysis_cache_store`、digest 渲染链路、acceptance quality pack 均使用同一函数。
 
-说明：同一条目第二次 digest 会优先命中同日 key，减少重复生成。
+说明：同一 URL 第二次 digest 应优先命中同日 key，减少重复生成。
 
 ## 3. 单条缓存 Schema（最小）
 ```json
 {
-  "item_key": "story123|example.com/news/abc",
+  "cache_key": "example.com/news/abc",
+  "item_key": "example.com/news/abc",
   "created_at": "2026-02-20T16:20:10+08:00",
   "url": "https://example.com/news/abc",
+  "url_norm": "example.com/news/abc",
   "story_id": "story123",
   "source_id": "reuters-health-rss",
   "title": "...",
@@ -39,11 +42,15 @@
 ```
 
 ## 4. digest 读取策略
-- 先读 cache：命中 `item_key` 则直接复用。
+- 先读 cache：命中 `cache_key(url_norm)` 则直接复用。
 - 未命中或失效：调用分析器生成并写回 cache。
 - 分析失败：允许降级到旧逻辑（例如规则摘要/原文截断），但必须：
   - 在 G 段写入 `degraded_count + degraded_reason_top3`
   - 在 `run_meta.json` 写入 analysis 统计
+- 键一致性审计：
+  - 输出 `analysis_cache_hit/miss/key_mismatch`。
+  - mismatch 定义：缓存 payload 的 `url_norm` 或 `cache_key` 与当前 `url_norm(url)` 不一致。
+  - 当 `analysis_cache_hit=0` 时需给出原因：`cache_file_missing` / `cache_empty` / `key_mismatch` / `cache_miss`。
 
 ## 5. 模型策略（PR5B）
 - 支持环境变量：
@@ -76,7 +83,7 @@
 
 ## 8. 失败与可观测
 - 失败不可静默：
-  - G 段必含 `analysis_cache_hit/miss` 与 `degraded_count`
+  - G 段必含 `analysis_cache_hit/miss/key_mismatch` 与 `degraded_count`
   - `run_meta.json` 必含 `analysis` 统计
 - CLI 结果必须有 `ok`，并区分：
   - `ok=true + degraded=true`
@@ -100,3 +107,4 @@ python3 -m app.workers.cli analysis-recompute --model primary --prompt-version v
 - 第二次执行 `analysis_cache_hit` 高于第一次
 - 关闭 cache 开关后仍可产出日报（但 hit=0）
 - `run_meta.json` 包含模型与 prompt_version 记录
+- 若 hit=0，acceptance report/quality pack 能明确说明原因（文件缺失/空缓存/键不匹配/普通 miss）
