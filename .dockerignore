@@ -1,0 +1,30 @@
+# VCS / metadata
+.git
+.gitignore
+.DS_Store
+
+# Python caches / tests
+__pycache__/
+.pytest_cache/
+.pycache/
+.tmp_pyc/
+.tmp_pylib/
+tests/
+
+# Local runtime data (mounted as volumes, should not be baked into image)
+pgdata/
+data/
+artifacts/
+logs/
+reports/
+
+# Local env/secrets
+.admin_api.env
+.mail.env
+.rules_console.env
+.docker.env
+
+# Dev-only docs/assets not needed at runtime image
+docs/
+README.md
+CLOUD_BACKUP_SETUP.md

@@ -234,6 +234,44 @@ curl -u admin:your_pass \
   -X POST "http://127.0.0.1:8789/admin/api/dryrun?profile=enhanced&date=2026-02-16" | python3 -m json.tool
 ```
 
+## Core / Frontier 相关性配置（content_rules）
+在 `enhanced` 下可配置以下字段（通过采集规则草稿发布生效）：
+
+- `defaults.relevance_thresholds`
+  - `core_min_level_for_A`：A 段最小相关等级（默认 `3`）
+  - `frontier_min_level_for_F`：F 段前沿雷达最小相关等级（默认 `2`）
+- `defaults.output_tracks.enable_track_split`
+  - 是否启用 A(core)/F(frontier) 分流（`legacy` 默认 `false`，`enhanced` 默认 `true`）
+- `defaults.frontier_quota.max_items_per_day`
+  - 控制 F 段前沿雷达最多展示条数（默认 `5`）
+- `defaults.relevance_keywords`
+  - `anchors_strong / anchors_weak / negatives`，用于直接驱动相关性计算（优先级高于 `anchors_pack/negatives_pack`）
+- `defaults.anchors_pack`
+  - `core` 与 `frontier` 两组锚点关键词，用于 `track + relevance_level` 判别
+- `defaults.negatives_pack`
+  - 财报/裁员/纯药物试验等负面词，触发降权或转前沿观察
+
+本地调参可直接查看样本解释：
+```bash
+python3 scripts/generate_ivd_report.py --dump-relevance-samples 10
+```
+
+## enhanced 默认行为（新增）
+
+在 `profile=enhanced` 下，默认启用以下策略（`legacy` 不受影响）：
+
+- Story Clustering 默认开启（`dedupe_cluster.enabled=true`）
+  - 主条目选择：`source_priority -> evidence_grade -> published_at_earliest`
+  - `max_other_sources` 默认 `5`
+- A/F 覆盖与配额：
+  - A 段优先 `core` 且满足阈值（`relevance_thresholds.core_min_level_for_A`）
+  - F 段只纳入 `frontier` 且受 `frontier_quota.max_items_per_day` 控制
+  - 若覆盖不足，不中断出报，但必须在 F/G 输出缺口解释
+- dry-run 采集规则页面摘要会显示：
+  - `core/frontier` 占用
+  - `F配额占用`
+  - `重复率(昨/7日峰)`
+
 ## 常见问题（FAQ）
 1) QC fail 时怎么处理？
 - 先看 dry-run 返回的 `qc_report.fail_reasons` 与 `qc_report.panel`（区域占比、重复率、必查信源缺口、event mix 等）。

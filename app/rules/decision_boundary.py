@@ -16,6 +16,14 @@ CONTENT_ALLOWED_KEYS = {
     "source_priority",
     "dedupe_cluster",
     "content_sources",
+    "relevance_thresholds",
+    "frontier_quota",
+    "coverage_enforcement",
+    "anchors_pack",
+    "negatives_pack",
+    "platform_url_hints",
+    "track_routing",
+    "coverage_tracks",
 }
 
 EMAIL_ALLOWED_KEYS = {

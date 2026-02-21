@@ -1,10 +1,17 @@
 from app.db.models.rules import (
+    DBCompareLog,
     ContentRulesVersion,
+    DedupeKey,
+    DualWriteFailure,
     EmailRulesVersion,
     OutputRulesVersion,
     QcRulesVersion,
+    ReportArtifact,
+    RunExecution,
     RulesDraft,
     SchedulerRulesVersion,
+    SourceFetchEvent,
+    SendAttempt,
     Source,
 )
 
@@ -16,4 +23,11 @@ __all__ = [
     "SchedulerRulesVersion",
     "RulesDraft",
     "Source",
+    "DualWriteFailure",
+    "DBCompareLog",
+    "DedupeKey",
+    "RunExecution",
+    "SourceFetchEvent",
+    "ReportArtifact",
+    "SendAttempt",
 ]

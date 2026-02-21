@@ -16,6 +16,7 @@ import os
 import re
 import sys
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from http.client import RemoteDisconnected
 from pathlib import Path
@@ -35,6 +36,12 @@ if str(ROOT_DIR) not in sys.path:
 from app.adapters.rule_bridge import load_runtime_rules
 from app.core.dedupe import strong_dedupe
 from app.core.scoring import diversity_select, load_scoring_config, score_item
+from app.core.track_relevance import (
+    compute_relevance as core_compute_relevance,
+    normalize_item_contract,
+    DEFAULT_ANCHORS_PACK,
+    DEFAULT_NEGATIVES_PACK,
+)
 from app.services.story_clusterer import StoryClusterer
 from app.services.source_registry import fetch_source_entries, load_sources_registry, select_sources
 from app.services.rules_versioning import get_runtime_rules_root
@@ -71,6 +78,10 @@ class Item:
     source_bucket: str = "media"
     item_id: str = ""
     deduped_from_ids: list[str] = field(default_factory=list)
+    track: str = "core"
+    relevance_level: int = 0
+    relevance_why: str = ""
+    relevance_explain: dict = field(default_factory=dict)
 
 
 RUNTIME_CONTENT = {
@@ -89,14 +100,113 @@ RUNTIME_CONTENT = {
     "platform_mapping": {},
     "event_mapping": {},
     "source_priority": {},
+    "relevance_thresholds": {
+        "core_min_level_for_A": 3,
+        "frontier_min_level_for_F": 2,
+    },
+    "frontier_quota": {"max_items_per_day": 3},
+    "coverage_enforcement": {
+        "a_core_min_items": 8,
+        "f_frontier_quota": 3,
+        "require_gap_explain": True,
+    },
+    "anchors_pack": deepcopy(DEFAULT_ANCHORS_PACK),
+    "negatives_pack": list(DEFAULT_NEGATIVES_PACK),
     "dedupe_cluster": {
-        "enabled": False,
+        "enabled": True,
         "window_hours": 72,
         "key_strategies": ["canonical_url", "normalized_url_host_path", "title_fingerprint_v1"],
         "primary_select": ["source_priority", "evidence_grade", "published_at_earliest"],
         "max_other_sources": 5,
     },
+    "coverage_tracks": ["core", "frontier"],
+    "output_tracks": {"enable_track_split": False},
 }
+
+
+def _resolve_dedupe_cluster_config(
+    *,
+    use_enhanced: bool,
+    content_cfg: dict[str, Any] | None,
+    base_cfg: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Profile-aware default:
+    - legacy: dedupe_cluster.enabled default False
+    - enhanced: dedupe_cluster.enabled default True
+    Rules can override this default.
+    """
+    base = deepcopy(base_cfg or {})
+    base["enabled"] = bool(use_enhanced)
+    if isinstance(content_cfg, dict):
+        incoming = content_cfg.get("dedupe_cluster")
+        if isinstance(incoming, dict):
+            merged = deepcopy(base)
+            merged.update(incoming)
+            return merged
+    return base
+
+
+def _resolve_track_split_enabled(
+    *,
+    use_enhanced: bool,
+    content_cfg: dict[str, Any] | None,
+) -> bool:
+    """
+    Profile-aware default:
+    - legacy: output_tracks.enable_track_split default False
+    - enhanced: output_tracks.enable_track_split default True
+    Rules can override this default.
+    """
+    enabled = bool(use_enhanced)
+    if isinstance(content_cfg, dict):
+        out_tracks = content_cfg.get("output_tracks")
+        if isinstance(out_tracks, dict) and ("enable_track_split" in out_tracks):
+            enabled = bool(out_tracks.get("enable_track_split"))
+    return enabled
+
+
+def _dedupe_metrics_summary(
+    *,
+    dedupe_enabled: bool,
+    items_before: int,
+    items_after: int,
+    items: list["Item"],
+    cluster_explain: dict[str, Any] | None,
+    topn: int = 5,
+) -> dict[str, Any]:
+    clusters = []
+    if isinstance(cluster_explain, dict):
+        raw = cluster_explain.get("clusters")
+        if isinstance(raw, list):
+            clusters = raw
+    clusters_total = len(clusters)
+    if clusters_total == 0:
+        clusters_total = len([i for i in items if int(getattr(i, "cluster_size", 1) or 1) >= 2])
+
+    reduction_ratio = 0.0
+    if int(items_before or 0) > 0:
+        reduction_ratio = max(
+            0.0,
+            (float(items_before) - float(items_after)) / float(items_before),
+        )
+
+    src_counts: dict[str, int] = {}
+    for i in items:
+        src = str(getattr(i, "source", "") or "").strip() or "unknown"
+        src_counts[src] = src_counts.get(src, 0) + 1
+    primary_source_distribution = [
+        {"source": k, "count": v}
+        for k, v in sorted(src_counts.items(), key=lambda kv: (-kv[1], kv[0]))[: max(1, int(topn or 5))]
+    ]
+    return {
+        "dedupe_cluster_enabled": bool(dedupe_enabled),
+        "items_before_dedupe": int(items_before or 0),
+        "items_after_dedupe": int(items_after or 0),
+        "clusters_total": int(clusters_total),
+        "reduction_ratio": float(reduction_ratio),
+        "primary_source_distribution": primary_source_distribution,
+    }
 
 
 def item_to_dict(it: Item) -> dict:
@@ -131,6 +241,10 @@ def item_to_dict(it: Item) -> dict:
         "source_bucket": it.source_bucket,
         "item_id": it.item_id,
         "deduped_from_ids": list(it.deduped_from_ids),
+        "track": it.track,
+        "relevance_level": it.relevance_level,
+        "relevance_why": it.relevance_why,
+        "relevance_explain": dict(it.relevance_explain or {}),
     }
 
 
@@ -165,11 +279,37 @@ def dict_to_item(d: dict) -> Item:
         source_bucket=str(d.get("source_bucket", "media")),
         item_id=str(d.get("item_id", "")),
         deduped_from_ids=[str(x) for x in d.get("deduped_from_ids", [])] if isinstance(d.get("deduped_from_ids"), list) else [],
+        track=str(d.get("track", "core")),
+        relevance_level=int(d.get("relevance_level", 0) or 0),
+        relevance_why=str(d.get("relevance_why", "")),
+        relevance_explain=d.get("relevance_explain", {}) if isinstance(d.get("relevance_explain"), dict) else {},
     )
 
 
 def env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
+
+
+def _write_progress(stage: str, *, total_sources: int | None = None, completed_sources: int | None = None, message: str = "", **extra: Any) -> None:
+    path = env("DRYRUN_PROGRESS_FILE", "")
+    if not path:
+        return
+    payload: dict[str, Any] = {
+        "stage": stage,
+        "message": message,
+        "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
+    }
+    if total_sources is not None:
+        payload["total_sources"] = int(max(0, total_sources))
+    if completed_sources is not None:
+        payload["completed_sources"] = int(max(0, completed_sources))
+    payload.update(extra)
+    try:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def now_in_tz(tz_name: str) -> dt.datetime:
@@ -640,109 +780,39 @@ def cn_region(source: str, link: str) -> str:
     return "北美"
 
 
+def compute_relevance(
+    text: str,
+    source_meta: dict[str, Any] | None = None,
+    rules_runtime: dict[str, Any] | None = None,
+) -> tuple[str, int, dict[str, Any]]:
+    """
+    New relevance entrypoint for report generation.
+    """
+    rr = dict(rules_runtime or {})
+    rk = rr.get("relevance_keywords")
+    if isinstance(rk, dict) and rk:
+        strong = [str(x).strip() for x in rk.get("anchors_strong", []) if str(x).strip()]
+        weak = [str(x).strip() for x in rk.get("anchors_weak", []) if str(x).strip()]
+        negs = [str(x).strip() for x in rk.get("negatives", []) if str(x).strip()]
+        if strong or weak:
+            rr["anchors_pack"] = {"core": strong, "frontier": weak}
+        if negs:
+            rr["negatives_pack"] = negs
+    if not rr.get("anchors_pack"):
+        rr["anchors_pack"] = RUNTIME_CONTENT.get("anchors_pack") or DEFAULT_ANCHORS_PACK
+    if not rr.get("negatives_pack"):
+        rr["negatives_pack"] = RUNTIME_CONTENT.get("negatives_pack") or DEFAULT_NEGATIVES_PACK
+    return core_compute_relevance(text, source_meta or {}, rr)
+
+
 def score_ivd(text: str) -> int:
     """
-    Heuristic relevance scoring to reduce noise from pharma/business-only news.
+    Backward-compatible numeric score derived from compute_relevance().
     """
-    t = text.lower()
-
-    anchors = [
-        "diagnostic",
-        "diagnostics",
-        "assay",
-        "test",
-        "testing",
-        "ivd",
-        "immunoassay",
-        "chemiluminescence",
-        "elisa",
-        "ihc",
-        "pcr",
-        "ddpcr",
-        "digital pcr",
-        "ngs",
-        "sequencing",
-        "poct",
-        "point-of-care",
-        "rapid test",
-        "pathology",
-        "laboratory",
-        "reagent",
-        "analyzer",
-        "companion diagnostic",
-        "cdx",
-        "labcorp",
-        "quest",
-    ]
-
-    strong = [
-        "diagnostic",
-        "diagnostics",
-        "assay",
-        "test",
-        "testing",
-        "ivd",
-        "ldt",
-        "clia",
-        "pathology",
-        "laboratory",
-        "immunoassay",
-        "chemiluminescence",
-        "elisa",
-        "ihc",
-        "pcr",
-        "ddpcr",
-        "digital pcr",
-        "ngs",
-        "sequencing",
-        "poct",
-        "point-of-care",
-        "rapid test",
-        "mass spec",
-        "lc-ms",
-        "flow cytometry",
-        "reagent",
-        "analyzer",
-        "companion diagnostic",
-        "cdx",
-        "udi",
-        "nmpa",
-        "pmda",
-        "tga",
-        "mfds",
-        "hsa",
-        "labcorp",
-        "quest",
-    ]
-    weak = ["biomarker", "screening", "clinical lab", "lab"]
-    negative = [
-        "earnings",
-        "revenue",
-        "sales",
-        "layoff",
-        "restructur",
-        "phase ",
-        "trial",
-        "drug",
-        "therapy",
-        "vaccine",
-        "glp-1",
-    ]
-
-    s = 0
-    for k in strong:
-        if has_term(t, k):
-            s += 2
-    for k in weak:
-        if has_term(t, k):
-            s += 1
-    for k in negative:
-        if has_term(t, k):
-            s -= 1
-    # Add an extra point if any anchor term is present.
-    if any(has_term(t, a) for a in anchors):
-        s += 1
-    return s
+    _track, level, explain = compute_relevance(text, {}, {})
+    base = int(explain.get("raw_score", 0) or 0)
+    # Preserve old sign-like behavior while keeping deterministic ordering.
+    return base + (level - 2)
 
 
 def is_ivd_relevant(text: str) -> bool:
@@ -751,68 +821,14 @@ def is_ivd_relevant(text: str) -> bool:
     for x in RUNTIME_CONTENT.get("exclude_keywords", []):
         kw = str(x).strip().lower()
         if kw and has_term(t, kw):
-            # Keep-if terms act as an override to prevent "hard exclude" from killing important IVD items.
             if keep_terms and any(has_term(t, k) for k in keep_terms):
                 break
             return False
-    # Require at least one anchor term to avoid pharma-only/business-only noise.
-    anchors = [
-        "diagnostic",
-        "diagnostics",
-        "assay",
-        "test",
-        "ivd",
-        "immunoassay",
-        "pcr",
-        "sequencing",
-        "ngs",
-        "poct",
-        "pathology",
-        "laboratory",
-        "reagent",
-        "analyzer",
-        "companion diagnostic",
-        "cdx",
-        "labcorp",
-        "quest",
-    ]
-    # Company-name anchors: allow IVD-relevant news even when generic wording is used.
-    ivd_companies = [
-        "roche",
-        "abbott",
-        "danaher",
-        "beckman coulter",
-        "cepheid",
-        "thermo fisher",
-        "siemens healthineers",
-        "bio-rad",
-        "qiagen",
-        "illumina",
-        "hologic",
-        "bio mérieux",
-        "biomerieux",
-        "becton dickinson",
-        "bd ",
-        "agilent",
-        "guardant",
-        "natera",
-        "exact sciences",
-        "gilead diagnostics",
-        "myndray",
-        "mindray",
-        "snibe",
-        "mgi",
-        "bgi",
-    ]
-    has_anchor = any(has_term(t, a) for a in anchors)
-    dynamic_include = [str(x).strip().lower() for x in RUNTIME_CONTENT.get("include_keywords", [])]
-    if dynamic_include and any(has_term(t, a) for a in dynamic_include):
-        has_anchor = True
-    has_company = any(c in t for c in ivd_companies)
-    if not (has_anchor or has_company):
+    _track, level, explain = compute_relevance(text, {}, {})
+    # preserve high recall while dropping pure noise
+    if str(explain.get("final_reason", "")).startswith("negative_without_diagnostic_anchor"):
         return False
-    # Keep recall high, rely on dedupe/source caps for noise suppression.
-    return score_ivd(text) >= 0
+    return int(level) >= 1
 
 
 def exclusion_reason(text: str) -> dict[str, Any] | None:
@@ -1607,7 +1623,56 @@ def required_sources_checklist_hit(
     return display, missing
 
 
-def main() -> int:
+def _relevance_reason_stats(
+    all_items: list[Item],
+    selected_items: list[Item],
+    topn: int = 3,
+) -> tuple[list[str], int, list[str]]:
+    selected_links = {i.link for i in selected_items}
+    filtered: dict[str, int] = {}
+    borderline: dict[str, int] = {}
+    borderline_count = 0
+    for it in all_items:
+        reason = ""
+        if isinstance(it.relevance_explain, dict):
+            reason = str(it.relevance_explain.get("final_reason", "")).strip()
+        reason = reason or str(it.relevance_why or "").strip() or "unknown"
+        if it.link not in selected_links:
+            filtered[reason] = filtered.get(reason, 0) + 1
+        if int(getattr(it, "relevance_level", 0) or 0) in (1, 2):
+            borderline_count += 1
+            borderline[reason] = borderline.get(reason, 0) + 1
+    top_filtered = [f"{k}:{v}" for k, v in sorted(filtered.items(), key=lambda kv: (-kv[1], kv[0]))[:topn]]
+    top_borderline = [f"{k}:{v}" for k, v in sorted(borderline.items(), key=lambda kv: (-kv[1], kv[0]))[:topn]]
+    return top_filtered, borderline_count, top_borderline
+
+
+def _validate_item_track_contract(it: Item) -> list[str]:
+    warns: list[str] = []
+    t, lv, ws = normalize_item_contract(it.track, it.relevance_level)
+    if ws:
+        warns.extend(ws)
+    if t != it.track:
+        object.__setattr__(it, "track", t)
+    if lv != it.relevance_level:
+        object.__setattr__(it, "relevance_level", lv)
+    return warns
+
+
+def _split_for_output_contract(items: list[Item], routing: dict[str, dict[str, Any]]) -> tuple[list[Item], list[Item]]:
+    a_rule = routing.get("A", {}) if isinstance(routing.get("A"), dict) else {}
+    f_rule = routing.get("F", {}) if isinstance(routing.get("F"), dict) else {}
+    a_track = str(a_rule.get("track", "core")).strip().lower()
+    f_track = str(f_rule.get("track", "frontier")).strip().lower()
+    a_min = int(a_rule.get("min_relevance_level", 3) or 3)
+    f_min = int(f_rule.get("min_relevance_level", 1) or 1)
+
+    a_pool = [i for i in items if i.track == a_track and int(i.relevance_level) >= a_min]
+    f_pool = [i for i in items if i.track == f_track and int(i.relevance_level) >= f_min]
+    return a_pool, f_pool
+
+
+def main(dump_relevance_samples: int = 0) -> int:
     tz_name = env("REPORT_TZ", "Asia/Shanghai")
     forced_date = env("REPORT_DATE", "")
     if forced_date:
@@ -1624,6 +1689,34 @@ def main() -> int:
 
     run_id = env("REPORT_RUN_ID", "") or f"run-{uuid.uuid4().hex[:10]}"
     runtime_rules = load_runtime_rules(date_str=date_str, run_id=run_id)
+    routing_rules = (
+        runtime_rules.get("track_routing", {})
+        if isinstance(runtime_rules.get("track_routing"), dict)
+        else {}
+    )
+    routing_gaps = (
+        runtime_rules.get("track_routing_gaps", [])
+        if isinstance(runtime_rules.get("track_routing_gaps"), list)
+        else []
+    )
+    if not routing_rules:
+        routing_rules = {
+            "A": {"track": "core", "min_relevance_level": 3},
+            "F": {"track": "frontier", "min_relevance_level": 2},
+            "G": {"include_track_coverage": True},
+        }
+        routing_gaps = list(routing_gaps) + ["missing_track_routing_runtime:use_fallback_default"]
+    # content_rules.relevance_thresholds is the primary operator-facing knob.
+    rs = runtime_rules.get("content", {}) if isinstance(runtime_rules.get("content"), dict) else {}
+    rth = rs.get("relevance_thresholds", {}) if isinstance(rs.get("relevance_thresholds"), dict) else {}
+    if isinstance(routing_rules.get("A"), dict):
+        routing_rules["A"]["min_relevance_level"] = int(
+            rth.get("core_min_level_for_A", routing_rules["A"].get("min_relevance_level", 3)) or 3
+        )
+    if isinstance(routing_rules.get("F"), dict):
+        routing_rules["F"]["min_relevance_level"] = int(
+            rth.get("frontier_min_level_for_F", routing_rules["F"].get("min_relevance_level", 2)) or 2
+        )
     event_classifier = build_event_classifier(runtime_rules)
     platform_explain_rows: list[dict] = []
     lane_explain_rows: list[dict] = []
@@ -1679,7 +1772,55 @@ def main() -> int:
         RUNTIME_CONTENT["platform_url_hints"] = content_cfg.get("platform_url_hints", {})
         RUNTIME_CONTENT["event_mapping"] = content_cfg.get("event_mapping", {})
         RUNTIME_CONTENT["source_priority"] = content_cfg.get("source_priority", {})
-        RUNTIME_CONTENT["dedupe_cluster"] = content_cfg.get("dedupe_cluster", RUNTIME_CONTENT["dedupe_cluster"])
+        RUNTIME_CONTENT["relevance_thresholds"] = content_cfg.get(
+            "relevance_thresholds",
+            RUNTIME_CONTENT["relevance_thresholds"],
+        )
+        RUNTIME_CONTENT["frontier_quota"] = content_cfg.get(
+            "frontier_quota",
+            RUNTIME_CONTENT["frontier_quota"],
+        )
+        RUNTIME_CONTENT["coverage_enforcement"] = content_cfg.get(
+            "coverage_enforcement",
+            RUNTIME_CONTENT["coverage_enforcement"],
+        )
+        RUNTIME_CONTENT["anchors_pack"] = content_cfg.get(
+            "anchors_pack",
+            RUNTIME_CONTENT["anchors_pack"],
+        )
+        RUNTIME_CONTENT["negatives_pack"] = content_cfg.get(
+            "negatives_pack",
+            RUNTIME_CONTENT["negatives_pack"],
+        )
+        rk = content_cfg.get("relevance_keywords", {})
+        if isinstance(rk, dict) and rk:
+            strong = [str(x).strip() for x in rk.get("anchors_strong", []) if str(x).strip()]
+            weak = [str(x).strip() for x in rk.get("anchors_weak", []) if str(x).strip()]
+            negs = [str(x).strip() for x in rk.get("negatives", []) if str(x).strip()]
+            if strong or weak:
+                RUNTIME_CONTENT["anchors_pack"] = {"core": strong, "frontier": weak}
+            if negs:
+                RUNTIME_CONTENT["negatives_pack"] = negs
+        RUNTIME_CONTENT["output_tracks"] = {
+            "enable_track_split": _resolve_track_split_enabled(
+                use_enhanced=use_enhanced,
+                content_cfg=content_cfg,
+            )
+        }
+        RUNTIME_CONTENT["dedupe_cluster"] = _resolve_dedupe_cluster_config(
+            use_enhanced=use_enhanced,
+            content_cfg=content_cfg,
+            base_cfg=RUNTIME_CONTENT.get("dedupe_cluster", {}),
+        )
+        RUNTIME_CONTENT["coverage_tracks"] = content_cfg.get("coverage_tracks", RUNTIME_CONTENT["coverage_tracks"])
+    else:
+        # Explicitly enforce legacy default.
+        RUNTIME_CONTENT["output_tracks"] = {"enable_track_split": False}
+        RUNTIME_CONTENT["dedupe_cluster"] = _resolve_dedupe_cluster_config(
+            use_enhanced=False,
+            content_cfg={},
+            base_cfg=RUNTIME_CONTENT.get("dedupe_cluster", {}),
+        )
 
     # Media + official feeds, with APAC/China reinforcement.
     sources = [
@@ -1744,6 +1885,7 @@ def main() -> int:
     items: list[Item] = []
     seen_links: set[str] = set()
     relaxed_pool: list[Item] = []
+    track_contract_warnings: list[str] = []
     keyword_pack_stats: dict[str, Any] = {
         "packs": {},
         "matched_any": 0,
@@ -1756,9 +1898,16 @@ def main() -> int:
         "samples": [],
     }
 
-    # China official: baseline high-confidence China signal.
-    items.extend(collect_nmpa_site_updates(now_utc, tz_name, enhanced=bool(use_enhanced)))
-    items.extend(collect_pmda_updates(now_utc, tz_name, enhanced=bool(use_enhanced)))
+    lite_mode = env("DRYRUN_LITE", "").lower() in {"1", "true", "yes", "on"}
+    fetch_limit = max(1, int(env("DRYRUN_FETCH_LIMIT", "50") or "50"))
+    fetch_timeout = max(3, int(env("DRYRUN_FETCH_TIMEOUT_SECONDS", "15") or "15"))
+    fetch_retries = max(0, int(env("DRYRUN_FETCH_RETRIES", "2") or "2"))
+    lite_max_sources = max(1, int(env("DRYRUN_LITE_MAX_SOURCES", "24") or "24"))
+    # China/APAC official top-ups can be slower; in lite preview mode we skip to keep UI responsive.
+    skip_official = env("DRYRUN_LITE_SKIP_OFFICIAL", "").lower() in {"1", "true", "yes", "on"}
+    if not (lite_mode and skip_official):
+        items.extend(collect_nmpa_site_updates(now_utc, tz_name, enhanced=bool(use_enhanced)))
+        items.extend(collect_pmda_updates(now_utc, tz_name, enhanced=bool(use_enhanced)))
 
     # Normalize legacy tuples (7/8 fields) into new form (9 fields).
     norm_sources = []
@@ -1774,6 +1923,16 @@ def main() -> int:
             norm_sources.append((sid, conn, name, url, region, kind, pri, sg, {}))
         else:
             norm_sources.append(t)
+    if lite_mode:
+        norm_sources = norm_sources[:lite_max_sources]
+    total_sources = len(norm_sources)
+    completed_sources = 0
+    _write_progress(
+        "fetching_sources",
+        total_sources=total_sources,
+        completed_sources=completed_sources,
+        message="开始抓取信源",
+    )
 
     event_explain_rows: list[dict] = []
 
@@ -1806,46 +1965,52 @@ def main() -> int:
             "tags": ["regulatory"] if kind == "regulatory" else ["media"],
             "fetch": fetch_cfg or {},
         }
-        fetch_out = fetch_source_entries(source_obj, limit=50, timeout_seconds=15, retries=2)
-        http_status = int(fetch_out.get("http_status") or 0)
-        st_status = str(fetch_out.get("status", "")).strip().lower()
-        if st_status in {"skip", "skipped"}:
-            stat["parse_skip"] += 1
-        if not bool(fetch_out.get("ok")):
-            stat["last_error_type"] = str(fetch_out.get("error_type") or "")
-            stat["last_error_message"] = str(fetch_out.get("error_message") or fetch_out.get("error") or "")
-        for e in fetch_out.get("entries", []) if isinstance(fetch_out.get("entries"), list) else []:
-            entries.append(
-                {
-                    "title": str(e.get("title", "")).strip(),
-                    "link": str(e.get("url", e.get("link", ""))).strip(),
-                    "summary": str(e.get("summary", "")).strip(),
-                    "entry": None,
-                }
+        try:
+            fetch_out = fetch_source_entries(
+                source_obj,
+                limit=fetch_limit,
+                timeout_seconds=fetch_timeout,
+                retries=fetch_retries,
             )
+            http_status = int(fetch_out.get("http_status") or 0)
+            st_status = str(fetch_out.get("status", "")).strip().lower()
+            if st_status in {"skip", "skipped"}:
+                stat["parse_skip"] += 1
+            if not bool(fetch_out.get("ok")):
+                stat["last_error_type"] = str(fetch_out.get("error_type") or "")
+                stat["last_error_message"] = str(fetch_out.get("error_message") or fetch_out.get("error") or "")
+            for e in fetch_out.get("entries", []) if isinstance(fetch_out.get("entries"), list) else []:
+                entries.append(
+                    {
+                        "title": str(e.get("title", "")).strip(),
+                        "link": str(e.get("url", e.get("link", ""))).strip(),
+                        "summary": str(e.get("summary", "")).strip(),
+                        "entry": None,
+                    }
+                )
 
-        if http_status:
-            key = str(http_status)
-            stat["top_http_status"][key] = int(stat["top_http_status"].get(key, 0)) + 1
-        if not entries:
-            stat["parse_fail"] += 1
-            continue
-        stat["parse_ok"] += 1
-        stat["items_count"] += len(entries)
-        stat["last_success_at"] = now_utc.isoformat()
+            if http_status:
+                key = str(http_status)
+                stat["top_http_status"][key] = int(stat["top_http_status"].get(key, 0)) + 1
+            if not entries:
+                stat["parse_fail"] += 1
+                continue
+            stat["parse_ok"] += 1
+            stat["items_count"] += len(entries)
+            stat["last_success_at"] = now_utc.isoformat()
 
-        for row in entries:
-            title = row["title"]
-            link = row["link"]
-            if not title or not link:
-                continue
-            if link in seen_links:
-                continue
-            fallback_ok = False
-            combined = title + " " + row["summary"]
-            exr = exclusion_reason(combined)
-            if exr and exr.get("rescued_by_keep_if"):
-                exclude_diag["rescued_count"] = int(exclude_diag.get("rescued_count", 0)) + 1
+            for row in entries:
+                title = row["title"]
+                link = row["link"]
+                if not title or not link:
+                    continue
+                if link in seen_links:
+                    continue
+                fallback_ok = False
+                combined = title + " " + row["summary"]
+                exr = exclusion_reason(combined)
+                if exr and exr.get("rescued_by_keep_if"):
+                    exclude_diag["rescued_count"] = int(exclude_diag.get("rescued_count", 0)) + 1
 
             # Operability stats: keyword pack hit distribution (dry-run panel).
             keyword_pack_stats["candidates_checked"] += 1
@@ -1855,127 +2020,153 @@ def main() -> int:
                 for pid in packs_hit:
                     p = keyword_pack_stats["packs"].setdefault(pid, {"matched": 0, "kept": 0})
                     p["matched"] += 1
-            if kind == "regulatory":
-                if not is_regulatory_ivd_relevant(combined):
-                    continue
-            else:
-                if not is_ivd_relevant(combined):
-                    if exr and exr.get("excluded"):
-                        k = str(exr.get("matched_exclude", "unknown"))
-                        byk = exclude_diag.setdefault("excluded_by_keyword", {})
-                        byk[k] = int(byk.get(k, 0)) + 1
-                        exclude_diag["excluded_count"] = int(exclude_diag.get("excluded_count", 0)) + 1
-                        samples = exclude_diag.setdefault("samples", [])
-                        if isinstance(samples, list) and len(samples) < 15:
-                            samples.append(
-                                {
-                                    "title": title[:220],
-                                    "url": link[:500],
-                                    "source_id": str(source_id or "")[:120],
-                                    "matched_exclude": k[:80],
-                                }
-                            )
-                    # keep as a fallback candidate if it's not obviously pharma-only
-                    if not is_relaxed_relevant(combined):
+                if kind == "regulatory":
+                    if not is_regulatory_ivd_relevant(combined):
                         continue
-                    fallback_ok = True
                 else:
-                    if packs_hit:
-                        for pid in packs_hit:
-                            p = keyword_pack_stats["packs"].setdefault(pid, {"matched": 0, "kept": 0})
-                            p["kept"] += 1
-            pub = to_dt(row["entry"]) if row["entry"] is not None else now_utc
-            if not pub:
-                continue
-            age = now_utc - pub
-            if age > dt.timedelta(days=7):
-                continue
+                    if not is_ivd_relevant(combined):
+                        if exr and exr.get("excluded"):
+                            k = str(exr.get("matched_exclude", "unknown"))
+                            byk = exclude_diag.setdefault("excluded_by_keyword", {})
+                            byk[k] = int(byk.get(k, 0)) + 1
+                            exclude_diag["excluded_count"] = int(exclude_diag.get("excluded_count", 0)) + 1
+                            samples = exclude_diag.setdefault("samples", [])
+                            if isinstance(samples, list) and len(samples) < 15:
+                                samples.append(
+                                    {
+                                        "title": title[:220],
+                                        "url": link[:500],
+                                        "source_id": str(source_id or "")[:120],
+                                        "matched_exclude": k[:80],
+                                    }
+                                )
+                        # keep as a fallback candidate if it's not obviously pharma-only
+                        if not is_relaxed_relevant(combined):
+                            continue
+                        fallback_ok = True
+                    else:
+                        if packs_hit:
+                            for pid in packs_hit:
+                                p = keyword_pack_stats["packs"].setdefault(pid, {"matched": 0, "kept": 0})
+                                p["kept"] += 1
+                pub = to_dt(row["entry"]) if row["entry"] is not None else now_utc
+                if not pub:
+                    continue
+                age = now_utc - pub
+                if age > dt.timedelta(days=7):
+                    continue
 
-            wt = window_tag(pub, now_utc)
-            region = cn_region(src_name, link) or default_region
-            summary = cn_summary(row["entry"]) if row["entry"] is not None else "摘要：该条来自网页源抓取。"
-            event_type, et_explain = event_classifier.classify(title, summary, source_group, link)
-            summary = append_event_specific_note(summary, event_type)
-            if use_enhanced:
-                lane, lane_explain = classify_lane(
-                    title,
-                    summary,
-                    str(source_group or ""),
-                    link,
-                    event_type,
-                    enhanced=True,
+                wt = window_tag(pub, now_utc)
+                region = cn_region(src_name, link) or default_region
+                summary = cn_summary(row["entry"]) if row["entry"] is not None else "摘要：该条来自网页源抓取。"
+                event_type, et_explain = event_classifier.classify(title, summary, source_group, link)
+                summary = append_event_specific_note(summary, event_type)
+                if use_enhanced:
+                    lane, lane_explain = classify_lane(
+                        title,
+                        summary,
+                        str(source_group or ""),
+                        link,
+                        event_type,
+                        enhanced=True,
+                    )
+                else:
+                    lane = cn_lane(combined)
+                    lane_explain = {"reason": "legacy_cn_lane"}
+                lane_explain_rows.append(
+                    {
+                        "title": title,
+                        "url": link,
+                        "source_id": source_id,
+                        "source_group": str(source_group or ""),
+                        "event_type": event_type,
+                        "lane": lane,
+                        "explain": lane_explain,
+                    }
                 )
-            else:
-                lane = cn_lane(combined)
-                lane_explain = {"reason": "legacy_cn_lane"}
-            lane_explain_rows.append(
-                {
-                    "title": title,
-                    "url": link,
-                    "source_id": source_id,
-                    "source_group": str(source_group or ""),
-                    "event_type": event_type,
-                    "lane": lane,
-                    "explain": lane_explain,
-                }
-            )
-            if use_enhanced:
-                platform, plat_explain = classify_platform(
-                    title,
-                    summary,
-                    str(source_group or ""),
-                    link,
-                    event_type,
-                    enhanced=True,
+                if use_enhanced:
+                    platform, plat_explain = classify_platform(
+                        title,
+                        summary,
+                        str(source_group or ""),
+                        link,
+                        event_type,
+                        enhanced=True,
+                    )
+                else:
+                    platform = cn_platform(combined)
+                    plat_explain = {"reason": "legacy_cn_platform"}
+                platform = normalize_platform_label(platform, event_type, enhanced=bool(use_enhanced))
+                track, relevance_level, relevance_explain = compute_relevance(
+                    combined,
+                    {"source_group": str(source_group or ""), "event_type": event_type},
+                    {
+                        "anchors_pack": RUNTIME_CONTENT.get("anchors_pack", {}),
+                        "negatives_pack": RUNTIME_CONTENT.get("negatives_pack", []),
+                    },
                 )
-            else:
-                platform = cn_platform(combined)
-                plat_explain = {"reason": "legacy_cn_platform"}
-            platform = normalize_platform_label(platform, event_type, enhanced=bool(use_enhanced))
-            platform_explain_rows.append(
-                {
-                    "title": title,
-                    "url": link,
-                    "source_id": source_id,
-                    "source_group": str(source_group or ""),
-                    "event_type": event_type,
-                    "platform": platform,
-                    "explain": plat_explain,
-                }
-            )
+                relevance_why = str(relevance_explain.get("final_reason", ""))
+                platform_explain_rows.append(
+                    {
+                        "title": title,
+                        "url": link,
+                        "source_id": source_id,
+                        "source_group": str(source_group or ""),
+                        "event_type": event_type,
+                        "platform": platform,
+                        "explain": plat_explain,
+                    }
+                )
 
-            it = Item(
-                title=title,
-                link=link,
-                published=pub,
-                source=src_name,
-                source_id=source_id,
-                source_group=str(source_group or ""),
-                source_priority=source_priority,
-                region=region,
-                lane=lane,
-                platform=platform,
-                event_type=event_type,
-                window_tag=wt,
-                summary_cn=summary,
-                event_type_explain=et_explain,
+                it = Item(
+                    title=title,
+                    link=link,
+                    published=pub,
+                    source=src_name,
+                    source_id=source_id,
+                    source_group=str(source_group or ""),
+                    source_priority=source_priority,
+                    region=region,
+                    lane=lane,
+                    platform=platform,
+                    event_type=event_type,
+                    window_tag=wt,
+                    summary_cn=summary,
+                    event_type_explain=et_explain,
+                    track=track,
+                    relevance_level=relevance_level,
+                    relevance_why=relevance_why,
+                    relevance_explain=relevance_explain,
+                )
+                track_contract_warnings.extend(_validate_item_track_contract(it))
+                event_explain_rows.append(
+                    {
+                        "title": title,
+                        "url": link,
+                        "source_id": source_id,
+                        "source_group": str(source_group or ""),
+                        "event_type": event_type,
+                        "track": it.track,
+                        "relevance_level": it.relevance_level,
+                        "relevance_why": it.relevance_why,
+                        "relevance_explain": it.relevance_explain,
+                        "explain": et_explain,
+                        "mapping_source": event_mapping_source,
+                    }
+                )
+                if kind != "regulatory" and fallback_ok:
+                    relaxed_pool.append(it)
+                else:
+                    items.append(it)
+                seen_links.add(link)
+        finally:
+            completed_sources += 1
+            _write_progress(
+                "fetching_sources",
+                total_sources=total_sources,
+                completed_sources=completed_sources,
+                message=f"抓取中：{src_name}",
             )
-            event_explain_rows.append(
-                {
-                    "title": title,
-                    "url": link,
-                    "source_id": source_id,
-                    "source_group": str(source_group or ""),
-                    "event_type": event_type,
-                    "explain": et_explain,
-                    "mapping_source": event_mapping_source,
-                }
-            )
-            if kind != "regulatory" and fallback_ok:
-                relaxed_pool.append(it)
-            else:
-                items.append(it)
-            seen_links.add(link)
 
     # Pull a small number of relaxed items to improve international/source diversity.
     if relaxed_pool:
@@ -2008,6 +2199,12 @@ def main() -> int:
     items_after_cluster_count = len(items)
     cluster_explain = {"enabled": False, "clusters": []}
 
+    _write_progress(
+        "scoring",
+        total_sources=total_sources,
+        completed_sources=completed_sources,
+        message="评分与去重中",
+    )
     if scoring_enabled:
         source_meta_map = _source_meta_from_registry(registry_sources, norm_sources)
         scored_dicts: list[dict[str, Any]] = []
@@ -2057,6 +2254,10 @@ def main() -> int:
                     "item_id": row.get("item_id", ""),
                     "title": row.get("title", ""),
                     "source": row.get("source", ""),
+                    "track": row.get("track", "core"),
+                    "relevance_level": row.get("relevance_level", 0),
+                    "relevance_why": row.get("relevance_why", ""),
+                    "relevance_explain": row.get("relevance_explain", {}),
                     "evidence_grade": row.get("evidence_grade", "D"),
                     "signal_level": row.get("signal_level", "灰"),
                     "quality_score": row.get("quality_score", 0),
@@ -2117,24 +2318,128 @@ def main() -> int:
         top = enforce_apac_share(top, items)
         top = enforce_international_primary(top, items)
 
+    # Runtime assertions (non-breaking): enforce track/relevance contract + A/F routing explainability.
+    for it in items:
+        track_contract_warnings.extend(_validate_item_track_contract(it))
+    for it in top:
+        track_contract_warnings.extend(_validate_item_track_contract(it))
+    a_pool, f_pool = _split_for_output_contract(top, routing_rules)
+    if not a_pool:
+        routing_gaps.append(
+            "A分流无命中：未找到 core 且 relevance>=阈值 的条目（已保留原输出并在F/G给出缺口解释）"
+        )
+    if not f_pool:
+        routing_gaps.append(
+            "F分流无命中：未找到 frontier 且 relevance>=阈值 的条目（已保留原输出并在F/G给出缺口解释）"
+        )
+
+    # Section routing (enhanced only): A prefers core+high relevance, F carries frontier radar.
+    report_items = top
+    frontier_shortage_reasons: list[str] = []
+    frontier_quota_used = 0
+    frontier_quota_target = 0
+    track_split_enabled = bool(
+        (RUNTIME_CONTENT.get("output_tracks", {}) or {}).get("enable_track_split", bool(use_enhanced))
+    )
+    if use_enhanced and track_split_enabled:
+        a_pool_sorted = sorted(
+            a_pool,
+            key=lambda x: (
+                float(getattr(x, "quality_score", 0.0) or 0.0),
+                int(getattr(x, "relevance_level", 0) or 0),
+                x.published,
+            ),
+            reverse=True,
+        )
+        max_items = int(RUNTIME_CONTENT.get("max_items", 15))
+        min_items = int(RUNTIME_CONTENT.get("min_items", 8))
+        enf = RUNTIME_CONTENT.get("coverage_enforcement", {}) if isinstance(RUNTIME_CONTENT.get("coverage_enforcement"), dict) else {}
+        a_core_min_items = int(enf.get("a_core_min_items", min_items) or min_items)
+        a_core_min_items = max(0, min(a_core_min_items, max_items))
+        frontier_quota_target = int(
+            enf.get("f_frontier_quota", (RUNTIME_CONTENT.get("frontier_quota", {}) or {}).get("max_items_per_day", 3))
+            or 3
+        )
+        frontier_quota_target = max(0, min(frontier_quota_target, 20))
+        if a_pool_sorted:
+            report_items = a_pool_sorted[:max_items]
+            # A段覆盖强制：优先补齐 core 高相关，不足时再用常规topup，并记录缺口原因。
+            if len(report_items) < a_core_min_items:
+                seen_links = {i.link for i in report_items}
+                for it in a_pool_sorted:
+                    if len(report_items) >= a_core_min_items:
+                        break
+                    if it.link in seen_links:
+                        continue
+                    report_items.append(it)
+                    seen_links.add(it.link)
+            if len(report_items) < min_items:
+                seen_links = {i.link for i in report_items}
+                for it in top:
+                    if it.link in seen_links:
+                        continue
+                    report_items.append(it)
+                    seen_links.add(it.link)
+                    if len(report_items) >= min_items:
+                        break
+            if len(a_pool_sorted) < a_core_min_items:
+                routing_gaps.append(
+                    f"A段core覆盖不足：core高相关候选 {len(a_pool_sorted)} < 目标 {a_core_min_items}"
+                )
+        else:
+            report_items = top
+            routing_gaps.append("A段core覆盖不足：未命中core高相关候选，已退化为常规候选池")
+
+        # F段覆盖诊断：frontier配额占用与不足原因（用于F/G解释）
+        frontier_candidates = [i for i in top if i.track == "frontier"]
+        f_rule = routing_rules.get("F", {}) if isinstance(routing_rules.get("F"), dict) else {}
+        f_min = int(f_rule.get("min_relevance_level", 2) or 2)
+        frontier_eligible = [i for i in frontier_candidates if int(getattr(i, "relevance_level", 0) or 0) >= f_min]
+        frontier_quota_used = min(frontier_quota_target, len(frontier_eligible))
+        if frontier_quota_used < frontier_quota_target:
+            why_count: dict[str, int] = {}
+            for i in frontier_candidates:
+                why = (
+                    str((i.relevance_explain or {}).get("final_reason", "")).strip()
+                    if isinstance(i.relevance_explain, dict)
+                    else ""
+                ) or str(i.relevance_why or "").strip() or "frontier_signal_weak"
+                why_count[why] = why_count.get(why, 0) + 1
+            frontier_shortage_reasons = [
+                f"{k}:{v}" for k, v in sorted(why_count.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+            ]
+            if not frontier_shortage_reasons:
+                frontier_shortage_reasons = ["frontier_signal_weak"]
+            routing_gaps.append(
+                f"F段frontier覆盖不足：占用 {frontier_quota_used}/{frontier_quota_target}"
+            )
+    elif use_enhanced and not track_split_enabled:
+        routing_gaps.append("track_split_disabled: output_tracks.enable_track_split=false")
+
+    _write_progress(
+        "rendering",
+        total_sources=total_sources,
+        completed_sources=completed_sources,
+        message="渲染预览中",
+    )
     # Metrics
-    n24 = len([i for i in top if i.window_tag == "24小时内"])
-    n7 = len([i for i in top if i.window_tag == "7天补充"])
-    apac = len([i for i in top if i.region in ("中国", "亚太")])
-    apac_share = (apac / len(top)) if top else 0.0
-    regulatory = len([i for i in top if i.event_type == "监管审批与指南"])
-    commercial = len(top) - regulatory
-    yday_dup = calc_dup_rate(top, yday_titles)
+    n24 = len([i for i in report_items if i.window_tag == "24小时内"])
+    n7 = len([i for i in report_items if i.window_tag == "7天补充"])
+    apac = len([i for i in report_items if i.region in ("中国", "亚太")])
+    apac_share = (apac / len(report_items)) if report_items else 0.0
+    regulatory = len([i for i in report_items if i.event_type == "监管审批与指南"])
+    commercial = len(report_items) - regulatory
+    yday_dup = calc_dup_rate(report_items, yday_titles)
     max_7d_dup = 0.0
     for s in recent_titles.values():
-        max_7d_dup = max(max_7d_dup, calc_dup_rate(top, s))
+        max_7d_dup = max(max_7d_dup, calc_dup_rate(report_items, s))
     qc_cfg = runtime_rules.get("qc", {}) if isinstance(runtime_rules.get("qc"), dict) else {}
     qp = qc_cfg.get("quality_policy", {}) if isinstance(qc_cfg.get("quality_policy"), dict) else {}
     required = qp.get("required_sources_checklist", [])
     if not isinstance(required, list) or not required:
         required = qc_cfg.get("required_sources_checklist", [])
     required_list = [str(x) for x in required] if isinstance(required, list) else []
-    source_hits, _missing = required_sources_checklist_hit(required_list, top)
+    source_hits, _missing = required_sources_checklist_hit(required_list, report_items)
 
     if scoring_enabled:
         try:
@@ -2157,17 +2462,17 @@ def main() -> int:
 
     # Lane split
     lanes = {"肿瘤检测": [], "感染检测": [], "生殖与遗传检测": [], "其他": []}
-    for i in top:
+    for i in report_items:
         lanes.setdefault(i.lane, []).append(i)
 
     # Platform radar
     platforms: dict[str, int] = {}
-    for i in top:
+    for i in report_items:
         platforms[i.platform] = platforms.get(i.platform, 0) + 1
 
     # Region heat
     regions = {"北美": 0, "欧洲": 0, "亚太": 0, "中国": 0}
-    for i in top:
+    for i in report_items:
         regions[i.region] = regions.get(i.region, 0) + 1
 
     # First line is used as the preview title line in dry-run and appears at the top of email body.
@@ -2181,7 +2486,7 @@ def main() -> int:
     print()
 
     print("A. 今日要点（8-15条，按重要性排序）")
-    if not top:
+    if not report_items:
         print("1) [7天补充] 今日未抓取到足够的可用条目（RSS源空/网络异常/关键词过滤过严）。")
         print("摘要：建议检查 GitHub Actions 日志与源站可访问性，并补充中国/亚太官方源抓取。")
         print(f"发布日期：{date_str}（北京时间）")
@@ -2191,7 +2496,7 @@ def main() -> int:
         print("平台：跨平台/未标注")
         print()
     else:
-        for idx, i in enumerate(top, 1):
+        for idx, i in enumerate(report_items, 1):
             pub_local = i.published.astimezone(ZoneInfo(tz_name)).strftime("%Y-%m-%d %H:%M %Z")
             print(f"{idx}) [{i.window_tag}] {i.title}")
             print(f"{i.summary_cn}")
@@ -2273,20 +2578,101 @@ def main() -> int:
         "增强中国监管/NMPA 数据源结构化抓取（公告/技术审评/UDI），提升一手命中率。",
         "针对重点企业合作/投融资新闻，补充交易条款/估值/产品管线关键信息。",
     ]
+    if use_enhanced:
+        frontier_sorted = sorted(
+            [i for i in top if i.track == "frontier"],
+            key=lambda x: (
+                int(getattr(x, "relevance_level", 0) or 0),
+                float(getattr(x, "quality_score", 0.0) or 0.0),
+                x.published,
+            ),
+            reverse=True,
+        )
+        frontier_quota = frontier_quota_target if frontier_quota_target > 0 else int(
+            (RUNTIME_CONTENT.get("frontier_quota", {}) or {}).get("max_items_per_day", 3) or 3
+        )
+        frontier_quota = max(0, min(frontier_quota, 20))
+        if frontier_sorted and frontier_quota > 0:
+            radar = []
+            for i in frontier_sorted[:frontier_quota]:
+                radar.append(
+                    f"frontier雷达：L{i.relevance_level} | {i.event_type} | {i.title[:80]}"
+                )
+            gaps_pool = radar + gaps_pool
+        else:
+            reason_txt = "；".join(frontier_shortage_reasons[:3]) if frontier_shortage_reasons else "frontier信号不足"
+            gaps_pool = [f"frontier雷达：今日未命中高价值前沿条目（原因：{reason_txt}）"] + gaps_pool
+        if frontier_quota_used < frontier_quota:
+            gaps_pool = [f"frontier配额占用：{frontier_quota_used}/{frontier_quota}（不足原因：{'；'.join(frontier_shortage_reasons[:3]) if frontier_shortage_reasons else 'frontier信号不足'}）"] + gaps_pool
+    if routing_gaps:
+        gaps_pool = [f"分流规则缺口：{routing_gaps[0]}"] + gaps_pool
     for idx in range(gaps_max):
         txt = gaps_pool[idx] if idx < len(gaps_pool) else "补充：建议根据当日缺口与目标区域/赛道，添加专门跟踪项。"
         print(f"{idx+1}) {txt}")
     print()
 
+    core_n = len([i for i in top if i.track == "core"])
+    frontier_n = len([i for i in top if i.track == "frontier"])
+    a_core_high_n = len(a_pool)
+    f_frontier_n = len(f_pool)
+    dedupe_metrics = _dedupe_metrics_summary(
+        dedupe_enabled=bool((RUNTIME_CONTENT.get("dedupe_cluster", {}) or {}).get("enabled", False)),
+        items_before=items_before_cluster_count,
+        items_after=items_after_cluster_count,
+        items=report_items,
+        cluster_explain=cluster_explain if isinstance(cluster_explain, dict) else {},
+        topn=5,
+    )
+    filtered_top, borderline_count, borderline_top = _relevance_reason_stats(items, report_items, topn=3)
     print("G. 质量指标 (Quality Audit)")
     print(
         f"24H条目数 / 7D补充数：{n24} / {n7} | "
         f"亚太占比：{apac_share:.0%} | "
         f"商业与监管事件比：{commercial}:{regulatory} | "
         f"必查信源命中清单：{source_hits} | "
+        f"core/frontier覆盖：{core_n}/{frontier_n}（A候选:{a_core_high_n}, F候选:{f_frontier_n}） | "
+        f"F配额占用：{frontier_quota_used}/{frontier_quota_target or int((RUNTIME_CONTENT.get('frontier_quota', {}) or {}).get('max_items_per_day', 3) or 3)} | "
         f"重复率(昨/7日峰值)：{yday_dup:.0%}/{max_7d_dup:.0%} | "
         f"rules_profile={runtime_rules.get('active_profile', 'legacy')}"
     )
+    print(
+        f"filtered_reason_top3：{'; '.join(filtered_top) if filtered_top else '无'} | "
+        f"borderline_count(level=1~2)：{borderline_count} | "
+        f"borderline_reason_top3：{'; '.join(borderline_top) if borderline_top else '无'}"
+    )
+    print(
+        f"dedupe_cluster_enabled：{dedupe_metrics.get('dedupe_cluster_enabled', False)} | "
+        f"items_before_dedupe：{dedupe_metrics.get('items_before_dedupe', 0)} | "
+        f"items_after_dedupe：{dedupe_metrics.get('items_after_dedupe', 0)} | "
+        f"clusters_total：{dedupe_metrics.get('clusters_total', 0)} | "
+        f"reduction_ratio：{float(dedupe_metrics.get('reduction_ratio', 0.0) or 0.0):.1%}"
+    )
+    primary_source_dist = dedupe_metrics.get("primary_source_distribution", [])
+    if isinstance(primary_source_dist, list):
+        dist_txt = "; ".join(
+            [f"{str(x.get('source', 'unknown'))}:{int(x.get('count', 0) or 0)}" for x in primary_source_dist[:5]]
+        ) if primary_source_dist else "无"
+        print(f"primary_source_distribution_top5：{dist_txt}")
+    if routing_gaps:
+        print(f"分流规则缺口说明：{'；'.join(routing_gaps[:3])}")
+    if track_contract_warnings:
+        print(f"track/relevance断言修正：{len(track_contract_warnings)} 条（详情见 artifacts）")
+    if dump_relevance_samples > 0:
+        try:
+            print(f"[RELEVANCE_SAMPLES] n={dump_relevance_samples}", file=sys.stderr)
+            for idx, i in enumerate(report_items[: dump_relevance_samples], 1):
+                exp = i.relevance_explain if isinstance(i.relevance_explain, dict) else {}
+                print(
+                    "[RELEVANCE] "
+                    + f"{idx}. track={i.track} level={i.relevance_level} "
+                    + f"reason={exp.get('final_reason', i.relevance_why)} "
+                    + f"anchors={','.join([str(x) for x in exp.get('anchors_hit', [])[:6]])} "
+                    + f"negatives={','.join([str(x) for x in exp.get('negatives_hit', [])[:6]])} "
+                    + f"title={i.title[:100]}",
+                    file=sys.stderr,
+                )
+        except Exception:
+            pass
 
     artifacts_dir = env("DRYRUN_ARTIFACTS_DIR", "")
     if artifacts_dir:
@@ -2375,9 +2761,77 @@ def main() -> int:
             ),
             encoding="utf-8",
         )
+        (p / "track_contract.json").write_text(
+            json.dumps(
+                {
+                    "routing_rules": routing_rules,
+                    "routing_gaps": routing_gaps,
+                    "warnings_count": len(track_contract_warnings),
+                    "warnings": track_contract_warnings[:200],
+                    "coverage": {
+                        "core": core_n,
+                        "frontier": frontier_n,
+                        "a_pool_count": a_core_high_n,
+                        "f_pool_count": f_frontier_n,
+                        "f_quota_used": frontier_quota_used,
+                        "f_quota_target": frontier_quota_target,
+                    },
+                    "frontier_shortage_reasons": frontier_shortage_reasons,
+                    "sample": [
+                        {
+                            "title": i.title,
+                            "track": i.track,
+                            "relevance_level": i.relevance_level,
+                            "relevance_why": i.relevance_why,
+                            "relevance_explain": i.relevance_explain,
+                        }
+                        for i in top[:30]
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            ),
+            encoding="utf-8",
+        )
+        (p / "run_meta.json").write_text(
+            json.dumps(
+                {
+                    "run_id": f"dryrun-{int(time.time())}",
+                    "profile": runtime_rules.get("active_profile", "legacy"),
+                    "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    "dedupe": dedupe_metrics,
+                    "cluster_explain_summary": {
+                        "items_before_count": items_before_cluster_count,
+                        "items_after_count": items_after_cluster_count,
+                        "top_clusters_count": len(top_clusters),
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            ),
+            encoding="utf-8",
+        )
+    _write_progress(
+        "done",
+        total_sources=total_sources,
+        completed_sources=completed_sources,
+        message="dry-run 完成",
+        status="completed",
+        report_items_count=len(report_items),
+    )
 
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    dump_n = 0
+    args = sys.argv[1:]
+    for idx, a in enumerate(args):
+        if a == "--dump-relevance-samples":
+            try:
+                dump_n = int(args[idx + 1])
+            except Exception:
+                dump_n = 5
+    raise SystemExit(main(dump_relevance_samples=max(0, dump_n)))

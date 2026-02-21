@@ -5,6 +5,8 @@ profile: legacy
 defaults:
   enabled: false
   timezone: "Asia/Singapore"
+  collect_window_hours: 24
+  collect_asset_dir: "artifacts/collect"
   schedules:
     # legacy: 默认不启用常驻调度；保留示例但关闭总开关即可不生效
     - id: "digest_daily_0830"

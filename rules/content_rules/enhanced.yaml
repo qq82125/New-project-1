@@ -70,6 +70,119 @@ defaults:
     endpoints: 80
     fiercebiotech: 75
     generic_rss: 50
+  relevance_thresholds:
+    core_min_level_for_A: 3
+    frontier_min_level_for_F: 2
+  output_tracks:
+    enable_track_split: true
+  frontier_quota:
+    max_items_per_day: 5
+  relevance_keywords:
+    anchors_strong:
+      - ivd
+      - diagnostic
+      - diagnostics
+      - assay
+      - test
+      - pcr
+      - ngs
+      - poct
+      - reagent
+      - analyzer
+      - 化学发光
+      - 免疫诊断
+      - 体外诊断
+      - 检测
+    anchors_weak:
+      - ruo
+      - method validation
+      - workflow
+      - single-cell
+      - proteomics
+      - microfluidic
+      - digital pathology
+      - lab automation
+    negatives:
+      - earnings
+      - quarterly revenue
+      - layoff
+      - restructuring
+      - phase 3 drug
+  analysis_cache:
+    enable_analysis_cache: true
+    always_generate: false
+    prompt_version: v2
+    model: local-heuristic-v1
+    model_primary: local-heuristic-v1
+    model_fallback: local-lite-v1
+    model_policy: tiered
+    core_model: primary
+    frontier_model: fallback
+    temperature: 0.2
+    timeout_seconds: 20
+    retries: 1
+    backoff_seconds: 0.5
+    asset_dir: artifacts/analysis
+  coverage_enforcement:
+    a_core_min_items: 8
+    f_frontier_quota: 3
+    require_gap_explain: true
+  anchors_pack:
+    core:
+      - ivd
+      - diagnostic
+      - diagnostics
+      - assay
+      - test
+      - testing
+      - pcr
+      - ddpcr
+      - dpcr
+      - ngs
+      - sequencing
+      - poct
+      - immunoassay
+      - chemiluminescence
+      - elisa
+      - ihc
+      - clia
+      - mass spectrometry
+      - lc-ms
+      - flow cytometry
+      - microfluidic
+      - lab automation
+      - biomarker
+      - laboratory
+    frontier:
+      - single-cell
+      - multi-omics
+      - proteomics
+      - metabolomics
+      - spatial
+      - digital pathology
+      - foundation model
+      - ai pathology
+      - digital immunoassay
+      - simoa
+      - single molecule
+      - lab-on-a-chip
+  negatives_pack:
+    - earnings
+    - quarterly revenue
+    - layoff
+    - restructuring
+    - phase 3 drug
+    - therapy only
+    - vaccine only
+  track_routing:
+    A:
+      track: core
+      min_relevance_level: 3
+    F:
+      track: frontier
+      min_relevance_level: 2
+    G:
+      include_track_coverage: true
   # Weak URL/path hints for platform tagging when title/summary keywords miss.
   # Note: this only affects tagging/explain, not candidate selection.
   platform_url_hints:
@@ -94,10 +207,8 @@ defaults:
       - published_at_earliest
     max_other_sources: 5
   coverage_tracks:
-    - 肿瘤检测
-    - 感染检测
-    - 生殖与遗传检测
-    - 其他
+    - core
+    - frontier
   region_filter:
     apac_min_share: 0.40
     china_min_share: 0.20

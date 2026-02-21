@@ -37,10 +37,6 @@ else:
 '
 }
 
-if [ ! -f "$ENV_FILE" ]; then
-  echo "Missing $ENV_FILE" >&2
-  exit 1
-fi
 if [ ! -f "$BODY_FILE" ]; then
   echo "Body file not found: $BODY_FILE" >&2
   exit 1
@@ -48,8 +44,28 @@ fi
 
 mkdir -p "$LOG_DIR"
 
-# shellcheck disable=SC1090
-source "$ENV_FILE"
+# In container/always-on mode, SMTP vars may come from process env directly.
+# Keep backward compatibility: load .mail.env when present, otherwise fall back to current env.
+if [ -f "$ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+fi
+
+missing=()
+[ -n "${SMTP_HOST:-}" ] || missing+=("SMTP_HOST")
+[ -n "${SMTP_PORT:-}" ] || missing+=("SMTP_PORT")
+[ -n "${SMTP_USER:-}" ] || missing+=("SMTP_USER")
+[ -n "${SMTP_PASS:-}" ] || missing+=("SMTP_PASS")
+[ -n "${SMTP_FROM:-}" ] || missing+=("SMTP_FROM")
+
+if [ "${#missing[@]}" -gt 0 ]; then
+  if [ -f "$ENV_FILE" ]; then
+    echo "Missing SMTP envs: ${missing[*]} (checked env + $ENV_FILE)" >&2
+  else
+    echo "Missing SMTP envs: ${missing[*]} (and $ENV_FILE not found)" >&2
+  fi
+  exit 1
+fi
 
 TMP_EML="$(mktemp)"
 trap 'rm -f "$TMP_EML"' EXIT

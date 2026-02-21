@@ -509,6 +509,30 @@ class RuleEngine:
                 "ranking": {},
             },
             "source_priority": deepcopy(defaults.get("source_priority", {})),
+            "relevance_thresholds": deepcopy(
+                defaults.get(
+                    "relevance_thresholds",
+                    {"core_min_level_for_A": 3, "frontier_min_level_for_F": 2},
+                )
+            ),
+            "frontier_quota": deepcopy(
+                defaults.get(
+                    "frontier_quota",
+                    {"max_items_per_day": 3},
+                )
+            ),
+            "coverage_enforcement": deepcopy(
+                defaults.get(
+                    "coverage_enforcement",
+                    {
+                        "a_core_min_items": 8,
+                        "f_frontier_quota": 3,
+                        "require_gap_explain": True,
+                    },
+                )
+            ),
+            "anchors_pack": deepcopy(defaults.get("anchors_pack", {})),
+            "negatives_pack": deepcopy(defaults.get("negatives_pack", [])),
             # Optional: URL path hints for platform tagging (weak signal).
             # Must not affect inclusion/selection, only tagging/explain downstream.
             "platform_url_hints": deepcopy(defaults.get("platform_url_hints", {})),
@@ -533,6 +557,7 @@ class RuleEngine:
                 )
             ),
             "content_sources": deepcopy(defaults.get("content_sources", {})),
+            "track_routing": deepcopy(defaults.get("track_routing", {})),
         }
 
     def _normalize_content_keywords(self, content_decision: dict[str, Any]) -> None:
@@ -699,6 +724,20 @@ class RuleEngine:
                 return [("confidence.ranking", params)]
             if rule_type == "region_filter":
                 return [("region_filter", params)]
+            if rule_type == "relevance_thresholds":
+                return [("relevance_thresholds", params)]
+            if rule_type == "frontier_quota":
+                return [("frontier_quota", params)]
+            if rule_type == "coverage_enforcement":
+                return [("coverage_enforcement", params)]
+            if rule_type == "anchors_pack":
+                return [("anchors_pack", params)]
+            if rule_type == "negatives_pack":
+                if isinstance(params, dict):
+                    return [("negatives_pack", _as_list(params.get("terms")))]
+                return [("negatives_pack", _as_list(params))]
+            if rule_type == "track_routing":
+                return [("track_routing", params)]
 
         if ruleset == "email_rules":
             if rule_type == "subject_template":

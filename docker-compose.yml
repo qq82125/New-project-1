@@ -28,9 +28,9 @@ services:
       ADMIN_API_HOST: "0.0.0.0"
       ADMIN_API_PORT: "8789"
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://ivd:ivd_dev_only_change_me@db:5432/ivd}
-      DATABASE_URL_SECONDARY: ${DATABASE_URL_SECONDARY:-sqlite:///data/rules.db}
-      DB_WRITE_MODE: ${DB_WRITE_MODE:-dual}
-      DB_READ_MODE: ${DB_READ_MODE:-shadow_compare}
+      DATABASE_URL_SECONDARY: ${DATABASE_URL_SECONDARY:-}
+      DB_WRITE_MODE: ${DB_WRITE_MODE:-single}
+      DB_READ_MODE: ${DB_READ_MODE:-primary}
       DB_DUAL_STRICT: ${DB_DUAL_STRICT:-false}
     depends_on:
       db:
@@ -61,9 +61,9 @@ services:
       SCHEDULER_PROFILE: "enhanced"
       SCHEDULER_REFRESH_SECONDS: "60"
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://ivd:ivd_dev_only_change_me@db:5432/ivd}
-      DATABASE_URL_SECONDARY: ${DATABASE_URL_SECONDARY:-sqlite:///data/rules.db}
-      DB_WRITE_MODE: ${DB_WRITE_MODE:-dual}
-      DB_READ_MODE: ${DB_READ_MODE:-shadow_compare}
+      DATABASE_URL_SECONDARY: ${DATABASE_URL_SECONDARY:-}
+      DB_WRITE_MODE: ${DB_WRITE_MODE:-single}
+      DB_READ_MODE: ${DB_READ_MODE:-primary}
       DB_DUAL_STRICT: ${DB_DUAL_STRICT:-false}
     depends_on:
       db:

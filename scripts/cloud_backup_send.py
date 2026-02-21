@@ -6,6 +6,7 @@ import datetime as dt
 import email.utils
 import imaplib
 import sqlite3
+import hashlib
 import os
 from typing import Any
 import smtplib
@@ -33,30 +34,6 @@ def now_in_tz(tz_name: str) -> dt.datetime:
         return dt.datetime.now(ZoneInfo(tz_name))
     except Exception:
         return dt.datetime.utcnow()
-
-
-def ensure_send_attempts_schema(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS send_attempts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL,
-            subject TEXT NOT NULL,
-            to_email TEXT NOT NULL,
-            status TEXT NOT NULL,
-            error TEXT,
-            created_at TEXT NOT NULL,
-            run_id TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_send_attempts_lookup
-            ON send_attempts(date, subject, to_email, created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_send_attempts_created_at
-            ON send_attempts(created_at);
-        """
-    )
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(send_attempts)")}
-    if "run_id" not in cols:
-        conn.execute("ALTER TABLE send_attempts ADD COLUMN run_id TEXT")
 
 
 def parse_int_env(name: str, default: int) -> int:
@@ -101,23 +78,27 @@ def with_send_attempt_db(retention_days: int | None = None) -> sqlite3.Connectio
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    ensure_send_attempts_schema(conn)
     if retention_days is not None:
         prune_send_attempts(conn, retention_days)
         conn.commit()
     return conn
 
 
-def get_send_attempt_success(conn: sqlite3.Connection, date_str: str, subject: str, to_email: str) -> dict[str, Any] | None:
+def build_send_key(date_str: str, subject: str, to_email: str) -> str:
+    payload = f"{date_str}|{subject.strip()}|{to_email.strip().lower()}"
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+def get_send_attempt_success(conn: sqlite3.Connection, send_key: str) -> dict[str, Any] | None:
     row = conn.execute(
         """
         SELECT *
         FROM send_attempts
-        WHERE date = ? AND subject = ? AND to_email = ? AND UPPER(status) = 'SUCCESS'
+        WHERE send_key = ? AND UPPER(status) = 'SUCCESS'
         ORDER BY created_at DESC, id DESC
         LIMIT 1
         """,
-        (date_str, subject, to_email),
+        (send_key,),
     ).fetchone()
     if row is None:
         return None
@@ -132,6 +113,7 @@ def get_send_attempt_success(conn: sqlite3.Connection, date_str: str, subject: s
 
 def record_send_attempt(
     conn: sqlite3.Connection,
+    send_key: str,
     date_str: str,
     subject: str,
     to_email: str,
@@ -141,10 +123,15 @@ def record_send_attempt(
 ) -> None:
     conn.execute(
         """
-        INSERT INTO send_attempts(date, subject, to_email, status, error, created_at, run_id)
-        VALUES(?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO send_attempts(send_key, date, subject, to_email, status, error, created_at, run_id)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(send_key) DO UPDATE SET
+          status=excluded.status,
+          error=excluded.error,
+          created_at=excluded.created_at,
+          run_id=excluded.run_id
         """,
-        (date_str, subject, to_email, status, error, iso_utc_now(), run_id),
+        (send_key, date_str, subject, to_email, status, error, iso_utc_now(), run_id),
     )
 
 
@@ -340,6 +327,7 @@ def main(argv: list[str] | None = None) -> int:
     subject_final = subject_initial
     if runtime_rules.get("enabled"):
         subject_final = runtime_rules.get("email", {}).get("subject", subject_final)
+    send_key = build_send_key(date_str, subject_final, to_email)
 
     # Diagnostic report is always produced (success/failure) to make Actions debuggable.
     reports_dir = ensure_reports_dir()
@@ -354,6 +342,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"report_tz: {tz_name}",
                 f"subject_initial: {subject_initial}",
                 f"subject_final: {subject_final}",
+                f"send_key: {send_key}",
                 f"dry_run: {bool(args.dry_run)}",
                 f"commit_sha: {get_env('GITHUB_SHA','') or get_env('COMMIT_SHA','')}",
                 "",
@@ -404,7 +393,7 @@ def main(argv: list[str] | None = None) -> int:
     local_send_attempt = None
     try:
         with with_send_attempt_db(retention_days) as db:
-            local_send_attempt = get_send_attempt_success(db, date_str, subject_final, to_email)
+            local_send_attempt = get_send_attempt_success(db, send_key)
     except Exception as e:
         write_report(
             diag_path,
@@ -413,6 +402,7 @@ def main(argv: list[str] | None = None) -> int:
                 [
                     "status=FAIL",
                     "scope=local_idempotent_check",
+                    "hint=run 'alembic upgrade head' to ensure send_attempts table exists",
                 ]
             )
             + "\n",
@@ -546,7 +536,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         with with_send_attempt_db(retention_days) as db:
-            record_send_attempt(db, date_str, subject_final, to_email, "STARTED", run_id)
+            record_send_attempt(db, send_key, date_str, subject_final, to_email, "STARTED", run_id)
             db.commit()
         write_report(
             diag_path,
@@ -578,12 +568,12 @@ def main(argv: list[str] | None = None) -> int:
                     """
                     UPDATE send_attempts
                     SET status='SUCCESS', error=NULL, created_at = ?, run_id = ?
-                    WHERE date = ? AND subject = ? AND to_email = ? AND status = 'STARTED'
+                    WHERE send_key = ? AND status = 'STARTED'
                     """,
-                    (iso_utc_now(), run_id, date_str, subject_final, to_email),
+                    (iso_utc_now(), run_id, send_key),
                 )
                 if db.total_changes == 0:
-                    record_send_attempt(db, date_str, subject_final, to_email, "SUCCESS", run_id)
+                    record_send_attempt(db, send_key, date_str, subject_final, to_email, "SUCCESS", run_id)
                 db.commit()
             write_report(
                 diag_path,
@@ -611,12 +601,12 @@ def main(argv: list[str] | None = None) -> int:
                     """
                     UPDATE send_attempts
                     SET status='FAILED', error=?, created_at = ?, run_id = ?
-                    WHERE date = ? AND subject = ? AND to_email = ? AND status = 'STARTED'
+                    WHERE send_key = ? AND status = 'STARTED'
                     """,
-                    (str(err), iso_utc_now(), run_id, date_str, subject_final, to_email),
+                    (str(err), iso_utc_now(), run_id, send_key),
                 )
                 if db.total_changes == 0:
-                    record_send_attempt(db, date_str, subject_final, to_email, "FAILED", run_id, err)
+                    record_send_attempt(db, send_key, date_str, subject_final, to_email, "FAILED", run_id, err)
                 db.commit()
             write_report(
                 diag_path,

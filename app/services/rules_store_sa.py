@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, Type, Union
@@ -45,6 +47,22 @@ REQUIRED_TABLES = (
     "scheduler_rules_versions",
     "rules_drafts",
     "sources",
+    "dual_write_failures",
+    "db_compare_log",
+    "run_executions",
+    "source_fetch_events",
+    "report_artifacts",
+    "send_attempts",
+    "dedupe_keys",
+)
+
+SEQUENCE_SYNC_TABLES = (
+    "email_rules_versions",
+    "content_rules_versions",
+    "qc_rules_versions",
+    "output_rules_versions",
+    "scheduler_rules_versions",
+    "rules_drafts",
 )
 
 
@@ -95,6 +113,12 @@ class SQLAlchemyRulesStore:
         self.write_mode = (write_mode or settings.db_write_mode or "single").strip().lower()
         self.read_mode = (read_mode or settings.db_read_mode or "primary").strip().lower()
         self.dual_strict = str(os.environ.get("DB_DUAL_STRICT", "false")).strip().lower() in {"1", "true", "yes", "on"}
+        try:
+            self.shadow_compare_rate = max(
+                0.0, min(1.0, float(os.environ.get("DB_SHADOW_COMPARE_RATE", "0.02").strip() or "0.02"))
+            )
+        except Exception:
+            self.shadow_compare_rate = 0.02
         self._logger = logging.getLogger("rules_store_sa")
         self._secondary_store: Optional["SQLAlchemyRulesStore"] = None
         sec = (secondary_url or settings.database_url_secondary or "").strip()
@@ -128,7 +152,15 @@ class SQLAlchemyRulesStore:
         cfg = Config(str(alembic_ini))
         cfg.set_main_option("script_location", str(script_location))
         cfg.set_main_option("sqlalchemy.url", self.database_url)
-        command.upgrade(cfg, "head")
+        prev = os.environ.get("DATABASE_URL")
+        try:
+            os.environ["DATABASE_URL"] = self.database_url
+            command.upgrade(cfg, "head")
+        finally:
+            if prev is None:
+                os.environ.pop("DATABASE_URL", None)
+            else:
+                os.environ["DATABASE_URL"] = prev
 
     def ensure_schema(self) -> None:
         with self.engine.connect() as conn:
@@ -147,8 +179,26 @@ class SQLAlchemyRulesStore:
                     "Database schema is not ready; run `alembic upgrade head` "
                     f"(url={redact_database_url(self.database_url)}): {e}"
                 ) from e
+        self._sync_postgres_sequences()
         if self._secondary_store is not None:
             self._secondary_store.ensure_schema()
+
+    def _sync_postgres_sequences(self) -> None:
+        # Safety net after migration/import: keep SERIAL/BIGSERIAL aligned with max(id)
+        # to avoid duplicate key on subsequent inserts.
+        if not self.database_url.lower().startswith("postgresql"):
+            return
+        with self.engine.begin() as conn:
+            for table in SEQUENCE_SYNC_TABLES:
+                conn.exec_driver_sql(
+                    f"""
+                    SELECT setval(
+                      pg_get_serial_sequence('{table}', 'id'),
+                      COALESCE((SELECT MAX(id) FROM {table}), 1),
+                      true
+                    )
+                    """
+                )
 
     def observability_info(self) -> dict[str, str]:
         backend = "postgresql" if self.database_url.lower().startswith("postgresql") else "sqlite"
@@ -164,8 +214,14 @@ class SQLAlchemyRulesStore:
         except Exception:
             return repr(value)
 
-    def _shadow_compare(self, name: str, primary: Any, secondary: Any) -> None:
+    def _params_hash(self, params: Any) -> str:
+        txt = self._canonical(params)
+        return hashlib.sha256(txt.encode("utf-8")).hexdigest()
+
+    def _shadow_compare(self, name: str, primary: Any, secondary: Any, *, params: Any | None = None) -> None:
         if self.read_mode != "shadow_compare" or self._secondary_store is None:
+            return
+        if random.random() > self.shadow_compare_rate:
             return
         if self._canonical(primary) != self._canonical(secondary):
             self._logger.warning(
@@ -174,6 +230,21 @@ class SQLAlchemyRulesStore:
                 self._canonical(primary)[:500],
                 self._canonical(secondary)[:500],
             )
+            try:
+                self.rules_repo.insert_compare_log(
+                    query_name=name,
+                    params_hash=self._params_hash(params or {}),
+                    diff_summary=json.dumps(
+                        {
+                            "primary": self._canonical(primary)[:500],
+                            "secondary": self._canonical(secondary)[:500],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    created_at=_utc_now(),
+                )
+            except Exception as e:
+                self._logger.error("failed to persist shadow diff log name=%s error=%s", name, e)
 
     def _dual_write(self, method: str, *args: Any, **kwargs: Any) -> None:
         if self.write_mode != "dual" or self._secondary_store is None:
@@ -183,6 +254,15 @@ class SQLAlchemyRulesStore:
             fn(*args, **kwargs)
         except Exception as e:
             self._logger.error("DB dual-write failed method=%s error=%s", method, e)
+            try:
+                self.rules_repo.insert_dual_write_failure(
+                    op_name=method,
+                    payload_json={"args": list(args), "kwargs": dict(kwargs)},
+                    error=str(e),
+                    created_at=_utc_now(),
+                )
+            except Exception as ee:
+                self._logger.error("failed to persist dual write failure method=%s error=%s", method, ee)
             if self.dual_strict:
                 raise
 
@@ -221,7 +301,12 @@ class SQLAlchemyRulesStore:
         model = self._table_model(ruleset)
         out = self.rules_repo.has_any_versions(model)
         if self._secondary_store is not None and self.read_mode == "shadow_compare":
-            self._shadow_compare("has_any_versions", out, self._secondary_store.has_any_versions(ruleset))
+            self._shadow_compare(
+                "has_any_versions",
+                out,
+                self._secondary_store.has_any_versions(ruleset),
+                params={"ruleset": ruleset},
+            )
         return out
 
     def get_active_email_rules(self, profile: str) -> dict[str, Any] | None:
@@ -238,7 +323,12 @@ class SQLAlchemyRulesStore:
         row = self.rules_repo.get_active(model, profile)
         out = self._decode_config_row(row)
         if self._secondary_store is not None and self.read_mode == "shadow_compare":
-            self._shadow_compare("get_active_rules", out, self._secondary_store.get_active_rules(ruleset, profile))
+            self._shadow_compare(
+                "get_active_rules",
+                out,
+                self._secondary_store.get_active_rules(ruleset, profile),
+                params={"ruleset": ruleset, "profile": profile},
+            )
         return out
 
     def list_versions(
@@ -267,6 +357,7 @@ class SQLAlchemyRulesStore:
                 "list_versions",
                 out,
                 self._secondary_store.list_versions(ruleset, profile=profile, active_only=active_only),
+                params={"ruleset": ruleset, "profile": profile or "", "active_only": bool(active_only)},
             )
         return out
 
@@ -278,6 +369,7 @@ class SQLAlchemyRulesStore:
                 "get_version_config",
                 out,
                 self._secondary_store.get_version_config(ruleset, profile, version),
+                params={"ruleset": ruleset, "profile": profile, "version": version},
             )
         return out
 
@@ -356,13 +448,23 @@ class SQLAlchemyRulesStore:
     def list_sources(self, *, enabled_only: bool = False) -> list[dict[str, Any]]:
         out = self.sources_repo.list(enabled_only=enabled_only)
         if self._secondary_store is not None and self.read_mode == "shadow_compare":
-            self._shadow_compare("list_sources", out, self._secondary_store.list_sources(enabled_only=enabled_only))
+            self._shadow_compare(
+                "list_sources",
+                out,
+                self._secondary_store.list_sources(enabled_only=enabled_only),
+                params={"enabled_only": bool(enabled_only)},
+            )
         return out
 
     def get_source(self, source_id: str) -> dict[str, Any] | None:
         out = self.sources_repo.get(source_id)
         if self._secondary_store is not None and self.read_mode == "shadow_compare":
-            self._shadow_compare("get_source", out, self._secondary_store.get_source(source_id))
+            self._shadow_compare(
+                "get_source",
+                out,
+                self._secondary_store.get_source(source_id),
+                params={"source_id": source_id},
+            )
         return out
 
     def source_url_exists(self, url: str, *, exclude_id: str | None = None) -> bool:
@@ -372,6 +474,7 @@ class SQLAlchemyRulesStore:
                 "source_url_exists",
                 out,
                 self._secondary_store.source_url_exists(url, exclude_id=exclude_id),
+                params={"url": url, "exclude_id": exclude_id or ""},
             )
         return out
 
@@ -536,8 +639,206 @@ class SQLAlchemyRulesStore:
                 "get_draft",
                 out,
                 self._secondary_store.get_draft(ruleset=ruleset, profile=profile, draft_id=draft_id),
+                params={"ruleset": ruleset, "profile": profile, "draft_id": draft_id},
             )
         return out
 
     def list_send_attempts(self, limit: int = 30) -> list[dict[str, Any]]:
         return self.rules_repo.list_send_attempts(limit)
+
+    def upsert_send_attempt(
+        self,
+        *,
+        send_key: str,
+        date: str,
+        subject: str,
+        to_email: str,
+        status: str,
+        error: str | None = None,
+        created_at: str,
+        run_id: str | None = None,
+    ) -> int:
+        rid = self.rules_repo.upsert_send_attempt(
+            send_key=send_key,
+            date=date,
+            subject=subject,
+            to_email=to_email,
+            status=status,
+            error=error,
+            created_at=created_at,
+            run_id=run_id,
+        )
+        self._dual_write(
+            "upsert_send_attempt",
+            send_key=send_key,
+            date=date,
+            subject=subject,
+            to_email=to_email,
+            status=status,
+            error=error,
+            created_at=created_at,
+            run_id=run_id,
+        )
+        return rid
+
+    def get_send_attempt_success_by_key(self, send_key: str) -> dict[str, Any] | None:
+        return self.rules_repo.get_send_attempt_success_by_key(send_key)
+
+    def replay_dual_write_failures(self, *, limit: int = 100) -> dict[str, Any]:
+        if self._secondary_store is None:
+            return {"ok": True, "replayed": 0, "succeeded": 0, "failed": 0, "remaining": self.rules_repo.count_dual_write_failures()}
+        rows = self.rules_repo.list_dual_write_failures(limit=limit)
+        succeeded = 0
+        failed = 0
+        for row in rows:
+            payload = row.payload_json if isinstance(row.payload_json, dict) else {}
+            args = payload.get("args", [])
+            kwargs = payload.get("kwargs", {})
+            try:
+                fn = getattr(self._secondary_store, str(row.op_name))
+                fn(*args, **kwargs)
+                self.rules_repo.delete_dual_write_failure(int(row.id))
+                succeeded += 1
+            except Exception:
+                failed += 1
+        return {
+            "ok": True,
+            "replayed": len(rows),
+            "succeeded": succeeded,
+            "failed": failed,
+            "remaining": self.rules_repo.count_dual_write_failures(),
+        }
+
+    def db_status(self) -> dict[str, Any]:
+        return {
+            "db_backend": "postgresql" if self.database_url.lower().startswith("postgresql") else "sqlite",
+            "db_url": redact_database_url(self.database_url),
+            "db_write_mode": self.write_mode,
+            "db_read_mode": self.read_mode,
+            "shadow_compare_rate": self.shadow_compare_rate,
+            "dual_write_failures": self.rules_repo.count_dual_write_failures(),
+            "compare_diff_count": self.rules_repo.count_compare_logs(),
+            "last_compare_diff_at": self.rules_repo.latest_compare_log_time(),
+        }
+
+    def upsert_run_execution(
+        self,
+        *,
+        run_id: str,
+        profile: str,
+        triggered_by: str,
+        window: str,
+        status: str,
+        started_at: str,
+        ended_at: str | None = None,
+    ) -> None:
+        self.rules_repo.upsert_run_execution(
+            run_id=run_id,
+            profile=profile,
+            triggered_by=triggered_by,
+            window=window,
+            status=status,
+            started_at=started_at,
+            ended_at=ended_at,
+        )
+        self._dual_write(
+            "upsert_run_execution",
+            run_id=run_id,
+            profile=profile,
+            triggered_by=triggered_by,
+            window=window,
+            status=status,
+            started_at=started_at,
+            ended_at=ended_at,
+        )
+
+    def finish_run_execution(self, *, run_id: str, status: str, ended_at: str) -> None:
+        self.rules_repo.finish_run_execution(run_id=run_id, status=status, ended_at=ended_at)
+        self._dual_write("finish_run_execution", run_id=run_id, status=status, ended_at=ended_at)
+
+    def record_source_fetch_event(
+        self,
+        *,
+        run_id: str,
+        source_id: str,
+        status: str,
+        http_status: int | None = None,
+        items_count: int = 0,
+        error: str | None = None,
+        duration_ms: int = 0,
+    ) -> None:
+        self.rules_repo.insert_source_fetch_event(
+            run_id=run_id,
+            source_id=source_id,
+            status=status,
+            http_status=http_status,
+            items_count=items_count,
+            error=error,
+            duration_ms=duration_ms,
+        )
+        self._dual_write(
+            "record_source_fetch_event",
+            run_id=run_id,
+            source_id=source_id,
+            status=status,
+            http_status=http_status,
+            items_count=items_count,
+            error=error,
+            duration_ms=duration_ms,
+        )
+
+    def source_consecutive_failures(self, source_id: str, *, lookback: int = 20) -> int:
+        out = int(self.rules_repo.source_consecutive_failures(source_id, lookback=lookback))
+        if self._secondary_store is not None and self.read_mode == "shadow_compare":
+            self._shadow_compare(
+                "source_consecutive_failures",
+                out,
+                self._secondary_store.source_consecutive_failures(source_id, lookback=lookback),
+                params={"source_id": source_id, "lookback": int(lookback)},
+            )
+        return out
+
+    def record_report_artifact(
+        self,
+        *,
+        run_id: str,
+        artifact_path: str,
+        artifact_type: str,
+        sha256: str,
+        created_at: str,
+    ) -> None:
+        self.rules_repo.insert_report_artifact(
+            run_id=run_id,
+            artifact_path=artifact_path,
+            artifact_type=artifact_type,
+            sha256=sha256,
+            created_at=created_at,
+        )
+        self._dual_write(
+            "record_report_artifact",
+            run_id=run_id,
+            artifact_path=artifact_path,
+            artifact_type=artifact_type,
+            sha256=sha256,
+            created_at=created_at,
+        )
+
+    def recent_run_executions(self, limit: int = 20) -> list[dict[str, Any]]:
+        return self.rules_repo.recent_run_executions(limit=limit)
+
+    def source_fail_top(self, limit: int = 10) -> list[dict[str, Any]]:
+        return self.rules_repo.source_fail_top(limit=limit)
+
+    def insert_dedupe_key(self, *, dedupe_key: str, run_id: str | None, created_at: str) -> bool:
+        inserted = self.rules_repo.insert_dedupe_key(
+            dedupe_key=dedupe_key,
+            run_id=run_id,
+            created_at=created_at,
+        )
+        self._dual_write(
+            "insert_dedupe_key",
+            dedupe_key=dedupe_key,
+            run_id=run_id,
+            created_at=created_at,
+        )
+        return inserted

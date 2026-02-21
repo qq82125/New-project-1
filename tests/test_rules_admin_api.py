@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import shutil
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -194,12 +195,17 @@ class RulesAdminApiTests(unittest.TestCase):
         self._td.cleanup()
 
     def _seed_send_attempts(self) -> str:
+        def _send_key(date_str: str, subject: str, to_email: str) -> str:
+            payload = f"{date_str}|{subject.strip()}|{to_email.strip().lower()}"
+            return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
         db_path = self.root / "data" / "rules.db"
         with sqlite3.connect(db_path) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS send_attempts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    send_key TEXT NOT NULL,
                     date TEXT NOT NULL,
                     subject TEXT NOT NULL,
                     to_email TEXT NOT NULL,
@@ -214,13 +220,17 @@ class RulesAdminApiTests(unittest.TestCase):
             now = datetime.now(ZoneInfo("Asia/Shanghai"))
             today = now.date().isoformat()
             yesterday = (now - timedelta(days=1)).date().isoformat()
+            today_subject = "全球IVD晨报 - test"
+            old_subject = "全球IVD晨报 - old"
+            to_email = "qq82125@gmail.com"
             conn.execute(
-                "INSERT INTO send_attempts(date, subject, to_email, status, error, created_at, run_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO send_attempts(send_key, date, subject, to_email, status, error, created_at, run_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
+                    _send_key(today, today_subject, to_email) + "-fail",
                     today,
-                    "全球IVD晨报 - test",
-                    "qq82125@gmail.com",
+                    today_subject,
+                    to_email,
                     "FAILED",
                     "smtp 失败",
                     now.replace(second=0, microsecond=0).isoformat(),
@@ -228,12 +238,13 @@ class RulesAdminApiTests(unittest.TestCase):
                 ),
             )
             conn.execute(
-                "INSERT INTO send_attempts(date, subject, to_email, status, error, created_at, run_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO send_attempts(send_key, date, subject, to_email, status, error, created_at, run_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
+                    _send_key(today, today_subject, to_email),
                     today,
-                    "全球IVD晨报 - test",
-                    "qq82125@gmail.com",
+                    today_subject,
+                    to_email,
                     "SUCCESS",
                     "",
                     now.replace(second=0, microsecond=0).isoformat() + "+08:00",
@@ -241,12 +252,13 @@ class RulesAdminApiTests(unittest.TestCase):
                 ),
             )
             conn.execute(
-                "INSERT INTO send_attempts(date, subject, to_email, status, error, created_at, run_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO send_attempts(send_key, date, subject, to_email, status, error, created_at, run_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
+                    _send_key(yesterday, old_subject, to_email),
                     yesterday,
-                    "全球IVD晨报 - old",
-                    "qq82125@gmail.com",
+                    old_subject,
+                    to_email,
                     "FAILED",
                     "旧失败",
                     (now - timedelta(days=1)).isoformat(),
@@ -447,6 +459,9 @@ class RulesAdminApiTests(unittest.TestCase):
         self.assertIn("run_id", body["runs"][0])
         self.assertGreaterEqual(body["count"], 3)
         self.assertIn("scheduler", body)
+        self.assertIsInstance(body.get("source_fail_top"), list)
+        self.assertGreaterEqual(len(body.get("source_fail_top", [])), 1)
+        self.assertEqual(body["source_fail_top"][0]["source_id"], "mail_send")
 
 
 if __name__ == "__main__":

@@ -104,3 +104,117 @@ class Source(Base):
     __table_args__ = (
         Index("idx_sources_enabled_priority", "enabled", "priority"),
     )
+
+
+class DualWriteFailure(Base):
+    __tablename__ = "dual_write_failures"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    op_name: Mapped[str] = mapped_column(String, nullable=False)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONText(), nullable=False, default=dict)
+    error: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    __table_args__ = (
+        Index("idx_dual_write_failures_created_at", "created_at", "id"),
+    )
+
+
+class DBCompareLog(Base):
+    __tablename__ = "db_compare_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    query_name: Mapped[str] = mapped_column(String, nullable=False)
+    params_hash: Mapped[str] = mapped_column(String, nullable=False)
+    diff_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    __table_args__ = (
+        Index("idx_db_compare_log_created_at", "created_at", "id"),
+        Index("idx_db_compare_log_query", "query_name", "created_at"),
+    )
+
+
+class RunExecution(Base):
+    __tablename__ = "run_executions"
+
+    run_id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_key: Mapped[str] = mapped_column(String, nullable=False)
+    profile: Mapped[str] = mapped_column(String, nullable=False)
+    triggered_by: Mapped[str] = mapped_column(String, nullable=False)
+    window: Mapped[str] = mapped_column(String, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    started_at: Mapped[str] = mapped_column(String, nullable=False)
+    ended_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("run_key", name="uq_run_executions_run_key"),
+        Index("idx_run_executions_started_at", "started_at", "run_id"),
+        Index("idx_run_executions_status", "status", "started_at"),
+    )
+
+
+class SourceFetchEvent(Base):
+    __tablename__ = "source_fetch_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String, nullable=False)
+    source_id: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    http_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    items_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        Index("idx_source_fetch_events_run", "run_id", "id"),
+        Index("idx_source_fetch_events_source_status", "source_id", "status", "id"),
+    )
+
+
+class ReportArtifact(Base):
+    __tablename__ = "report_artifacts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String, nullable=False)
+    artifact_path: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_type: Mapped[str] = mapped_column(String, nullable=False)
+    sha256: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    __table_args__ = (
+        Index("idx_report_artifacts_run", "run_id", "id"),
+        Index("idx_report_artifacts_type", "artifact_type", "created_at"),
+    )
+
+
+class DedupeKey(Base):
+    __tablename__ = "dedupe_keys"
+
+    dedupe_key: Mapped[str] = mapped_column(String, primary_key=True)
+    run_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="uq_dedupe_keys_dedupe_key"),
+    )
+
+
+class SendAttempt(Base):
+    __tablename__ = "send_attempts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    send_key: Mapped[str] = mapped_column(String, nullable=False)
+    date: Mapped[str] = mapped_column(String, nullable=False)
+    subject: Mapped[str] = mapped_column(String, nullable=False)
+    to_email: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    run_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("send_key", name="uq_send_attempts_send_key"),
+        Index("idx_send_attempts_lookup", "date", "subject", "to_email", "created_at"),
+        Index("idx_send_attempts_created_at", "created_at"),
+    )

@@ -4,6 +4,7 @@ import json
 import os
 import re
 import time
+import html as ihtml
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -95,7 +96,7 @@ def _extract_web_sample_entries(html: str, base_url: str, limit: int = 3) -> lis
     for m in re.finditer(r"<a[^>]+href=['\"]([^'\"]+)['\"][^>]*>(.*?)</a>", html, flags=re.I | re.S):
         href = (m.group(1) or "").strip()
         raw_title = re.sub(r"<[^>]+>", " ", m.group(2) or "")
-        title = re.sub(r"\s+", " ", raw_title).strip()
+        title = _clean_title(raw_title)
         if not href or not title or len(title) < 8:
             continue
         low = href.lower()
@@ -120,6 +121,21 @@ def _extract_web_sample_entries(html: str, base_url: str, limit: int = 3) -> lis
     return out
 
 
+def _clean_title(raw: str, *, max_len: int = 220) -> str:
+    t = str(raw or "")
+    t = ihtml.unescape(t)
+    t = re.sub(r"(?is)<[^>]+>", " ", t)
+    # Strip common JSON/template debris from JS-rendered pages.
+    t = t.replace("\\r", " ").replace("\\n", " ").replace("\\t", " ")
+    t = t.replace('\\"', '"').replace("\\/", "/")
+    t = re.sub(r"(?is)id=\"[^\"]+\"|class=\"[^\"]+\"|data-[a-z0-9_-]+=\"[^\"]*\"", " ", t)
+    t = re.sub(r"(?is)\{\{.*?\}\}|\\{\\{.*?\\}\\}", " ", t)
+    t = re.sub(r"\s+", " ", t).strip(" -|:\"'")
+    if len(t) > max_len:
+        t = t[:max_len].rstrip() + "..."
+    return t
+
+
 def _extract_feed_links_from_html(html: str, page_url: str, same_host_only: bool = True) -> list[dict[str, str]]:
     links: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -141,7 +157,7 @@ def _extract_feed_links_from_html(html: str, page_url: str, same_host_only: bool
         if u in seen:
             return
         seen.add(u)
-        links.append({"url": u, "name": str(title or "").strip()})
+        links.append({"url": u, "name": _clean_title(str(title or "").strip())})
 
     # 1) <link rel="alternate" type="application/rss+xml|atom+xml">
     for tag in re.findall(r"<link[^>]+>", html, flags=re.I | re.S):
@@ -230,8 +246,7 @@ def _generic_html_list_entries(
             lm = re.search(link_regex, block, flags=re.I | re.S)
             if not tm or not lm:
                 continue
-            title = re.sub(r"<[^>]+>", " ", str(tm.group(1) or ""))
-            title = re.sub(r"\s+", " ", title).strip()
+            title = _clean_title(str(tm.group(1) or ""))
             u = str(lm.group(1) or "").strip()
             if not u:
                 continue
@@ -258,8 +273,7 @@ def _generic_html_list_entries(
     for block in blocks:
         for m in re.finditer(r"<a[^>]+href=['\"]([^'\"]+)['\"][^>]*>(.*?)</a>", block, flags=re.I | re.S):
             href = str(m.group(1) or "").strip()
-            title = re.sub(r"<[^>]+>", " ", str(m.group(2) or ""))
-            title = re.sub(r"\s+", " ", title).strip()
+            title = _clean_title(str(m.group(2) or ""))
             if not href or not title or len(title) < 8:
                 continue
             low = href.lower()

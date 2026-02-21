@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from app.rules.decision_boundary import enforce_decision_boundary
 from app.rules.engine import RuleEngine
 from app.rules.errors import RuleEngineError
+from app.core.track_relevance import validate_track_routing_rules
 
 
 def _warn(msg: str) -> None:
@@ -65,6 +66,13 @@ def _adapt_content(decision: dict[str, Any]) -> dict[str, Any]:
                 flat.extend([str(x) for x in v])
         include_kw = flat
 
+    track_routing = deepcopy(content.get("track_routing", {}))
+    # Backward-compatible alias: some historical configs used "routing".
+    if not isinstance(track_routing, dict) or not track_routing:
+        alias = content.get("routing", {})
+        if isinstance(alias, dict):
+            track_routing = deepcopy(alias)
+
     return {
         "sources": sources,
         "min_items": int(item_limit.get("min", 8)),
@@ -83,8 +91,14 @@ def _adapt_content(decision: dict[str, Any]) -> dict[str, Any]:
         "platform_url_hints": deepcopy(content.get("platform_url_hints", {})),
         "event_mapping": deepcopy(categories.get("event_mapping", {})),
         "source_priority": deepcopy(content.get("source_priority", {})),
+        "relevance_thresholds": deepcopy(content.get("relevance_thresholds", {})),
+        "frontier_quota": deepcopy(content.get("frontier_quota", {})),
+        "coverage_enforcement": deepcopy(content.get("coverage_enforcement", {})),
+        "anchors_pack": deepcopy(content.get("anchors_pack", {})),
+        "negatives_pack": deepcopy(content.get("negatives_pack", [])),
         "dedupe_cluster": deepcopy(content.get("dedupe_cluster", {})),
         "content_sources": deepcopy(content.get("content_sources", {})),
+        "track_routing": track_routing,
     }
 
 
@@ -147,6 +161,7 @@ def load_runtime_rules(
     try:
         content_cfg = _adapt_content(decision)
         email_cfg = _adapt_email(decision, date_str=date_str)
+        routing_cfg, routing_gaps = validate_track_routing_rules(content_cfg.get("track_routing", {}))
     except Exception as e:
         _warn(f"profile={active_profile} boundary/adapt failed: {e}")
         if active_profile != "legacy":
@@ -154,6 +169,7 @@ def load_runtime_rules(
                 decision = engine.build_decision(profile="legacy")
                 content_cfg = _adapt_content(decision)
                 email_cfg = _adapt_email(decision, date_str=date_str)
+                routing_cfg, routing_gaps = validate_track_routing_rules(content_cfg.get("track_routing", {}))
                 active_profile = "legacy"
             except Exception as e2:
                 _warn(f"legacy boundary/adapt failed, skip rules sidecar. error={e2}")
@@ -184,6 +200,8 @@ def load_runtime_rules(
         "run_id": str(decision.get("run_id", run_id or "")),
         "rules_version": decision.get("rules_version", {}),
         "content": content_cfg,
+        "track_routing": routing_cfg,
+        "track_routing_gaps": routing_gaps,
         # Pass-through: used for QC metrics / explainability in offline generators.
         "qc": decision.get("qc_decision", {}) if isinstance(decision.get("qc_decision"), dict) else {},
         # Pass-through: used by offline generator for section sizing (trends/gaps etc).

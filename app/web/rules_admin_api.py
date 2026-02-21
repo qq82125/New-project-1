@@ -5,6 +5,8 @@ import re
 import json
 import html
 import time
+import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -350,17 +352,120 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     store = RulesStore(root)
     engine = RuleEngine(project_root=root)
     app = FastAPI(title="Rules Admin API", version="1.0.0")
+    dryrun_jobs: dict[str, dict[str, Any]] = {}
+    dryrun_jobs_lock = threading.Lock()
+
+    def _build_unified_payload(out: dict[str, Any], lite: bool) -> dict[str, Any]:
+        artifacts = out.get("artifacts", {}) if isinstance(out.get("artifacts"), dict) else {}
+
+        def _read_json(path: str) -> Any:
+            try:
+                p = Path(path)
+                if p.exists():
+                    return json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                return None
+            return None
+
+        def _read_text(path: str) -> str:
+            try:
+                p = Path(path)
+                if p.exists():
+                    return p.read_text(encoding="utf-8")
+            except Exception:
+                return ""
+            return ""
+
+        preview_text = _read_text(str(artifacts.get("preview", "")))
+        preview_html = f"<pre>{html.escape(preview_text)}</pre>" if preview_text else ""
+
+        payload: dict[str, Any] = {
+            "ok": True,
+            "run_id": out.get("run_id"),
+            "profile": out.get("profile"),
+            "date": out.get("date"),
+            "items_before": int(out.get("items_before_count") or 0),
+            "items_after": int(out.get("items_after_count") or 0),
+            "items_before_count": int(out.get("items_before_count") or 0),
+            "items_after_count": int(out.get("items_after_count") or 0),
+            "items_count": int(out.get("items_count") or 0),
+            "preview_text": preview_text,
+            "preview_html": preview_html,
+            "qc_report": _read_json(str(artifacts.get("qc_report", ""))) or {},
+            "output_render": _read_json(str(artifacts.get("output_render", ""))) or {},
+            "run_meta": _read_json(str(artifacts.get("run_meta", ""))) or {},
+            "artifacts": artifacts,
+            "quota_usage": out.get("quota_usage", {}) if isinstance(out.get("quota_usage"), dict) else {},
+            "repeat_rate": out.get("repeat_rate", {}) if isinstance(out.get("repeat_rate"), dict) else {},
+            "top_clusters": out.get("top_clusters", []) if isinstance(out.get("top_clusters"), list) else [],
+            "platform_diag": out.get("platform_diag", {}) if isinstance(out.get("platform_diag"), dict) else {},
+            "keyword_pack_stats": out.get("keyword_pack_stats", {}) if isinstance(out.get("keyword_pack_stats"), dict) else {},
+            "exclude_diag": out.get("exclude_diag", {}) if isinstance(out.get("exclude_diag"), dict) else {},
+            "lane_diag": out.get("lane_diag", {}) if isinstance(out.get("lane_diag"), dict) else {},
+            "event_diag": out.get("event_diag", {}) if isinstance(out.get("event_diag"), dict) else {},
+            "track_contract": out.get("track_contract", {}) if isinstance(out.get("track_contract"), dict) else {},
+        }
+        if not lite:
+            payload["clustered_items"] = _read_json(str(artifacts.get("clustered_items", "")))
+            payload["explain"] = _read_json(str(artifacts.get("explain", "")))
+            payload["explain_cluster"] = _read_json(str(artifacts.get("cluster_explain", "")))
+            payload["items"] = _read_json(str(artifacts.get("items", ""))) or []
+        return payload
+
+    def _start_dryrun_job(profile: str, date: str, lite: bool) -> str:
+        job_id = f"dryrun-job-{uuid.uuid4().hex[:10]}"
+        progress_path = root / "artifacts" / "dryrun_jobs" / f"{job_id}.progress.json"
+        progress_path.parent.mkdir(parents=True, exist_ok=True)
+        with dryrun_jobs_lock:
+            dryrun_jobs[job_id] = {
+                "job_id": job_id,
+                "status": "running",
+                "profile": profile,
+                "date": date,
+                "lite": bool(lite),
+                "started_at": time.time(),
+                "progress_path": str(progress_path),
+                "result": None,
+                "error": "",
+            }
+
+        def _runner() -> None:
+            try:
+                out = run_dryrun(
+                    profile=profile,
+                    report_date=(date or None),
+                    lite_mode=bool(lite),
+                    progress_file=str(progress_path),
+                )
+                payload = _build_unified_payload(out, bool(lite))
+                with dryrun_jobs_lock:
+                    rec = dryrun_jobs.get(job_id, {})
+                    rec.update({"status": "completed", "result": payload})
+                    dryrun_jobs[job_id] = rec
+            except Exception as exc:
+                with dryrun_jobs_lock:
+                    rec = dryrun_jobs.get(job_id, {})
+                    rec.update({"status": "failed", "error": str(exc)})
+                    dryrun_jobs[job_id] = rec
+
+        threading.Thread(target=_runner, daemon=True).start()
+        return job_id
 
     @app.get("/healthz")
     def healthz() -> dict[str, Any]:
         # No auth: used by container healthchecks.
         obs = store.observability_info() if hasattr(store, "observability_info") else {}
+        dbs = store.db_status() if hasattr(store, "db_status") else {}
         return {
             "ok": True,
             "service": "admin-api",
             "db_path": str(getattr(store, "db_path", "")),
             "db_url": str(obs.get("db_url", "")),
             "db_backend": str(obs.get("db_backend", "")),
+            "db_write_mode": str(dbs.get("db_write_mode", "")),
+            "db_read_mode": str(dbs.get("db_read_mode", "")),
+            "dual_write_failures": int(dbs.get("dual_write_failures", 0) or 0),
+            "last_compare_diff_at": str(dbs.get("last_compare_diff_at", "")),
             "ts": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -511,10 +616,53 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             )
         return out
 
+    def _run_records_from_ledger(limit: int) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        if not hasattr(store, "recent_run_executions"):
+            return out
+        try:
+            rows = store.recent_run_executions(limit=limit)
+        except Exception:
+            return out
+        for r in rows:
+            started_at = _normalize_time_for_status(str(r.get("started_at") or ""))
+            ended_at = _normalize_time_for_status(str(r.get("ended_at") or ""))
+            status = str(r.get("status") or "").strip().lower() or "unknown"
+            trigger = str(r.get("triggered_by") or "").strip() or "scheduler"
+            out.append(
+                {
+                    "source": "ledger",
+                    "run_id": str(r.get("run_id") or ""),
+                    "time": started_at,
+                    "status": status,
+                    "failed_reason_summary": "",
+                    "subject": "",
+                    "to_email": "",
+                    "date": started_at[:10] if len(started_at) >= 10 else "",
+                    "trigger": trigger,
+                    "schedule_id": str(r.get("window") or ""),
+                    "ended_at": ended_at,
+                }
+            )
+        return out
+
     def _merge_run_records(*, limit: int = 30) -> list[dict[str, Any]]:
+        ledger_records = _run_records_from_ledger(limit)
         send_records = _run_records_from_send_attempts(limit)
         artifact_records = _run_records_from_artifacts(limit)
-        merged: list[dict[str, Any]] = send_records + artifact_records
+        merged: list[dict[str, Any]] = ledger_records + send_records + artifact_records
+        deduped: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for item in merged:
+            key = (
+                str(item.get("run_id") or ""),
+                str(item.get("source") or ""),
+                str(item.get("time") or ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
 
         def _to_sort_key(item: dict[str, Any]) -> tuple[int, str]:
             t = str(item.get("time") or "")
@@ -527,8 +675,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 pass
             return (1 if ts else 0, ts)
 
-        merged.sort(key=_to_sort_key, reverse=True)
-        return merged[:limit]
+        deduped.sort(key=_to_sort_key, reverse=True)
+        return deduped[:limit]
 
     def _is_today(item: dict[str, Any], today: str) -> bool:
         dt_text = str(item.get("date") or "").strip()
@@ -545,10 +693,46 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         except Exception:
             return time_text.startswith(today)
 
+    def _fallback_fail_top_from_runs(rows: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
+        counters: dict[str, int] = {}
+        for r in rows:
+            if str(r.get("status", "")).lower() != "failed":
+                continue
+            msg = str(r.get("failed_reason_summary") or "").lower()
+            source_id = "pipeline_other"
+            if (
+                "send_mail_icloud" in msg
+                or "primary_send_failed" in msg
+                or "smtp" in msg
+                or "rcpt failed" in msg
+            ):
+                source_id = "mail_send"
+            elif "timeout" in msg:
+                source_id = "network_timeout"
+            elif "resolve host" in msg or "dns" in msg:
+                source_id = "network_dns"
+            counters[source_id] = counters.get(source_id, 0) + 1
+        top = [{"source_id": k, "fail_count": v} for k, v in counters.items()]
+        priority = {
+            "mail_send": 100,
+            "network_timeout": 80,
+            "network_dns": 70,
+            "pipeline_other": 10,
+        }
+        top.sort(
+            key=lambda x: (
+                int(x.get("fail_count", 0)),
+                int(priority.get(str(x.get("source_id", "")), 0)),
+                str(x.get("source_id", "")),
+            ),
+            reverse=True,
+        )
+        return top[: max(1, int(limit or 10))]
+
     def _page_shell(title: str, body_html: str, script_js: str = "") -> str:
         nav = """
         <aside class="sidebar">
-          <div class="brand">IVD全球CBO</div>
+          <div class="brand">OminGlean</div>
           <a class="nav" href="/admin/email">邮件规则</a>
           <a class="nav" href="/admin/content">采集规则</a>
           <a class="nav" href="/admin/qc">质控规则</a>
@@ -565,7 +749,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>@@TITLE@@</title>
+  <title>@@DOC_TITLE@@</title>
   <style>
         :root {
           --bg: #0b0f17;
@@ -691,24 +875,35 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     wrap.appendChild(el);
     setTimeout(()=>{ try{ el.remove(); }catch(e){} }, 4000);
   }
-  async function api(path, method='GET', body=null) {
+  async function api(path, method='GET', body=null, timeoutMs=90000) {
     setStatus(`${method} ${path}`);
-    const opts = { method, headers: { 'Content-Type':'application/json' } };
+    const controller = new AbortController();
+    const timer = setTimeout(()=>controller.abort(), Math.max(3000, Number(timeoutMs)||90000));
+    const opts = { method, headers: { 'Content-Type':'application/json' }, signal: controller.signal };
     if (body) opts.body = JSON.stringify(body);
-    const res = await fetch(path, opts);
-    const txt = await res.text();
-    let data = null;
-    try { data = JSON.parse(txt); } catch(e) { data = {ok:false, raw:txt}; }
-    setStatus(`done ${res.status}`);
-    if (!res.ok && data && data.error) return data;
-    return data;
+    try {
+      const res = await fetch(path, opts);
+      const txt = await res.text();
+      let data = null;
+      try { data = JSON.parse(txt); } catch(e) { data = {ok:false, raw:txt}; }
+      setStatus(`done ${res.status}`);
+      if (!res.ok && data && data.error) return data;
+      return data;
+    } catch (e) {
+      const msg = (e && e.name === 'AbortError') ? `请求超时（>${Math.round((Number(timeoutMs)||90000)/1000)}s）` : String(e||'request_failed');
+      setStatus(`done error`);
+      return { ok:false, error: msg };
+    } finally {
+      clearTimeout(timer);
+    }
   }
   @@SCRIPT@@
   </script>
 </body>
 </html>"""
         return (
-            tpl.replace("@@TITLE@@", title)
+            tpl.replace("@@DOC_TITLE@@", "OminGlean")
+            .replace("@@TITLE@@", title)
             .replace("@@NAV@@", nav)
             .replace("@@BODY@@", body_html)
             .replace("@@SCRIPT@@", script_js)
@@ -723,7 +918,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             if isinstance(m, dict):
                 active_ver = str(m.get("version", ""))
         for r in rows:
-            r["active"] = bool(active_ver and str(r.get("version")) == active_ver)
+            is_active_row = bool(r.get("is_active"))
+            by_version = bool(active_ver and str(r.get("version")) == active_ver)
+            r["active"] = bool(is_active_row or by_version)
         return rows
 
     def _config_for_version(ruleset: str, profile: str, version: str) -> dict[str, Any] | None:
@@ -869,6 +1066,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "items_before_count": out.get("items_before_count"),
             "items_after_count": out.get("items_after_count"),
             "items_count": out.get("items_count"),
+            "quota_usage": out.get("quota_usage", {}),
+            "repeat_rate": out.get("repeat_rate", {}),
             "top_clusters": out.get("top_clusters", []),
             "platform_diag": out.get("platform_diag", {}),
             "lane_diag": out.get("lane_diag", {}),
@@ -915,50 +1114,69 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         Unified dry-run: one call returns preview + clustered items + explain payloads.
         Note: dry-run only, no DB write, no email send.
         """
-        out = run_dryrun(profile=profile, report_date=(date or None))
-        artifacts = out.get("artifacts", {}) if isinstance(out.get("artifacts"), dict) else {}
+        try:
+            out = run_dryrun(profile=profile, report_date=(date or None), lite_mode=bool(lite))
+        except Exception as exc:
+            return {
+                "ok": False,
+                "profile": profile,
+                "date": (date or ""),
+                "error": str(exc),
+            }
+        return _build_unified_payload(out, bool(lite))
 
-        def _read_json(path: str) -> Any:
-            try:
-                p = Path(path)
-                if p.exists():
-                    return json.loads(p.read_text(encoding="utf-8"))
-            except Exception:
-                return None
-            return None
+    @app.post("/admin/api/dryrun/start")
+    def unified_dryrun_start(
+        date: str | None = None,
+        profile: str = "enhanced",
+        lite: bool = False,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        job_id = _start_dryrun_job(profile=profile, date=(date or ""), lite=bool(lite))
+        return {"ok": True, "job_id": job_id, "status": "running"}
 
-        def _read_text(path: str) -> str:
-            try:
-                p = Path(path)
-                if p.exists():
-                    return p.read_text(encoding="utf-8")
-            except Exception:
-                return ""
-            return ""
-
-        preview_text = _read_text(str(artifacts.get("preview", "")))
-        preview_html = f"<pre>{html.escape(preview_text)}</pre>" if preview_text else ""
-
-        payload: dict[str, Any] = {
+    @app.get("/admin/api/dryrun/progress")
+    def unified_dryrun_progress(
+        job_id: str,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        with dryrun_jobs_lock:
+            rec = dict(dryrun_jobs.get(job_id) or {})
+        if not rec:
+            return {"ok": False, "error": "job_not_found", "job_id": job_id}
+        progress: dict[str, Any] = {}
+        try:
+            p = Path(str(rec.get("progress_path", "")))
+            if p.exists():
+                progress = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            progress = {}
+        elapsed = max(0.0, time.time() - float(rec.get("started_at") or time.time()))
+        return {
             "ok": True,
-            "run_id": out.get("run_id"),
-            "profile": out.get("profile"),
-            "date": out.get("date"),
-            "items_before": int(out.get("items_before_count") or 0),
-            "items_after": int(out.get("items_after_count") or 0),
-            "preview_text": preview_text,
-            "preview_html": preview_html,
-            "qc_report": _read_json(str(artifacts.get("qc_report", ""))) or {},
-            "output_render": _read_json(str(artifacts.get("output_render", ""))) or {},
-            "run_meta": _read_json(str(artifacts.get("run_meta", ""))) or {},
-            "artifacts": artifacts,
+            "job_id": job_id,
+            "status": str(rec.get("status", "running")),
+            "elapsed_sec": round(elapsed, 1),
+            "progress": progress,
+            "error": str(rec.get("error", "")),
         }
-        if not lite:
-            payload["clustered_items"] = _read_json(str(artifacts.get("clustered_items", "")))
-            payload["explain"] = _read_json(str(artifacts.get("explain", "")))
-            payload["explain_cluster"] = _read_json(str(artifacts.get("cluster_explain", "")))
-            payload["items"] = _read_json(str(artifacts.get("items", ""))) or []
-        return payload
+
+    @app.get("/admin/api/dryrun/result")
+    def unified_dryrun_result(
+        job_id: str,
+        _: dict[str, str] = Depends(_auth_guard),
+    ) -> dict[str, Any]:
+        with dryrun_jobs_lock:
+            rec = dict(dryrun_jobs.get(job_id) or {})
+        if not rec:
+            return {"ok": False, "error": "job_not_found", "job_id": job_id}
+        st = str(rec.get("status", "running"))
+        if st == "completed":
+            payload = rec.get("result", {}) if isinstance(rec.get("result"), dict) else {}
+            return payload if payload else {"ok": False, "error": "empty_result", "job_id": job_id}
+        if st == "failed":
+            return {"ok": False, "error": str(rec.get("error", "dryrun_failed")), "job_id": job_id}
+        return {"ok": True, "job_id": job_id, "status": st, "pending": True}
 
     @app.get("/admin/api/run_status")
     def run_status(
@@ -986,6 +1204,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             for r in rows
         )
 
+        db_top = store.source_fail_top(limit=10) if hasattr(store, "source_fail_top") else []
+        top_payload = db_top if db_top else _fallback_fail_top_from_runs(rows, limit=10)
+
         return {
             "ok": True,
             "runs": rows,
@@ -997,6 +1218,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 "last_error": last_error,
             },
             "scheduler": _read_scheduler_status(),
+            "source_fail_top": top_payload,
         }
 
     @app.post("/admin/api/content_rules/draft")
@@ -1156,12 +1378,30 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 
     @app.post("/admin/api/scheduler/trigger")
     def scheduler_trigger(
-        payload: SchedulerTriggerPayload,
+        request: Request,
+        payload: dict[str, Any] | None = None,
         _: dict[str, str] = Depends(_auth_guard),
     ) -> dict[str, Any]:
-        purpose = str(payload.purpose or "collect").strip()
+        # Be permissive here to avoid UI/runtime mismatch causing 422:
+        # accept JSON body, empty body, or query params.
+        raw: dict[str, Any] = {}
+        if isinstance(payload, dict):
+            raw.update(payload)
+        q_profile = str(request.query_params.get("profile", "")).strip()
+        q_purpose = str(request.query_params.get("purpose", "")).strip()
+        q_schedule = str(request.query_params.get("schedule_id", "")).strip()
+        if q_profile:
+            raw["profile"] = q_profile
+        if q_purpose:
+            raw["purpose"] = q_purpose
+        if q_schedule:
+            raw["schedule_id"] = q_schedule
+
+        purpose = str(raw.get("purpose") or "collect").strip().lower()
         if purpose not in {"collect", "digest"}:
             raise HTTPException(status_code=400, detail="purpose must be collect|digest")
+        profile = str(raw.get("profile") or "enhanced").strip() or "enhanced"
+        schedule_id = str(raw.get("schedule_id") or "manual").strip() or "manual"
         cmd_dir = root / "data" / "scheduler_commands"
         cmd_dir.mkdir(parents=True, exist_ok=True)
         fname = f"cmd-{int(time.time())}-{os.getpid()}.json"
@@ -1170,8 +1410,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 {
                     "cmd": "trigger",
                     "purpose": purpose,
-                    "profile": str(payload.profile or "enhanced"),
-                    "schedule_id": str(payload.schedule_id or "manual"),
+                    "profile": profile,
+                    "schedule_id": schedule_id,
                 },
                 ensure_ascii=False,
             ),
@@ -1383,10 +1623,19 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               </div>
               <div class="card">
                 <label>试跑日期（可选，YYYY-MM-DD）</label><input id="dryrun_date" placeholder="例如：2026-02-18"/>
+                <div class="row" style="margin-top:8px">
+                  <label style="margin:0;min-width:120px">预览模式</label>
+                  <select id="preview_mode" style="max-width:220px">
+                    <option value="fast">快速模式（推荐）</option>
+                    <option value="full">完整模式（慢）</option>
+                  </select>
+                </div>
+                <div class="small">快速模式仅用于预览提速，不影响正式定时任务与实际发信。</div>
                 <div class="row">
                   <button onclick="preview()">试跑预览(不发信)</button>
                   <button onclick="copyPreview()">复制预览</button>
                 </div>
+                <div id="previewMeta" class="small">当前模式：快速模式（推荐） | 最近耗时：-</div>
                 <div>
                   <label>高亮关键词（逗号分隔，留空自动从采集规则读取包含/排除词）</label>
                   <input id="highlight_terms" />
@@ -1489,9 +1738,42 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         async function preview() {
           const profile = document.getElementById('profile').value;
           const date = document.getElementById('dryrun_date').value.trim();
+          const mode = (document.getElementById('preview_mode')?.value || 'fast');
+          const lite = mode === 'fast' ? '1' : '0';
+          const modeLabel = mode === 'fast' ? '快速模式' : '完整模式';
+          const metaEl = document.getElementById('previewMeta');
+          const startedAt = Date.now();
           const previewEl = document.getElementById('preview');
-          if(previewEl) previewEl.textContent = '运行中...（不会发信）';
-          const j = await api('/admin/api/email_rules/dryrun','POST',{ profile, date });
+          if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：运行中...`;
+          if(previewEl) previewEl.textContent = '运行中... 阶段：init｜进度：0/-';
+          const start = await api(`/admin/api/dryrun/start?lite=${lite}&profile=${encodeURIComponent(profile)}&date=${encodeURIComponent(date)}`,'POST',null,15000);
+          const jobId = start && start.job_id ? start.job_id : '';
+          if(!jobId){
+            if(previewEl) previewEl.textContent = JSON.stringify(start||{ok:false,error:'启动失败'},null,2);
+            if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：启动失败`;
+            return;
+          }
+          let j = null;
+          for(let i=0;i<360;i++){
+            await new Promise(r=>setTimeout(r,1000));
+            const p = await api(`/admin/api/dryrun/progress?job_id=${encodeURIComponent(jobId)}`,'GET',null,15000);
+            const pr = (p && p.progress) ? p.progress : {};
+            const done = Number(pr.completed_sources||0);
+            const total = Number(pr.total_sources||0);
+            const stage = String(pr.stage||'运行中');
+            const elapsedNow = ((Date.now() - startedAt) / 1000).toFixed(1);
+            if(previewEl) previewEl.textContent = `运行中... 阶段：${stage}｜进度：${done}/${total||'-'}`;
+            if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：${elapsedNow}s`;
+            if(p && p.status === 'completed'){
+              j = await api(`/admin/api/dryrun/result?job_id=${encodeURIComponent(jobId)}`,'GET',null,30000);
+              break;
+            }
+            if(p && p.status === 'failed'){
+              j = { ok:false, error: p.error || 'dryrun_failed' };
+              break;
+            }
+          }
+          const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
           if (!j || !j.ok) { document.getElementById('preview').textContent = JSON.stringify(j,null,2); return; }
           let includeTerms = [];
           let excludeTerms = [];
@@ -1504,12 +1786,13 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             includeTerms = [];
             excludeTerms = [];
           }
-              const md = j.preview_markdown || '(空)';
+          const md = j.preview_text || '(空)';
           const base = escHtml(md);
           const html = highlightInEscaped(base, includeTerms, 'hl-inc');
           const html2 = highlightInEscaped(html, excludeTerms, 'hl-exc');
           document.getElementById('preview').innerHTML = html2;
-              toast('ok','试跑完成', `运行ID=${j.run_id}`);
+          if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：${elapsedSec}s`;
+          toast('ok','试跑完成', `运行ID=${j.run_id}`);
         }
         async function copyPreview(){
           const el = document.getElementById('preview');
@@ -1676,10 +1959,19 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   </div>
               <div class="card">
               <label>试跑日期（可选，YYYY-MM-DD）</label><input id="dryrun_date" placeholder="例如：2026-02-18"/>
+                <div class="row" style="margin-top:8px">
+                  <label style="margin:0;min-width:120px">预览模式</label>
+                  <select id="preview_mode" style="max-width:220px">
+                    <option value="fast">快速模式（推荐）</option>
+                    <option value="full">完整模式（慢）</option>
+                  </select>
+                </div>
+                <div class="small">快速模式仅用于预览提速，不影响正式定时任务与实际发信。</div>
                 <div class="row">
                   <button onclick="preview()">试跑预览(不发信)</button>
                   <button onclick="copyPreview()">复制预览</button>
                 </div>
+                <div id="previewMeta" class="small">当前模式：快速模式（推荐） | 最近耗时：-</div>
                 <div class="drawer" id="summary"></div>
                 <div class="cards" id="clusters"></div>
                 <details class="help" id="platformDiagBox" style="margin-top:10px; display:none">
@@ -2026,6 +2318,11 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         async function preview() {
           const profile = document.getElementById('profile').value;
           const date = document.getElementById('dryrun_date').value.trim();
+          const mode = (document.getElementById('preview_mode')?.value || 'fast');
+          const lite = mode === 'fast' ? '1' : '0';
+          const modeLabel = mode === 'fast' ? '快速模式' : '完整模式';
+          const metaEl = document.getElementById('previewMeta');
+          const startedAt = Date.now();
           // Show loading state immediately so users know the click is effective.
           const summaryEl = document.getElementById('summary');
           const clustersEl = document.getElementById('clusters');
@@ -2039,8 +2336,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           const ldEl = document.getElementById('laneDiag');
           const edBox = document.getElementById('eventDiagBox');
           const edEl = document.getElementById('eventDiag');
-          if (summaryEl) summaryEl.textContent = '运行中...（不会发信）';
+          if (summaryEl) summaryEl.textContent = '运行中... 阶段：init｜进度：0/-';
           if (clustersEl) clustersEl.innerHTML = '<div class="small">运行中...</div>';
+          if (metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：运行中...`;
           if (pdBox) pdBox.style.display = 'none';
           if (pdEl) pdEl.textContent = '';
           if (kwBox) kwBox.style.display = 'none';
@@ -2051,15 +2349,49 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           if (ldEl) ldEl.textContent = '';
           if (edBox) edBox.style.display = 'none';
           if (edEl) edEl.textContent = '';
-          const j = await api('/admin/api/content_rules/dryrun','POST',{ profile, date });
+          const start = await api(`/admin/api/dryrun/start?lite=${lite}&profile=${encodeURIComponent(profile)}&date=${encodeURIComponent(date)}`,'POST',null,15000);
+          const jobId = start && start.job_id ? start.job_id : '';
+          if(!jobId){
+            document.getElementById('summary').textContent = JSON.stringify(start||{ok:false,error:'启动失败'},null,2);
+            return;
+          }
+          let j = null;
+          for(let i=0;i<360;i++){
+            await new Promise(r=>setTimeout(r,1000));
+            const p = await api(`/admin/api/dryrun/progress?job_id=${encodeURIComponent(jobId)}`,'GET',null,15000);
+            const pr = (p && p.progress) ? p.progress : {};
+            const done = Number(pr.completed_sources||0);
+            const total = Number(pr.total_sources||0);
+            const stage = String(pr.stage||'运行中');
+            const elapsedNow = ((Date.now() - startedAt) / 1000).toFixed(1);
+            if (summaryEl) summaryEl.textContent = `运行中... 阶段：${stage}｜进度：${done}/${total||'-'}`;
+            if (clustersEl) clustersEl.innerHTML = `<div class="small">运行中... ${stage} ${done}/${total||'-'}</div>`;
+            if (metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：${elapsedNow}s`;
+            if(p && p.status === 'completed'){
+              j = await api(`/admin/api/dryrun/result?job_id=${encodeURIComponent(jobId)}`,'GET',null,30000);
+              break;
+            }
+            if(p && p.status === 'failed'){
+              j = { ok:false, error: p.error || 'dryrun_failed' };
+              break;
+            }
+          }
+          const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
           lastDryrun = j;
-          if (!j || !j.ok) { document.getElementById('summary').textContent = JSON.stringify(j,null,2); return; }
+          if (!j || !j.ok) { document.getElementById('summary').textContent = JSON.stringify(j,null,2); if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：${elapsedSec}s（失败）`; return; }
+              const qu = j.quota_usage || {};
+              const rr = j.repeat_rate || {};
+              const repY = (typeof rr.yesterday === 'number') ? `${Math.round(rr.yesterday*100)}%` : '-';
+              const rep7 = (typeof rr.recent_7d_max === 'number') ? `${Math.round(rr.recent_7d_max*100)}%` : '-';
               document.getElementById('summary').innerHTML = `
                 <div class="kvs">
                   <div>运行ID</div><b>${esc(j.run_id||'')}</b>
                   <div>候选条数</div><b>${esc(j.items_before_count)}</b>
                   <div>聚合后条数</div><b>${esc(j.items_after_count)}</b>
                   <div>要点条数(A段)</div><b>${esc(j.items_count)}</b>
+                  <div>core/frontier</div><b>${esc((qu.core_count ?? 0) + '/' + (qu.frontier_count ?? 0))}</b>
+                  <div>F配额占用</div><b>${esc((qu.frontier_quota_used ?? 0) + '/' + (qu.frontier_quota_target ?? 0))}</b>
+                  <div>重复率(昨/7日峰)</div><b>${esc(repY + '/' + rep7)}</b>
                 </div>`;
           const cards = (j.top_clusters||[]).map(c=>{
             const p = c.primary||{};
@@ -2074,6 +2406,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 </div>`;
           }).join('');
           document.getElementById('clusters').innerHTML = cards || '<div class="small">无可展示聚合簇</div>';
+          if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：${elapsedSec}s`;
               const pd = j.platform_diag || {};
               if(pd && typeof pd === 'object' && (pd.unlabeled_count || (pd.samples||[]).length)){
                 if(pdEl) pdEl.textContent = JSON.stringify(pd, null, 2);
@@ -2196,14 +2529,33 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           </div>
           <div class="card">
             <label>试跑日期（可选，YYYY-MM-DD）</label><input id="dryrun_date" placeholder="例如：2026-02-18"/>
+            <div class="row" style="margin-top:8px">
+              <label style="margin:0;min-width:120px">预览模式</label>
+              <select id="preview_mode" style="max-width:220px">
+                <option value="fast">快速模式（推荐）</option>
+                <option value="full">完整模式（慢）</option>
+              </select>
+            </div>
+            <div class="small">快速模式仅用于预览提速，不影响正式定时任务与实际发信。</div>
             <div class="row">
               <button onclick="preview()">试跑预览(不发信)</button>
               <button onclick="copyPreview()">复制预览</button>
             </div>
+            <div id="previewMeta" class="small">当前模式：快速模式（推荐） | 最近耗时：-</div>
             <h4>QC 面板</h4>
             <pre id="qcPanel"></pre>
             <h4>A–G 预览</h4>
             <pre id="preview"></pre>
+            <details class="help">
+              <summary>预览说明</summary>
+              <div class="box">
+                <ul>
+                  <li><b>QC 面板</b>：展示 24h 条目、区域占比、重复率、必查信源命中、字段齐全率等质控结果。</li>
+                  <li><b>A–G 预览</b>：展示按当前规则生成的完整晨报正文（不发信）。</li>
+                  <li><b>失败策略提示</b>：若未达门槛，会在面板中体现 fail_policy 的动作与缺口原因。</li>
+                </ul>
+              </div>
+            </details>
           </div>
         </div>
         """
@@ -2403,16 +2755,52 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         async function preview(){
           const profile = document.getElementById('profile').value;
           const date = document.getElementById('dryrun_date').value.trim();
-          document.getElementById('qcPanel').textContent = '运行中...';
-          document.getElementById('preview').textContent = '';
-          const j = await api(`/admin/api/dryrun?lite=1&profile=${encodeURIComponent(profile)}&date=${encodeURIComponent(date)}`,'POST',null);
+          const mode = (document.getElementById('preview_mode')?.value || 'fast');
+          const lite = mode === 'fast' ? '1' : '0';
+          const modeLabel = mode === 'fast' ? '快速模式' : '完整模式';
+          const metaEl = document.getElementById('previewMeta');
+          const startedAt = Date.now();
+          if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：运行中...`;
+          document.getElementById('qcPanel').textContent = '运行中... 阶段：init｜进度：0/-';
+          document.getElementById('preview').textContent = '运行中... 阶段：init｜进度：0/-';
+          const start = await api(`/admin/api/dryrun/start?lite=${lite}&profile=${encodeURIComponent(profile)}&date=${encodeURIComponent(date)}`,'POST',null,15000);
+          const jobId = start && start.job_id ? start.job_id : '';
+          if(!jobId){
+            document.getElementById('preview').textContent = JSON.stringify(start||{ok:false,error:'启动失败'},null,2);
+            if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：启动失败`;
+            return;
+          }
+          let j = null;
+          for(let i=0;i<360;i++){
+            await new Promise(r=>setTimeout(r,1000));
+            const p = await api(`/admin/api/dryrun/progress?job_id=${encodeURIComponent(jobId)}`,'GET',null,15000);
+            const pr = (p && p.progress) ? p.progress : {};
+            const done = Number(pr.completed_sources||0);
+            const total = Number(pr.total_sources||0);
+            const stage = String(pr.stage||'运行中');
+            const elapsedNow = ((Date.now() - startedAt) / 1000).toFixed(1);
+            document.getElementById('qcPanel').textContent = `运行中... 阶段：${stage}｜进度：${done}/${total||'-'}`;
+            document.getElementById('preview').textContent = `运行中... 阶段：${stage}｜进度：${done}/${total||'-'}`;
+            if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：${elapsedNow}s`;
+            if(p && p.status === 'completed'){
+              j = await api(`/admin/api/dryrun/result?job_id=${encodeURIComponent(jobId)}`,'GET',null,30000);
+              break;
+            }
+            if(p && p.status === 'failed'){
+              j = { ok:false, error: p.error || 'dryrun_failed' };
+              break;
+            }
+          }
+          const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
           if(!j||!j.ok){
             document.getElementById('qcPanel').textContent = '';
             document.getElementById('preview').textContent = JSON.stringify(j,null,2);
+            if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：${elapsedSec}s（失败）`;
             return;
           }
           document.getElementById('qcPanel').textContent = JSON.stringify(j.qc_report||{}, null, 2);
           document.getElementById('preview').textContent = j.preview_text || '';
+          if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：${elapsedSec}s`;
           toast('ok','试跑完成', `运行ID=${j.run_id}`);
         }
         async function copyPreview(){
@@ -2488,14 +2876,30 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           </div>
           <div class="card">
             <label>试跑日期（可选，YYYY-MM-DD）</label><input id="dryrun_date" placeholder="例如：2026-02-18"/>
+            <div class="row" style="margin-top:8px">
+              <label style="margin:0;min-width:120px">预览模式</label>
+              <select id="preview_mode" style="max-width:220px">
+                <option value="fast">快速模式（推荐）</option>
+                <option value="full">完整模式（慢）</option>
+              </select>
+            </div>
+            <div class="small">快速模式仅用于预览提速，不影响正式定时任务与实际发信。</div>
             <div class="row">
               <button onclick="preview()">试跑预览(不发信)</button>
               <button onclick="copyPreview()">复制预览</button>
             </div>
-            <h4>QC 面板</h4>
-            <pre id="qcPanel"></pre>
-            <h4>A–G 预览</h4>
-            <pre id="preview"></pre>
+            <div id="previewMeta" class="small">当前模式：快速模式（推荐） | 最近耗时：-</div>
+            <pre id="preview" style="min-height:40px"></pre>
+            <details class="help">
+              <summary>预览说明</summary>
+              <div class="box">
+                <ul>
+                  <li><b>候选条数</b>：过滤/分类前的入选候选数量。</li>
+                  <li><b>聚合后条数</b>：启用 story 聚合后，只保留主条目的数量（other_sources 会挂在主条目下）。</li>
+                  <li><b>聚合簇列表</b>：展示聚合规模较大的簇，便于检查去重是否“过度合并”。</li>
+                </ul>
+              </div>
+            </details>
           </div>
         </div>
         """
@@ -2657,19 +3061,50 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         async function preview(){
           const profile = document.getElementById('profile').value;
           const date = document.getElementById('dryrun_date').value.trim();
+          const mode = (document.getElementById('preview_mode')?.value || 'fast');
+          const lite = mode === 'fast' ? '1' : '0';
+          const modeLabel = mode === 'fast' ? '快速模式' : '完整模式';
+          const metaEl = document.getElementById('previewMeta');
+          const startedAt = Date.now();
+          if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：运行中...`;
           // Loading state: show immediately to avoid "no response" perception.
-          const qcEl = document.getElementById('qcPanel');
           const preEl = document.getElementById('preview');
-          if(qcEl) qcEl.textContent = '运行中...（不会发信）';
-          if(preEl) preEl.textContent = '运行中...（不会发信）';
-          const j = await api(`/admin/api/dryrun?profile=${encodeURIComponent(profile)}&date=${encodeURIComponent(date)}`,'POST',null);
-          if(!j||!j.ok){
-            if(qcEl) qcEl.textContent = '';
-            if(preEl) preEl.textContent = JSON.stringify(j,null,2);
+          if(preEl) preEl.textContent = '运行中... 阶段：init｜进度：0/-';
+          const start = await api(`/admin/api/dryrun/start?lite=${lite}&profile=${encodeURIComponent(profile)}&date=${encodeURIComponent(date)}`,'POST',null,15000);
+          const jobId = start && start.job_id ? start.job_id : '';
+          if(!jobId){
+            if(preEl) preEl.textContent = JSON.stringify(start||{ok:false,error:'启动失败'},null,2);
+            if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：启动失败`;
             return;
           }
-          document.getElementById('qcPanel').textContent = JSON.stringify(j.qc_report||{}, null, 2);
+          let j = null;
+          for(let i=0;i<360;i++){
+            await new Promise(r=>setTimeout(r,1000));
+            const p = await api(`/admin/api/dryrun/progress?job_id=${encodeURIComponent(jobId)}`,'GET',null,15000);
+            const pr = (p && p.progress) ? p.progress : {};
+            const done = Number(pr.completed_sources||0);
+            const total = Number(pr.total_sources||0);
+            const stage = String(pr.stage||'运行中');
+            const elapsedNow = ((Date.now() - startedAt) / 1000).toFixed(1);
+            if(preEl) preEl.textContent = `运行中... 阶段：${stage}｜进度：${done}/${total||'-'}`;
+            if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：${elapsedNow}s`;
+            if(p && p.status === 'completed'){
+              j = await api(`/admin/api/dryrun/result?job_id=${encodeURIComponent(jobId)}`,'GET',null,30000);
+              break;
+            }
+            if(p && p.status === 'failed'){
+              j = { ok:false, error: p.error || 'dryrun_failed' };
+              break;
+            }
+          }
+          const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
+          if(!j||!j.ok){
+            if(preEl) preEl.textContent = JSON.stringify(j,null,2);
+            if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：${elapsedSec}s（失败）`;
+            return;
+          }
           document.getElementById('preview').textContent = j.preview_text || '';
+          if(metaEl) metaEl.textContent = `当前模式：${modeLabel} | 最近耗时：${elapsedSec}s`;
           toast('ok','试跑完成', `运行ID=${j.run_id}`);
         }
         async function copyPreview(){
@@ -3037,24 +3472,36 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 	        function renderRow(s){
 	          const lastFetchRaw = s.last_fetched_at || '';
 	          const lastFetch = esc(fmtTime(lastFetchRaw) || lastFetchRaw || '-');
-	          // Fetch status = worker/scheduler real fetch health (may differ from manual "test").
+	          // Show exactly one primary status pill to keep table clean.
 	          const st = String(s.last_fetch_status||'').toLowerCase();
-	          const stLabel = st==='ok' ? '抓取成功' : (st==='fail' ? '抓取失败' : (st==='skipped' ? '抓取跳过' : ''));
-	          const stPill = stLabel ? `<span class="pill ${st==='fail'?'err':''}" title="来源：调度抓取（worker）">${esc(stLabel)}</span>` : '';
-	          const fetchErr = s.last_fetch_error ? `<span class="pill err" title="${esc('抓取异常: '+s.last_fetch_error)}">抓取异常</span>` : '';
-	          const fetchHs = s.last_fetch_http_status ? `<span class="pill" title="抓取 HTTP 状态码">${esc(s.last_fetch_http_status)}</span>` : '';
-
-	          // Test status = admin console "sources:test" result.
 	          const testOk = !!(s.last_success_at && !s.last_error);
 	          const testFail = !!(s.last_error);
-	          const testLabel = testOk ? '测试成功' : (testFail ? '测试失败' : '');
-	          const testTitle = testOk
-	            ? (`来源：手动测试（/sources/{id}/test）\\n时间：${String(s.last_success_at||'')}` + (s.last_http_status ? `\\nHTTP：${String(s.last_http_status)}` : ''))
-	            : (testFail ? (`来源：手动测试（/sources/{id}/test）\\n错误：${String(s.last_error||'')}`) : '');
-	          const testPill = testLabel ? `<span class="pill ${testFail?'err':''}" title="${esc(testTitle)}">${esc(testLabel)}</span>` : '';
-	          const testHs = s.last_http_status ? `<span class="pill" title="测试 HTTP 状态码">${esc(s.last_http_status)}</span>` : '';
-
-	          const statusPills = [stPill, fetchErr, fetchHs, testPill, testHs].filter(Boolean).join(' ');
+	          let mainLabel = '';
+	          let mainClass = '';
+	          let mainTitle = '';
+	          if(st==='fail'){
+	            mainLabel = '抓取失败';
+	            mainClass = 'err';
+	            mainTitle = `来源：调度抓取（worker）` + (s.last_fetch_error ? `\\n错误：${String(s.last_fetch_error)}` : '') + (s.last_fetch_http_status ? `\\nHTTP：${String(s.last_fetch_http_status)}` : '');
+	          }else if(st==='ok_fallback'){
+	            mainLabel = '回退成功';
+	            mainClass = 'warn';
+	            mainTitle = `来源：调度抓取（worker）\\n已启用备用抓取配置` + (s.last_fetch_http_status ? `\\nHTTP：${String(s.last_fetch_http_status)}` : '');
+	          }else if(st==='ok'){
+	            mainLabel = '抓取成功';
+	            mainTitle = `来源：调度抓取（worker）` + (s.last_fetch_http_status ? `\\nHTTP：${String(s.last_fetch_http_status)}` : '');
+	          }else if(st==='skipped'){
+	            mainLabel = '抓取跳过';
+	            mainTitle = '来源：调度抓取（worker）\\n未到最小抓取间隔';
+	          }else if(testFail){
+	            mainLabel = '测试失败';
+	            mainClass = 'err';
+	            mainTitle = `来源：手动测试\\n错误：${String(s.last_error||'')}` + (s.last_http_status ? `\\nHTTP：${String(s.last_http_status)}` : '');
+	          }else if(testOk){
+	            mainLabel = '测试成功';
+	            mainTitle = `来源：手动测试` + (s.last_success_at ? `\\n时间：${String(s.last_success_at)}` : '') + (s.last_http_status ? `\\nHTTP：${String(s.last_http_status)}` : '');
+	          }
+	          const statusPills = mainLabel ? `<span class="pill ${mainClass}" title="${esc(mainTitle)}">${esc(mainLabel)}</span>` : '';
 	          const urlText = prettyUrl(s.url||'');
 	          const urlCell = s.url ? `<a class="url" href="${esc(s.url)}" target="_blank" title="${esc(s.url)}">${esc(urlText)}</a>` : '';
 	          const toggleLabel = s.enabled ? '停用' : '启用';
@@ -3285,16 +3732,59 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         """
         js = """
         function esc(s){ return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+        function fmtTs(v){
+          const s = String(v||'').trim();
+          if(!s) return '';
+          // ISO-like: 2026-02-19T12:47:06.348Z -> 2026-02-19 12:47:06
+          const m = s.match(/^(\\d{4}-\\d{2}-\\d{2})[T\\s](\\d{2}:\\d{2}:\\d{2})(?:\\.\\d+)?(?:Z|[+-]\\d{2}:?\\d{2})?$/);
+          if(m) return `${m[1]} ${m[2]}`;
+          return s.replace('T',' ').replace(/Z$/,'');
+        }
+        function sortedRows(rows){
+          const list = [...(rows || [])];
+          list.sort((a,b)=>{
+            const aa = a && a.active ? 1 : 0;
+            const bb = b && b.active ? 1 : 0;
+            if (aa !== bb) return bb - aa; // active first
+            const ta = String((a && a.created_at) || '');
+            const tb = String((b && b.created_at) || '');
+            if (ta !== tb) return tb.localeCompare(ta); // newer first
+            return String((b && b.version) || '').localeCompare(String((a && a.version) || ''));
+          });
+          return list;
+        }
         function setDatalistOptions(ruleset){
           const dl = document.getElementById('versions_datalist');
-          const rows = (window._versions && window._versions[ruleset]) ? window._versions[ruleset] : [];
+          const rows = sortedRows((window._versions && window._versions[ruleset]) ? window._versions[ruleset] : []);
           const top = (rows||[]).slice(0, 12);
           dl.innerHTML = top.map(r=>`<option value="${esc(r.version)}"></option>`).join('');
         }
-        function render(rows){
-          return `<table><thead><tr><th>版本号</th><th>发布时间</th><th>发布人</th><th>生效</th></tr></thead><tbody>` +
-            (rows||[]).map(r=>`<tr class="${r.active?'activeRow':''}"><td><a href="#" onclick="pickVersion('${esc(r.version)}');return false;">${esc(r.version)}</a></td><td>${esc(r.created_at)}</td><td>${esc(r.created_by)}</td><td>${r.active?'是':''}</td></tr>`).join('') +
+        function render(rows, key){
+          const list = sortedRows(rows);
+          const expanded = !!(window._expanded && window._expanded[key]);
+          const shown = expanded ? list : list.slice(0, 5);
+          const hasMore = list.length > 5;
+          const summary = `<div class="small">共 ${list.length} 条，当前显示 ${shown.length} 条</div>`;
+          const toggle = hasMore
+            ? `<button onclick="toggleExpand('${esc(key)}')" style="margin-top:6px">${expanded ? '收起' : '展开全部'}</button>`
+            : '';
+          const table = `<table><thead><tr><th>版本号</th><th>发布时间</th><th>发布人</th><th>生效</th></tr></thead><tbody>` +
+            shown.map(r=>`<tr class="${r.active?'activeRow':''}"><td><a href="#" onclick="pickVersion('${esc(r.version)}');return false;">${esc(r.version)}</a></td><td>${esc(fmtTs(r.created_at))}</td><td>${esc(r.created_by)}</td><td>${r.active?'是':''}</td></tr>`).join('') +
             `</tbody></table>`;
+          return summary + toggle + table;
+        }
+        function toggleExpand(key){
+          window._expanded = window._expanded || {};
+          window._expanded[key] = !window._expanded[key];
+          renderVersionTables();
+        }
+        function renderVersionTables(){
+          const v = window._versions || {};
+          document.getElementById('emailTable').innerHTML = render(v.email_rules || [], 'email_rules');
+          document.getElementById('contentTable').innerHTML = render(v.content_rules || [], 'content_rules');
+          document.getElementById('qcTable').innerHTML = render(v.qc_rules || [], 'qc_rules');
+          document.getElementById('outputTable').innerHTML = render(v.output_rules || [], 'output_rules');
+          document.getElementById('schedulerTable').innerHTML = render(v.scheduler_rules || [], 'scheduler_rules');
         }
         function pickVersion(v){
           const from = document.getElementById('from_version');
@@ -3312,7 +3802,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         }
         function fillLatestTwo(){
           const ruleset = document.getElementById('diff_ruleset').value;
-          const rows = (window._versions && window._versions[ruleset]) ? window._versions[ruleset] : [];
+          const rows = sortedRows((window._versions && window._versions[ruleset]) ? window._versions[ruleset] : []);
           const to = document.getElementById('to_version');
           const from = document.getElementById('from_version');
           if(!rows.length){ toast('warn','无可选版本','请先刷新版本'); return; }
@@ -3331,11 +3821,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             output_rules: j.output_rules || [],
             scheduler_rules: j.scheduler_rules || []
           };
-          document.getElementById('emailTable').innerHTML = render(j.email_rules);
-          document.getElementById('contentTable').innerHTML = render(j.content_rules);
-          document.getElementById('qcTable').innerHTML = render(j.qc_rules);
-          document.getElementById('outputTable').innerHTML = render(j.output_rules);
-          document.getElementById('schedulerTable').innerHTML = render(j.scheduler_rules);
+          renderVersionTables();
           setDatalistOptions(document.getElementById('diff_ruleset').value);
         }
         async function rollbackEmail(){
@@ -3406,27 +3892,33 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     def page_runs(_: dict[str, str] = Depends(_auth_guard)) -> str:
         body = """
         <div class="layout">
-          <div class="card">
-            <h4>今日状态</h4>
-            <div class="kvs" id="todayStatus">
-              <div>日期</div><b>-</b>
-              <div>是否已发送</div><b>-</b>
-              <div>是否触发兜底</div><b>-</b>
-              <div>最后错误</div><b>-</b>
-            </div>
-            <div class="row" style="margin-top:8px">
-              <button onclick="loadRuns()">刷新</button>
-            </div>
-            <details class="help">
-              <summary>字段说明</summary>
-              <div class="box">
-                <ul>
-                  <li><b>是否已发送</b>：按今日日期统计，任意一条成功发送则为是。</li>
-                  <li><b>是否触发兜底</b>：今日是否有兜底/补发路径执行记录。</li>
-                  <li><b>最后错误</b>：最近一次失败的摘要（截断展示）。</li>
-                </ul>
+          <div>
+            <div class="card" style="margin-bottom:12px">
+              <h4>今日状态</h4>
+              <div class="kvs" id="todayStatus">
+                <div>日期</div><b>-</b>
+                <div>是否已发送</div><b>-</b>
+                <div>是否触发兜底</div><b>-</b>
+                <div>最后错误</div><b>-</b>
               </div>
-            </details>
+              <div class="row" style="margin-top:8px">
+                <button onclick="loadRuns()">刷新</button>
+              </div>
+              <details class="help">
+                <summary>字段说明</summary>
+                <div class="box">
+                  <ul>
+                    <li><b>是否已发送</b>：按今日日期统计，任意一条成功发送则为是。</li>
+                    <li><b>是否触发兜底</b>：今日是否有兜底/补发路径执行记录。</li>
+                    <li><b>最后错误</b>：最近一次失败的摘要。</li>
+                  </ul>
+                </div>
+              </details>
+            </div>
+            <div class="card">
+              <h4>信源失败 TOP（最近）</h4>
+              <div id="sourceFailTop"></div>
+            </div>
           </div>
           <div class="card">
             <h4>最近 30 条运行记录（按时间降序）</h4>
@@ -3512,6 +4004,17 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('runTable').innerHTML = `<table>
             <thead><tr><th>Run ID</th><th>时间</th><th>状态</th><th>来源</th><th>失败原因摘要</th></tr></thead>
             <tbody>${rows || '<tr><td colspan=\"5\">暂无数据</td></tr>'}</tbody>
+          </table>`;
+
+          const top = (j.source_fail_top||[]);
+          const topRows = top.map((r, idx)=>`<tr>
+              <td>${idx+1}</td>
+              <td>${esc(r.source_id||'')}</td>
+              <td>${esc(r.fail_count||0)}</td>
+            </tr>`).join('');
+          document.getElementById('sourceFailTop').innerHTML = `<table>
+            <thead><tr><th>#</th><th>source_id</th><th>失败次数</th></tr></thead>
+            <tbody>${topRows || '<tr><td colspan=\"3\">暂无失败记录</td></tr>'}</tbody>
           </table>`;
         }
         loadRuns();

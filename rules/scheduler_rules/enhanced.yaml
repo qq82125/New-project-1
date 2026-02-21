@@ -5,6 +5,8 @@ profile: enhanced
 defaults:
   enabled: true
   timezone: "Asia/Singapore"
+  collect_window_hours: 24
+  collect_asset_dir: "artifacts/collect"
   schedules:
     # digest：按固定时间生成日报（示例：每天 08:30，北京时间）
     - id: "digest_daily_0830"

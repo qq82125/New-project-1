@@ -11,6 +11,13 @@
 5. `scheduler_rules_versions`
 6. `rules_drafts`
 7. `sources`
+8. `dual_write_failures`
+9. `db_compare_log`
+10. `run_executions`
+11. `source_fetch_events`
+12. `report_artifacts`
+13. `send_attempts`
+14. `dedupe_keys`
 
 ## 规则版本表（5张）
 
@@ -73,4 +80,14 @@
 ## Alembic 迁移
 
 - 基线迁移：`alembic/versions/20260219_0001_baseline.py`
+- 灰度可观测：`alembic/versions/20260219_0002_dual_shadow_logs.py`
+- 运行台账：`alembic/versions/20260219_0003_run_ledger.py`
+- 幂等键约束：`alembic/versions/20260219_0004_keys_and_send_attempts.py`
 - 目标：`alembic upgrade head` 在 SQLite/PG 均可创建等价结构
+
+## 幂等键（DB 约束）
+
+- `profile + version`：规则版本表唯一约束（5 张版本表）
+- `send_key`：`send_attempts` 唯一约束
+- `run_key`：`run_executions` 唯一约束
+- `dedupe_key`：`dedupe_keys` 唯一约束

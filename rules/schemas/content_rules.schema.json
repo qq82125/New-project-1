@@ -71,6 +71,93 @@
           "propertyNames": { "type": "string", "minLength": 1 },
           "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 1000 }
         },
+        "relevance_thresholds": {
+          "type": "object",
+          "properties": {
+            "core_min_level_for_A": { "type": "integer", "minimum": 0, "maximum": 4, "default": 3 },
+            "frontier_min_level_for_F": { "type": "integer", "minimum": 0, "maximum": 4, "default": 2 }
+          },
+          "additionalProperties": true
+        },
+        "frontier_quota": {
+          "type": "object",
+          "properties": {
+            "max_items_per_day": { "type": "integer", "minimum": 0, "maximum": 50, "default": 5 }
+          },
+          "additionalProperties": true
+        },
+        "output_tracks": {
+          "type": "object",
+          "properties": {
+            "enable_track_split": { "type": "boolean", "default": false }
+          },
+          "additionalProperties": true
+        },
+        "relevance_keywords": {
+          "type": "object",
+          "properties": {
+            "anchors_strong": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "anchors_weak": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "negatives": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          },
+          "additionalProperties": true
+        },
+        "analysis_cache": {
+          "type": "object",
+          "properties": {
+            "enable_analysis_cache": { "type": "boolean", "default": true },
+            "always_generate": { "type": "boolean", "default": false },
+            "prompt_version": { "type": "string", "minLength": 1, "default": "v2" },
+            "model": { "type": "string", "minLength": 1, "default": "local-heuristic-v1" },
+            "model_primary": { "type": "string", "minLength": 1, "default": "local-heuristic-v1" },
+            "model_fallback": { "type": "string", "minLength": 1, "default": "local-lite-v1" },
+            "model_policy": { "type": "string", "enum": ["tiered", "always_primary", "always_fallback"], "default": "tiered" },
+            "core_model": { "type": "string", "minLength": 1, "default": "primary" },
+            "frontier_model": { "type": "string", "minLength": 1, "default": "fallback" },
+            "temperature": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.2 },
+            "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 300, "default": 20 },
+            "retries": { "type": "integer", "minimum": 0, "maximum": 5, "default": 1 },
+            "backoff_seconds": { "type": "number", "minimum": 0.0, "maximum": 10.0, "default": 0.5 },
+            "asset_dir": { "type": "string", "minLength": 1, "default": "artifacts/analysis" }
+          },
+          "additionalProperties": true
+        },
+        "coverage_enforcement": {
+          "type": "object",
+          "properties": {
+            "a_core_min_items": { "type": "integer", "minimum": 0, "maximum": 50, "default": 8 },
+            "f_frontier_quota": { "type": "integer", "minimum": 0, "maximum": 50, "default": 3 },
+            "require_gap_explain": { "type": "boolean", "default": true }
+          },
+          "additionalProperties": true
+        },
+        "anchors_pack": {
+          "type": "object",
+          "properties": {
+            "core": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "frontier": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          },
+          "additionalProperties": true
+        },
+        "negatives_pack": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
         "platform_url_hints": {
           "type": "object",
           "propertyNames": { "type": "string", "minLength": 1 },
@@ -195,7 +282,15 @@
               "event_mapping",
               "dedupe",
               "confidence_ranking",
-              "region_filter"
+              "region_filter",
+              "relevance_thresholds",
+              "frontier_quota",
+              "output_tracks",
+              "relevance_keywords",
+              "analysis_cache",
+              "anchors_pack",
+              "negatives_pack",
+              "track_routing"
             ]
           },
           "description": { "type": "string", "minLength": 0 },

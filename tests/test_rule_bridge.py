@@ -35,6 +35,8 @@ class RuleBridgeTests(unittest.TestCase):
         self.assertTrue(out["enabled"])
         self.assertEqual(out["requested_profile"], "enhanced")
         self.assertEqual(out["active_profile"], "legacy")
+        self.assertIn("track_routing", out)
+        self.assertIn("track_routing_gaps", out)
 
     @patch("app.adapters.rule_bridge.RuleEngine")
     def test_boundary_violation_fallback_to_legacy(self, mock_engine_cls) -> None:
@@ -78,6 +80,8 @@ class RuleBridgeTests(unittest.TestCase):
         self.assertTrue(out["enabled"])
         self.assertEqual(out["active_profile"], "legacy")
         self.assertEqual(out["email"]["subject"], "全球IVD晨报 - 2026-02-16")
+        self.assertIn("track_routing", out)
+        self.assertIn("track_routing_gaps", out)
 
 
 if __name__ == "__main__":

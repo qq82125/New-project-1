@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from urllib.parse import urlparse, unquote
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,45 @@ def _norm_json_obj(value: Any) -> Any:
 def _json_hash(value: Any) -> str:
     txt = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(txt.encode("utf-8")).hexdigest()
+
+
+def _stable_hash_text(value: str) -> int:
+    return int(hashlib.sha256(value.encode("utf-8")).hexdigest()[:12], 16)
+
+
+def _sqlite_path_from_input(from_value: str | Path | None, project_root: Path) -> Path:
+    if from_value is None:
+        return project_root / "data" / "rules.db"
+    if isinstance(from_value, Path):
+        return from_value
+    raw = str(from_value).strip()
+    if raw.startswith("sqlite:///"):
+        parsed = urlparse(raw)
+        p = Path(unquote(parsed.path))
+        if p.is_absolute():
+            return p
+        return (project_root / p).resolve()
+    return (project_root / raw).resolve()
+
+
+def _load_checkpoint_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"tables": {}, "updated_at": "", "status": "new"}
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(obj, dict):
+            return {"tables": {}, "updated_at": "", "status": "corrupt"}
+        obj.setdefault("tables", {})
+        return obj
+    except Exception:
+        return {"tables": {}, "updated_at": "", "status": "corrupt"}
+
+
+def _save_checkpoint_file(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(data)
+    payload["updated_at"] = _utc_now()
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _ensure_checkpoint_table(session: Session) -> None:
@@ -108,7 +148,9 @@ def _connect_source(source_sqlite_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _target_session(target_url: str) -> Session:
+def _target_session(target_url: str, project_root: Path) -> Session:
+    # Ensure target schema is ready via Alembic-managed path before migration.
+    SQLAlchemyRulesStore(project_root=project_root, database_url=target_url, auto_init=True, enable_secondary=False)
     engine = make_engine(target_url)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
     return SessionLocal()
@@ -121,7 +163,6 @@ def _upsert_version_row(session: Session, model: Any, row: sqlite3.Row) -> None:
     payload = _norm_json_obj(row["config_json"]) or {}
     if current is None:
         obj = model(
-            id=int(row["id"]),
             profile=profile,
             version=version,
             config_json=payload,
@@ -145,7 +186,6 @@ def _upsert_draft_row(session: Session, row: sqlite3.Row) -> None:
     if current is None:
         session.add(
             RulesDraft(
-                id=rid,
                 ruleset=str(row["ruleset"]),
                 profile=str(row["profile"]),
                 config_json=cfg,
@@ -194,20 +234,73 @@ def _upsert_source_row(session: Session, row: sqlite3.Row) -> None:
             setattr(current, k, v)
 
 
+def _detect_unique_conflicts(src: sqlite3.Connection) -> list[dict[str, Any]]:
+    checks = [
+        ("email_rules_versions", ["profile", "version"]),
+        ("content_rules_versions", ["profile", "version"]),
+        ("qc_rules_versions", ["profile", "version"]),
+        ("output_rules_versions", ["profile", "version"]),
+        ("scheduler_rules_versions", ["profile", "version"]),
+        ("sources", ["id"]),
+    ]
+    conflicts: list[dict[str, Any]] = []
+    for table, cols in checks:
+        col_sql = ", ".join(cols)
+        q = (
+            f"SELECT {col_sql}, COUNT(1) AS c "
+            f"FROM {table} GROUP BY {col_sql} HAVING COUNT(1) > 1 ORDER BY c DESC LIMIT 20"
+        )
+        rows = src.execute(q).fetchall()
+        if rows:
+            conflicts.append(
+                {
+                    "table": table,
+                    "key": cols,
+                    "count": len(rows),
+                    "examples": [dict(r) for r in rows[:5]],
+                }
+            )
+    return conflicts
+
+
+def _table_pk_field(table: str) -> str:
+    return "id"
+
+
 def migrate_sqlite_to_target(
     *,
     project_root: Path,
     target_url: str,
     source_sqlite_path: Path | None = None,
+    source_sqlite_url_or_path: str | Path | None = None,
     batch_size: int = 500,
     resume: bool = True,
+    checkpoint_path: Path | None = None,
+    tables: list[str] | None = None,
 ) -> dict[str, Any]:
-    src_path = source_sqlite_path or (project_root / "data" / "rules.db")
+    src_path = _sqlite_path_from_input(source_sqlite_url_or_path or source_sqlite_path, project_root)
     if not src_path.exists():
         raise RuntimeError(f"source sqlite not found: {src_path}")
 
     src = _connect_source(src_path)
-    session = _target_session(target_url)
+    session = _target_session(target_url, project_root)
+    target_tables = [t for t in (tables or MVP_TABLES) if t in MVP_TABLES]
+    cp_path = checkpoint_path or (project_root / "data" / "db_migrate_checkpoint.json")
+    cp = _load_checkpoint_file(cp_path)
+    if not resume:
+        cp = {"tables": {}, "updated_at": _utc_now(), "status": "reset"}
+        _save_checkpoint_file(cp_path, cp)
+
+    conflicts = _detect_unique_conflicts(src)
+    if conflicts:
+        return {
+            "ok": False,
+            "error": "unique_conflicts_detected",
+            "source": str(src_path),
+            "target": target_url,
+            "conflicts": conflicts,
+        }
+
     _ensure_checkpoint_table(session)
     if not resume:
         _clear_checkpoint(session)
@@ -220,30 +313,35 @@ def migrate_sqlite_to_target(
         "scheduler_rules_versions": SchedulerRulesVersion,
     }
 
-    moved: dict[str, int] = {t: 0 for t in MVP_TABLES}
+    moved: dict[str, int] = {t: 0 for t in target_tables}
     checkpoints: dict[str, str | None] = {}
 
     try:
-        for table in MVP_TABLES:
-            last_key = _get_checkpoint(session, table) if resume else None
+        for table in target_tables:
+            last_key = None
+            if resume:
+                last_key = str((cp.get("tables") or {}).get(table) or "") or None
+                if not last_key:
+                    last_key = _get_checkpoint(session, table)
             checkpoints[table] = last_key
+            pk = _table_pk_field(table)
             while True:
                 if table == "sources":
                     if last_key:
                         rows = src.execute(
-                            "SELECT * FROM sources WHERE id > ? ORDER BY id ASC LIMIT ?",
+                            f"SELECT * FROM sources WHERE {pk} > ? ORDER BY {pk} ASC LIMIT ?",
                             (last_key, batch_size),
                         ).fetchall()
                     else:
-                        rows = src.execute("SELECT * FROM sources ORDER BY id ASC LIMIT ?", (batch_size,)).fetchall()
+                        rows = src.execute(f"SELECT * FROM sources ORDER BY {pk} ASC LIMIT ?", (batch_size,)).fetchall()
                 else:
                     if last_key:
                         rows = src.execute(
-                            f"SELECT * FROM {table} WHERE id > ? ORDER BY id ASC LIMIT ?",
+                            f"SELECT * FROM {table} WHERE {pk} > ? ORDER BY {pk} ASC LIMIT ?",
                             (int(last_key), batch_size),
                         ).fetchall()
                     else:
-                        rows = src.execute(f"SELECT * FROM {table} ORDER BY id ASC LIMIT ?", (batch_size,)).fetchall()
+                        rows = src.execute(f"SELECT * FROM {table} ORDER BY {pk} ASC LIMIT ?", (batch_size,)).fetchall()
 
                 if not rows:
                     break
@@ -265,6 +363,10 @@ def migrate_sqlite_to_target(
                 session.commit()
                 _set_checkpoint(session, table, last_key)
                 checkpoints[table] = last_key
+                cp_tables = cp.setdefault("tables", {})
+                if isinstance(cp_tables, dict):
+                    cp_tables[table] = last_key
+                _save_checkpoint_file(cp_path, cp)
 
         return {
             "ok": True,
@@ -274,6 +376,8 @@ def migrate_sqlite_to_target(
             "resume": bool(resume),
             "moved": moved,
             "checkpoints": checkpoints,
+            "checkpoint_file": str(cp_path),
+            "tables": target_tables,
         }
     except Exception:
         session.rollback()
@@ -288,10 +392,15 @@ def verify_sqlite_vs_target(
     project_root: Path,
     target_url: str,
     source_sqlite_path: Path | None = None,
+    source_sqlite_url_or_path: str | Path | None = None,
+    tables: list[str] | None = None,
+    sample_rate: float = 0.05,
 ) -> dict[str, Any]:
-    src_path = source_sqlite_path or (project_root / "data" / "rules.db")
+    src_path = _sqlite_path_from_input(source_sqlite_url_or_path or source_sqlite_path, project_root)
     src = _connect_source(src_path)
-    session = _target_session(target_url)
+    session = _target_session(target_url, project_root)
+    target_tables = [t for t in (tables or MVP_TABLES) if t in MVP_TABLES]
+    sample = max(0.0, min(1.0, float(sample_rate)))
 
     mismatches: list[dict[str, Any]] = []
     counts: dict[str, dict[str, int]] = {}
@@ -304,7 +413,11 @@ def verify_sqlite_vs_target(
     }
 
     try:
-        for table in MVP_TABLES:
+        conflicts = _detect_unique_conflicts(src)
+        if conflicts:
+            mismatches.append({"type": "unique_conflicts_detected", "conflicts": conflicts})
+
+        for table in target_tables:
             src_count = int(src.execute(f"SELECT COUNT(1) AS c FROM {table}").fetchone()["c"])
             if table in version_models:
                 dst_count = int(session.query(version_models[table]).count())
@@ -317,6 +430,8 @@ def verify_sqlite_vs_target(
                 mismatches.append({"table": table, "type": "count_mismatch", "source": src_count, "target": dst_count})
 
         for table, model in version_models.items():
+            if table not in target_tables:
+                continue
             src_rows = src.execute(
                 f"SELECT profile, version, is_active, config_json FROM {table} ORDER BY profile, version"
             ).fetchall()
@@ -339,12 +454,53 @@ def verify_sqlite_vs_target(
                     }
                 )
 
+            if sample > 0:
+                dst_map = {
+                    (str(r.profile), str(r.version)): _json_hash(
+                        {
+                            "profile": str(r.profile),
+                            "version": str(r.version),
+                            "is_active": int(r.is_active),
+                            "config_json": r.config_json if isinstance(r.config_json, dict) else {},
+                        }
+                    )
+                    for r in dst_rows
+                }
+                sampled = 0
+                sample_miss = 0
+                for r in src_rows:
+                    key = f"{r['profile']}|{r['version']}"
+                    if (_stable_hash_text(key) % 10000) >= int(sample * 10000):
+                        continue
+                    sampled += 1
+                    src_sig = _json_hash(
+                        {
+                            "profile": str(r["profile"]),
+                            "version": str(r["version"]),
+                            "is_active": int(r["is_active"]),
+                            "config_json": _norm_json_obj(r["config_json"]) or {},
+                        }
+                    )
+                    if dst_map.get((str(r["profile"]), str(r["version"]))) != src_sig:
+                        sample_miss += 1
+                if sampled > 0 and sample_miss > 0:
+                    mismatches.append(
+                        {
+                            "table": table,
+                            "type": "sample_hash_mismatch",
+                            "sampled": sampled,
+                            "mismatch": sample_miss,
+                        }
+                    )
+
         return {
             "ok": len(mismatches) == 0,
             "source": str(src_path),
             "target": target_url,
             "counts": counts,
             "mismatches": mismatches,
+            "tables": target_tables,
+            "sample_rate": sample,
         }
     finally:
         src.close()

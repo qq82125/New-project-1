@@ -6,14 +6,25 @@ sources:
   - global
   - en
   region: 北美
-  url: https://www.360dx.com/rss.xml
+  url: https://www.360dx.com/rss-feeds
   name: 360Dx
   id: 360dx-rss
-  fetcher: rss
+  fetcher: html
   enabled: true
-  notes: IVD/diagnostics focused media
+  notes: RSS索引页，优先发现子feed；失败时回退HTML列表抓取
   trust_tier: A
   priority: 80
+  discovery_policy:
+    mode: pick_by_keywords
+    keywords:
+    - diagnostics
+    - dx
+    - molecular
+    - sequencing
+  fetch:
+    fallback_after_failures: 2
+    fallback_url: https://www.360dx.com
+    fallback_fetcher: html
 - tags:
   - company
   - abbott
@@ -25,9 +36,17 @@ sources:
   id: abbott_newsroom
   fetcher: html
   enabled: true
-  notes: html抓取，若发现RSS可升级
+  notes: html抓取，配置regex选择器避免parse_empty
   trust_tier: A
   priority: 84
+  selectors:
+    item_regex: (?is)<a[^>]+href=['\"][^'\"]*(?:corpnewsroom|newsroom|press-release|news)[^'\"]*['\"][^>]*>.*?</a>
+    title_regex: (?is)>(.*?)</a>
+    link_regex: (?is)href=['\"]([^'\"]+)['\"]
+  fetch:
+    fallback_after_failures: 2
+    fallback_url: https://www.abbott.com/media-center/press-releases.html
+    fallback_fetcher: html
 - tags:
   - media
   - global
@@ -124,14 +143,25 @@ sources:
   - us
   - en
   region: 北美
-  url: https://www.fda.gov/medical-devices/medical-device-recalls/rss.xml
+  url: https://www.fda.gov/about-fda/contact-fda/get-email-updates
   name: FDA Medical Device Recalls
   id: fda-device-recalls-rss
-  fetcher: rss
+  fetcher: html
   enabled: true
-  notes: US IVD/device recalls
+  notes: RSS索引页，按关键词发现 Medical Devices/Recall 子feed
   trust_tier: A
   priority: 89
+  discovery_policy:
+    mode: pick_by_keywords
+    keywords:
+    - recall
+    - medical devices
+    - devices
+    - cdrh
+  fetch:
+    fallback_after_failures: 2
+    fallback_url: https://www.fda.gov/medical-devices/medical-device-recalls-and-safety-alerts
+    fallback_fetcher: html
 - tags:
   - regulatory
   - us

@@ -28,6 +28,8 @@
       "properties": {
         "enabled": { "type": "boolean" },
         "timezone": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "collect_window_hours": { "type": "integer", "minimum": 1, "maximum": 168 },
+        "collect_asset_dir": { "type": "string", "minLength": 1, "maxLength": 256 },
         "schedules": {
           "type": "array",
           "minItems": 0,
@@ -107,4 +109,3 @@
     }
   }
 }
-

@@ -5,6 +5,8 @@ import os
 import random
 import sys
 import time
+import hashlib
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,12 +16,24 @@ import yaml
 
 from app.services.run_lock import RunLockError, acquire_run_lock
 from app.services.rules_store import RulesStore
-from app.services.source_registry import test_source
+from app.services.source_registry import fetch_source_entries
 from app.workers.live_run import run_digest
+from app.services.collect_asset_store import CollectAssetStore
 
 
 def _log(msg: str) -> None:
     print(f"[SCHED] {msg}", file=sys.stderr, flush=True)
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while True:
+            b = f.read(1024 * 1024)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -107,6 +121,8 @@ class SchedulerWorker:
         self._active_version = ""
         self._enabled = False
         self._paused = False
+        self._collect_window_hours = 24
+        self._collect_asset_dir = "artifacts/collect"
         self._last_reload_mtime = 0.0
 
         try:
@@ -242,6 +258,9 @@ class SchedulerWorker:
                         trigger=trigger,
                         schedule_id=schedule_id,
                         send=True,
+                        collect_window_hours=self._collect_window_hours,
+                        collect_asset_dir=self._collect_asset_dir,
+                        use_collect_assets=True,
                         project_root=self.project_root,
                     )
                 _log(
@@ -252,7 +271,16 @@ class SchedulerWorker:
         except Exception as e:
             _log(f"job_failed schedule_id={schedule_id} purpose={purpose} error={e}")
 
-    def _run_collect(self, *, schedule_id: str, profile: str, trigger: str = "schedule") -> dict[str, Any]:
+    def _run_collect(
+        self,
+        *,
+        schedule_id: str,
+        profile: str,
+        trigger: str = "schedule",
+        max_sources: int | None = None,
+        force: bool = False,
+        fetch_limit: int = 50,
+    ) -> dict[str, Any]:
         """
         Per-source collection loop with min-interval gating.
 
@@ -263,17 +291,39 @@ class SchedulerWorker:
         run_id = f"collect-{int(time.time())}"
         artifacts_dir = self.project_root / "artifacts" / run_id
         artifacts_dir.mkdir(parents=True, exist_ok=True)
+        started_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            self.store.upsert_run_execution(
+                run_id=run_id,
+                profile=profile,
+                triggered_by=trigger,
+                window="collect",
+                status="running",
+                started_at=started_iso,
+                ended_at=None,
+            )
+        except Exception:
+            pass
 
         now = time.time()
         fetched = 0
         skipped = 0
         failed = 0
+        assets_written = 0
+        deduped_count = 0
+        errors: list[str] = []
+        sources_fetched_count = 0
+        sources_failed_count = 0
+        collector = CollectAssetStore(self.project_root, asset_dir=self._collect_asset_dir)
 
         rows = self.store.list_sources(enabled_only=True)
+        if isinstance(max_sources, int) and max_sources > 0:
+            rows = rows[: int(max_sources)]
         for s in rows:
             sid = str(s.get("id", "")).strip()
             if not sid:
                 continue
+            t0 = time.time()
             fetch_cfg = s.get("fetch", {}) if isinstance(s.get("fetch"), dict) else {}
             interval_m = fetch_cfg.get("interval_minutes")
             try:
@@ -286,29 +336,90 @@ class SchedulerWorker:
             if interval_min > 0 and last_fetched_at:
                 try:
                     # stored as isoformat from _utc_now (timezone aware)
-                    from datetime import datetime
-
                     dt_last = datetime.fromisoformat(last_fetched_at.replace("Z", "+00:00"))
                     age = now - dt_last.timestamp()
                     due = age >= interval_min * 60
                 except Exception:
                     due = True
 
-            if not due:
+            if not force and not due:
                 skipped += 1
                 # record as skipped (keep last_fetched_at unchanged)
                 # Keep last_fetched_at unchanged; only update status field.
                 try:
                     self.store.record_source_fetch(sid, status="skipped", http_status=None, error=None)
+                    self.store.record_source_fetch_event(
+                        run_id=run_id,
+                        source_id=sid,
+                        status="skipped",
+                        http_status=None,
+                        items_count=0,
+                        error=None,
+                        duration_ms=int((time.time() - t0) * 1000),
+                    )
                 except Exception:
                     pass
                 continue
 
-            result = test_source(s, limit=3)
+            timeout_s = 20
+            retries = 1
+            try:
+                if isinstance(fetch_cfg, dict):
+                    timeout_s = int(fetch_cfg.get("timeout_seconds") or 20)
+                    retries = int(fetch_cfg.get("retries") or 1)
+            except Exception:
+                timeout_s = 20
+                retries = 1
+            # Auto-fallback on consecutive failures: switch to backup URL/fetcher when configured.
+            source_for_fetch = dict(s)
+            source_for_fetch["fetch"] = dict(fetch_cfg) if isinstance(fetch_cfg, dict) else {}
+            fallback_used = False
+            try:
+                fallback_after = int(source_for_fetch["fetch"].get("fallback_after_failures") or 0)
+            except Exception:
+                fallback_after = 0
+            if fallback_after > 0:
+                consec_fail = int(self.store.source_consecutive_failures(sid, lookback=max(20, fallback_after * 3)))
+                if consec_fail >= fallback_after:
+                    f_url = str(
+                        source_for_fetch["fetch"].get("fallback_url")
+                        or source_for_fetch.get("fallback_url")
+                        or ""
+                    ).strip()
+                    f_fetcher = str(
+                        source_for_fetch["fetch"].get("fallback_fetcher")
+                        or source_for_fetch.get("fallback_fetcher")
+                        or ""
+                    ).strip().lower()
+                    if f_url:
+                        source_for_fetch["url"] = f_url
+                        fallback_used = True
+                    if f_fetcher in {"rss", "html", "rsshub", "google_news", "api", "web"}:
+                        source_for_fetch["fetcher"] = f_fetcher
+                        source_for_fetch["connector"] = "web" if f_fetcher == "html" else f_fetcher
+                        fallback_used = True
+                    if fallback_used:
+                        _log(
+                            f"source_fallback_applied source_id={sid} "
+                            f"consecutive_failures={consec_fail} threshold={fallback_after} "
+                            f"url={source_for_fetch.get('url','')} fetcher={source_for_fetch.get('fetcher') or source_for_fetch.get('connector')}"
+                        )
+
+            result = fetch_source_entries(
+                source_for_fetch,
+                limit=max(5, int(fetch_limit or 50)),
+                timeout_seconds=max(3, timeout_s),
+                retries=max(0, retries),
+            )
             ok = bool(result.get("ok"))
             status = "ok" if ok else "fail"
+            if ok and fallback_used:
+                status = "ok_fallback"
             http_status = result.get("http_status")
             err = result.get("error")
+            if fallback_used and not ok:
+                err = f"[fallback] {err}" if err else "[fallback] fetch_failed"
+            items_count = len(result.get("samples", []) if isinstance(result.get("samples"), list) else [])
             try:
                 self.store.record_source_fetch(
                     sid,
@@ -316,13 +427,69 @@ class SchedulerWorker:
                     http_status=int(http_status) if http_status is not None else None,
                     error=str(err or "") if not ok else None,
                 )
+                self.store.record_source_fetch_event(
+                    run_id=run_id,
+                    source_id=sid,
+                    status=status,
+                    http_status=int(http_status) if http_status is not None else None,
+                    items_count=int(items_count),
+                    error=str(err or "") if not ok else None,
+                    duration_ms=int((time.time() - t0) * 1000),
+                )
             except Exception:
                 pass
 
             if ok:
                 fetched += 1
+                sources_fetched_count += 1
+                try:
+                    wr = collector.append_items(
+                        run_id=run_id,
+                        source_id=sid,
+                        source_name=str(s.get("name", sid)),
+                        source_group="regulatory" if "regulatory" in str(s.get("tags", "")) else "media",
+                        items=list(result.get("entries", [])) if isinstance(result.get("entries", []), list) else [],
+                        rules_runtime={},
+                    )
+                    assets_written += int(wr.get("written", 0))
+                    deduped_count += int(wr.get("skipped", 0))
+
+                    # For non-RSS sources, keep at least one observable stub if parser produced no rows.
+                    connector = str(source_for_fetch.get("connector") or source_for_fetch.get("fetcher") or "").lower()
+                    is_non_rss = connector in {"html", "web", "api"}
+                    if is_non_rss and int(result.get("items_count") or 0) <= 0:
+                        sw = collector.append_stub_item(
+                            run_id=run_id,
+                            source_id=sid,
+                            source_name=str(s.get("name", sid)),
+                            source_group="media",
+                            url=str(source_for_fetch.get("url", "")),
+                            error=str(result.get("error_message") or ""),
+                        )
+                        assets_written += int(sw.get("written", 0))
+                        deduped_count += int(sw.get("skipped", 0))
+                except Exception as e:
+                    msg = f"{sid}:append_failed:{e}"
+                    errors.append(msg)
             else:
                 failed += 1
+                sources_failed_count += 1
+                # Non-RSS source can still emit a stub item for observability.
+                connector = str(source_for_fetch.get("connector") or source_for_fetch.get("fetcher") or "").lower()
+                if connector in {"html", "web", "api"}:
+                    try:
+                        sw = collector.append_stub_item(
+                            run_id=run_id,
+                            source_id=sid,
+                            source_name=str(s.get("name", sid)),
+                            source_group="media",
+                            url=str(source_for_fetch.get("url", "")),
+                            error=str(err or ""),
+                        )
+                        assets_written += int(sw.get("written", 0))
+                        deduped_count += int(sw.get("skipped", 0))
+                    except Exception as e:
+                        errors.append(f"{sid}:stub_failed:{e}")
 
         meta = {
             "run_id": run_id,
@@ -331,15 +498,59 @@ class SchedulerWorker:
             "profile": profile,
             "purpose": "collect",
             "ts": time.time(),
-            "counts": {"enabled_sources": len(rows), "fetched": fetched, "skipped": skipped, "failed": failed},
+            "counts": {
+                "enabled_sources": len(rows),
+                "fetched": fetched,
+                "skipped": skipped,
+                "failed": failed,
+                "assets_written": assets_written,
+                "assets_skipped": deduped_count,
+            },
+            "collect_asset_dir": self._collect_asset_dir,
+            "assets_path": str(collector.base_dir),
+            "assets_written_count": assets_written,
+            "deduped_count": deduped_count,
+            "sources_fetched_count": sources_fetched_count,
+            "sources_failed_count": sources_failed_count,
+            "errors": errors,
         }
-        (artifacts_dir / "run_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-        return {"ok": True, "run_id": run_id, "counts": meta["counts"], "artifacts_dir": str(artifacts_dir)}
+        meta_path = artifacts_dir / "run_meta.json"
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        ended_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            self.store.record_report_artifact(
+                run_id=run_id,
+                artifact_path=str(meta_path),
+                artifact_type="run_meta",
+                sha256=_sha256_file(meta_path),
+                created_at=ended_iso,
+            )
+            self.store.finish_run_execution(
+                run_id=run_id,
+                status="success",
+                ended_at=ended_iso,
+            )
+        except Exception:
+            pass
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "counts": meta["counts"],
+            "assets_path": meta["assets_path"],
+            "assets_written_count": meta["assets_written_count"],
+            "deduped_count": meta["deduped_count"],
+            "sources_fetched_count": meta["sources_fetched_count"],
+            "sources_failed_count": meta["sources_failed_count"],
+            "errors": meta["errors"],
+            "artifacts_dir": str(artifacts_dir),
+        }
 
     def _apply_config(self, cfg: dict[str, Any]) -> None:
         defaults = _extract_defaults(cfg)
         enabled = bool(defaults.get("enabled", False))
         tz = str(defaults.get("timezone", "Asia/Singapore"))
+        self._collect_window_hours = int(defaults.get("collect_window_hours") or 24)
+        self._collect_asset_dir = str(defaults.get("collect_asset_dir") or "artifacts/collect")
         conc = defaults.get("concurrency", {}) if isinstance(defaults.get("concurrency"), dict) else {}
         misfire = int(conc.get("misfire_grace_seconds") or 600)
         max_instances = int(conc.get("max_instances") or 1)

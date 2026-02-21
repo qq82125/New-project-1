@@ -7,9 +7,12 @@ import re
 import subprocess
 import sys
 import uuid
+import hashlib
 from pathlib import Path
+from typing import Any
 
 from app.rules.engine import RuleEngine
+from app.services.rules_store import RulesStore
 from app.services.source_registry import effective_source_ids_for_profile
 
 
@@ -374,17 +377,35 @@ def _render_section_a(items: list[dict]) -> str:
     return "\n".join(lines).rstrip() + "\n\n"
 
 
-def _render_section_g(panel: dict) -> str:
+def _render_section_g(panel: dict, track_contract: dict | None = None) -> str:
     mix = panel.get("event_mix", {}) if isinstance(panel.get("event_mix"), dict) else {}
     reg = int(mix.get("regulatory", panel.get("regulatory", 0)) or 0)
     com = int(mix.get("commercial", panel.get("commercial", 0)) or 0)
-    return (
+    base = (
         "G. 质量指标 (Quality Audit)\n"
         f"24H条目数 / 7D补充数：{panel.get('n24', 0)} / {panel.get('n7', 0)} | "
         f"亚太占比：{panel.get('apac_share_pct', '0%')} | "
         f"商业与监管事件比：{com}:{reg} | "
         f"必查信源命中清单：{panel.get('required_sources_hits', '')}\n"
     )
+    if not isinstance(track_contract, dict):
+        return base
+    cov = track_contract.get("coverage", {}) if isinstance(track_contract.get("coverage"), dict) else {}
+    gaps = track_contract.get("routing_gaps", []) if isinstance(track_contract.get("routing_gaps"), list) else []
+    extras: list[str] = []
+    if cov:
+        extras.append(
+            "core/frontier覆盖："
+            f"core={int(cov.get('core', 0) or 0)}，"
+            f"frontier={int(cov.get('frontier', 0) or 0)}，"
+            f"A候选={int(cov.get('a_pool_count', 0) or 0)}，"
+            f"F候选={int(cov.get('f_pool_count', 0) or 0)}"
+        )
+    if gaps:
+        extras.append(f"分流缺口：{'; '.join([str(x) for x in gaps[:6]])}")
+    if not extras:
+        return base
+    return base + ("\n".join(extras).rstrip() + "\n")
 
 
 def _qc_fail_reasons(items: list[dict], qc_decision: dict, qc_panel: dict) -> list[str]:
@@ -442,15 +463,53 @@ def _qc_fail_reasons(items: list[dict], qc_decision: dict, qc_panel: dict) -> li
     return fail_reasons
 
 
-def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
+def run_dryrun(
+    profile: str = "legacy",
+    report_date: str | None = None,
+    lite_mode: bool = False,
+    progress_file: str | None = None,
+) -> dict:
     engine = RuleEngine()
     run_id = f"dryrun-{uuid.uuid4().hex[:10]}"
     decision = engine.build_decision(profile=profile, run_id=run_id)
 
     project_root = engine.project_root
+    store = RulesStore(project_root)
     active_source_ids = effective_source_ids_for_profile(project_root, profile, rules_root=engine.rules_root)
     artifacts_dir = project_root / "artifacts" / run_id
     artifacts_dir.mkdir(parents=True, exist_ok=True)
+    progress_path = Path(progress_file).expanduser().resolve() if progress_file else (artifacts_dir / "progress.json")
+    progress_path.parent.mkdir(parents=True, exist_ok=True)
+    started_at = dt.datetime.now(dt.timezone.utc)
+
+    def _write_progress(stage: str, status: str = "running", message: str = "", **extra: Any) -> None:
+        payload: dict[str, Any] = {
+            "run_id": run_id,
+            "status": status,
+            "stage": stage,
+            "message": message,
+            "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "elapsed_sec": round((dt.datetime.now(dt.timezone.utc) - started_at).total_seconds(), 2),
+        }
+        payload.update(extra)
+        try:
+            progress_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    _write_progress("init", message="准备执行 dry-run")
+    try:
+        store.upsert_run_execution(
+            run_id=run_id,
+            profile=profile,
+            triggered_by="dryrun",
+            window=str(report_date or ""),
+            status="running",
+            started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+            ended_at=None,
+        )
+    except Exception:
+        pass
 
     env = os.environ.copy()
     env["REPORT_TZ"] = str(
@@ -460,19 +519,42 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         env["REPORT_DATE"] = report_date
     env["REPORT_RUN_ID"] = run_id
     env["DRYRUN_ARTIFACTS_DIR"] = str(artifacts_dir)
+    env["DRYRUN_PROGRESS_FILE"] = str(progress_path)
+    if lite_mode:
+        env["DRYRUN_LITE"] = "1"
+        # Keep quick preview fast but avoid over-pruning to zero-item false negatives.
+        env.setdefault("DRYRUN_LITE_MAX_SOURCES", "20")
+        env.setdefault("DRYRUN_FETCH_LIMIT", "20")
+        env.setdefault("DRYRUN_FETCH_TIMEOUT_SECONDS", "8")
+        env.setdefault("DRYRUN_FETCH_RETRIES", "1")
+        env.setdefault("DRYRUN_LITE_SKIP_OFFICIAL", "0")
     if profile == "enhanced":
         env["ENHANCED_RULES_PROFILE"] = "enhanced"
     else:
         env.pop("ENHANCED_RULES_PROFILE", None)
 
-    proc = subprocess.run(
-        ["python3", "scripts/generate_ivd_report.py"],
-        cwd=project_root,
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    default_timeout = "120" if lite_mode else "300"
+    dryrun_timeout = int(os.environ.get("DRYRUN_TIMEOUT_SECONDS", default_timeout) or default_timeout)
+    try:
+        _write_progress("generate_report", message="生成报告中")
+        proc = subprocess.run(
+            ["python3", "scripts/generate_ivd_report.py"],
+            cwd=project_root,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=max(30, dryrun_timeout),
+        )
+    except subprocess.TimeoutExpired as exc:
+        _write_progress(
+            "timeout",
+            status="failed",
+            message=f"dryrun_timeout: 超过 {max(30, dryrun_timeout)} 秒未完成",
+        )
+        raise RuntimeError(
+            f"dryrun_timeout: 超过 {max(30, dryrun_timeout)} 秒未完成，请检查信源连通性或缩小采集范围"
+        ) from exc
     if proc.stderr:
         print(proc.stderr, file=sys.stderr, end="")
     raw_preview_text = proc.stdout
@@ -489,6 +571,7 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
     exclude_diag_file = artifacts_dir / "exclude_diag.json"
     scoring_explain_file = artifacts_dir / "scoring_explain.json"
     scoring_summary_file = artifacts_dir / "scoring_summary.json"
+    track_contract_file = artifacts_dir / "track_contract.json"
     cluster_payload = {}
     if cluster_explain_file.exists():
         try:
@@ -622,6 +705,12 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             scoring_summary = json.loads(scoring_summary_file.read_text(encoding="utf-8"))
         except Exception:
             scoring_summary = {}
+    track_contract: dict[str, Any] = {}
+    if track_contract_file.exists():
+        try:
+            track_contract = json.loads(track_contract_file.read_text(encoding="utf-8"))
+        except Exception:
+            track_contract = {}
 
     # Lane diagnostics: focus on "其他" cases to improve lane_mapping iteratively.
     lane_diag: dict[str, Any] = {"other_count": 0, "reasons": {}, "samples": []}
@@ -796,6 +885,17 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         "panel": qc_panel,
     }
 
+    cov = track_contract.get("coverage", {}) if isinstance(track_contract.get("coverage"), dict) else {}
+    rep = qc_panel.get("repeat", {}) if isinstance(qc_panel.get("repeat"), dict) else {}
+    quota_usage = {
+        "a_pool_count": int(cov.get("a_pool_count", 0) or 0),
+        "f_pool_count": int(cov.get("f_pool_count", 0) or 0),
+        "frontier_quota_used": int(cov.get("f_quota_used", 0) or 0),
+        "frontier_quota_target": int(cov.get("f_quota_target", 0) or 0),
+        "core_count": int(cov.get("core", 0) or 0),
+        "frontier_count": int(cov.get("frontier", 0) or 0),
+    }
+
     rendered_sections = {
         "A": _render_section_a(items[:items_max]),
         "B": sections.get("B", ""),
@@ -803,8 +903,23 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         "D": sections.get("D", ""),
         "E": sections.get("E", ""),
         "F": sections.get("F", ""),
-        "G": _render_section_g(qc_panel),
+        "G": _render_section_g(qc_panel, track_contract=track_contract),
     }
+    # Runtime contract guardrails: A/F/G must be explainable and non-empty.
+    if not str(rendered_sections.get("A", "")).strip():
+        rendered_sections["A"] = _render_section_a(items[:items_max])
+    if not str(rendered_sections.get("F", "")).strip():
+        gaps = track_contract.get("routing_gaps", []) if isinstance(track_contract.get("routing_gaps"), list) else []
+        if gaps:
+            gap_lines = "\n".join([f"{idx}) 分流规则缺口：{g}" for idx, g in enumerate(gaps[:5], 1)])
+            rendered_sections["F"] = "F. 信息缺口与次日跟踪清单（3-5条）\n" + gap_lines + "\n"
+        else:
+            rendered_sections["F"] = (
+                "F. 信息缺口与次日跟踪清单（3-5条）\n"
+                "1) frontier雷达暂无有效条目：建议扩充前沿关键词与高可信前沿信源。\n"
+            )
+    if not str(rendered_sections.get("G", "")).strip():
+        rendered_sections["G"] = _render_section_g(qc_panel, track_contract=track_contract)
     quality_markers = ["质量指标", "Quality Audit", "24H条目数", "7D补充数", "亚太占比", "必查信源"]
     for sec in ["A", "B", "C", "D", "E", "F"]:
         txt = rendered_sections.get(sec, "")
@@ -894,6 +1009,76 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         json.dumps(run_meta, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    _write_progress("finalizing", message="整理产物中")
+
+    def _sha256_file(path: Path) -> str:
+        h = hashlib.sha256()
+        with path.open("rb") as f:
+            while True:
+                b = f.read(1024 * 1024)
+                if not b:
+                    break
+                h.update(b)
+        return h.hexdigest()
+
+    # Best-effort ledger writes; never break dry-run behavior.
+    try:
+        for p, t in [
+            (artifacts_dir / "run_id.json", "explain"),
+            (artifacts_dir / "newsletter_preview.md", "preview"),
+            (artifacts_dir / "items.json", "items"),
+            (artifacts_dir / "qc_report.json", "qc_report"),
+            (artifacts_dir / "output_render.json", "output_render"),
+            (artifacts_dir / "run_meta.json", "run_meta"),
+        ]:
+            if p.exists():
+                store.record_report_artifact(
+                    run_id=run_id,
+                    artifact_path=str(p),
+                    artifact_type=t,
+                    sha256=_sha256_file(p),
+                    created_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+                )
+        # Aggregate source stats into fetch events for dryrun observability.
+        for row in source_payload.get("sources", []) if isinstance(source_payload, dict) else []:
+            if not isinstance(row, dict):
+                continue
+            store.record_source_fetch_event(
+                run_id=run_id,
+                source_id=str(row.get("source_id", "") or row.get("id", "") or ""),
+                status="ok" if int(row.get("parse_ok", 0) or 0) > 0 else ("skipped" if int(row.get("parse_skip", 0) or 0) > 0 else "fail"),
+                http_status=int(row.get("top_http_status")) if row.get("top_http_status") is not None else None,
+                items_count=int(row.get("fetch_count", 0) or 0),
+                error="",
+                duration_ms=0,
+            )
+        # Persist dedupe keys for DB-level idempotency observability.
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            key = str(it.get("dedupe_key", "")).strip()
+            if not key:
+                continue
+            store.insert_dedupe_key(
+                dedupe_key=key,
+                run_id=run_id,
+                created_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+            )
+        store.finish_run_execution(
+            run_id=run_id,
+            status="success",
+            ended_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+        )
+    except Exception:
+        pass
+    total_sources_n = int(source_health_summary.get("total_sources", 0) or 0)
+    _write_progress(
+        "done",
+        status="completed",
+        message="dry-run 完成",
+        total_sources=total_sources_n,
+        completed_sources=total_sources_n,
+    )
 
     return {
         "run_id": run_id,
@@ -911,6 +1096,7 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
             "qc_report": str(artifacts_dir / "qc_report.json"),
             "output_render": str(artifacts_dir / "output_render.json"),
             "run_meta": str(artifacts_dir / "run_meta.json"),
+            "progress": str(progress_path),
             "platform_diag": str(platform_diag_file),
             "scoring_explain": str(scoring_explain_file),
             "scoring_summary": str(scoring_summary_file),
@@ -918,10 +1104,16 @@ def run_dryrun(profile: str = "legacy", report_date: str | None = None) -> dict:
         "items_count": len(items),
         "items_before_count": int(cluster_payload.get("items_before_count", len(items))),
         "items_after_count": int(cluster_payload.get("items_after_count", len(items))),
+        "quota_usage": quota_usage,
+        "repeat_rate": {
+            "yesterday": float(rep.get("repeat_rate_yesterday", 0.0) or 0.0),
+            "recent_7d_max": float(rep.get("repeat_rate_7d_max", 0.0) or 0.0),
+        },
         "top_clusters": cluster_payload.get("top_clusters", []),
         "source_stats": source_payload.get("sources", []),
         "source_health_summary": source_health_summary,
         "platform_diag": platform_diag,
+        "track_contract": track_contract,
         "lane_diag": lane_diag,
         "event_diag": event_diag,
         "keyword_pack_stats": keyword_pack_stats,

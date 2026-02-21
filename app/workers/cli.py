@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+from pathlib import Path
 from subprocess import CalledProcessError
 
 from app.rules.errors import RULES_003_RULESET_MISMATCH, RuleEngineError
 from app.rules.engine import RuleEngine
 from app.rules.models import RuleSelection
 from app.services.db_migration import dual_replay_compare, migrate_sqlite_to_target, verify_sqlite_vs_target
+from app.services.rules_store import RulesStore
 from app.services.source_registry import (
     SourceRegistryError,
     diff_sources_for_profiles,
@@ -20,8 +23,13 @@ from app.services.source_registry import (
     test_source,
     validate_sources_registry,
 )
+from app.services.collect_asset_store import CollectAssetStore
+from app.services.analysis_cache_store import AnalysisCacheStore
+from app.services.analysis_generator import AnalysisGenerator, degraded_analysis
 from app.workers.dryrun import main as dryrun_main
+from app.workers.live_run import run_digest
 from app.workers.replay import main as replay_main
+from app.workers.scheduler_worker import SchedulerWorker
 
 
 def _get_opt(argv: list[str], key: str) -> str | None:
@@ -233,21 +241,25 @@ def cmd_sources_retire(argv: list[str]) -> int:
 
 def cmd_db_migrate(argv: list[str]) -> int:
     from pathlib import Path
-    import os
 
-    target_url = _get_opt(argv, "--target-url") or os.environ.get("DATABASE_URL", "")
-    source_sqlite = _get_opt(argv, "--source-sqlite") or "data/rules.db"
-    batch_size = int(_get_opt(argv, "--batch-size") or "500")
+    from_value = _get_opt(argv, "--from") or _get_opt(argv, "--source-sqlite") or "sqlite:///data/rules.db"
+    target_url = _get_opt(argv, "--to") or _get_opt(argv, "--target-url") or os.environ.get("DATABASE_URL", "")
+    checkpoint = _get_opt(argv, "--checkpoint") or "data/db_migrate_checkpoint.json"
+    tables_arg = _get_opt(argv, "--tables") or ""
+    batch_size = int(_get_opt(argv, "--batch-size") or "1000")
     resume = (_get_opt(argv, "--resume") or "true").strip().lower() != "false"
     if not target_url:
-        print("--target-url (or DATABASE_URL) is required", file=sys.stderr)
+        print("--to/--target-url (or DATABASE_URL) is required", file=sys.stderr)
         return 2
+    tables = [x.strip() for x in tables_arg.split(",") if x.strip()] if tables_arg else None
     out = migrate_sqlite_to_target(
         project_root=Path.cwd(),
         target_url=target_url,
-        source_sqlite_path=Path(source_sqlite),
+        source_sqlite_url_or_path=from_value,
         batch_size=batch_size,
         resume=resume,
+        checkpoint_path=Path(checkpoint),
+        tables=tables,
     )
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0 if bool(out.get("ok")) else 4
@@ -255,17 +267,21 @@ def cmd_db_migrate(argv: list[str]) -> int:
 
 def cmd_db_verify(argv: list[str]) -> int:
     from pathlib import Path
-    import os
 
-    target_url = _get_opt(argv, "--target-url") or os.environ.get("DATABASE_URL", "")
-    source_sqlite = _get_opt(argv, "--source-sqlite") or "data/rules.db"
+    from_value = _get_opt(argv, "--from") or _get_opt(argv, "--source-sqlite") or "sqlite:///data/rules.db"
+    target_url = _get_opt(argv, "--to") or _get_opt(argv, "--target-url") or os.environ.get("DATABASE_URL", "")
+    tables_arg = _get_opt(argv, "--tables") or ""
+    sample_rate = float(_get_opt(argv, "--sample") or "0.05")
     if not target_url:
-        print("--target-url (or DATABASE_URL) is required", file=sys.stderr)
+        print("--to/--target-url (or DATABASE_URL) is required", file=sys.stderr)
         return 2
+    tables = [x.strip() for x in tables_arg.split(",") if x.strip()] if tables_arg else None
     out = verify_sqlite_vs_target(
         project_root=Path.cwd(),
         target_url=target_url,
-        source_sqlite_path=Path(source_sqlite),
+        source_sqlite_url_or_path=from_value,
+        tables=tables,
+        sample_rate=sample_rate,
     )
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0 if bool(out.get("ok")) else 4
@@ -273,14 +289,209 @@ def cmd_db_verify(argv: list[str]) -> int:
 
 def cmd_db_dual_replay(argv: list[str]) -> int:
     from pathlib import Path
-    import os
 
-    primary_url = _get_opt(argv, "--primary-url") or os.environ.get("DATABASE_URL", "")
-    secondary_url = _get_opt(argv, "--secondary-url") or os.environ.get("DATABASE_URL_SECONDARY", "")
-    if not primary_url or not secondary_url:
-        print("--primary-url/--secondary-url (or DATABASE_URL/DATABASE_URL_SECONDARY) are required", file=sys.stderr)
-        return 2
-    out = dual_replay_compare(project_root=Path.cwd(), primary_url=primary_url, secondary_url=secondary_url)
+    # Compatibility mode: explicit compare between two URLs.
+    if "--compare" in argv:
+        primary_url = _get_opt(argv, "--primary-url") or os.environ.get("DATABASE_URL", "")
+        secondary_url = _get_opt(argv, "--secondary-url") or os.environ.get("DATABASE_URL_SECONDARY", "")
+        if not primary_url or not secondary_url:
+            print("--primary-url/--secondary-url (or DATABASE_URL/DATABASE_URL_SECONDARY) are required", file=sys.stderr)
+            return 2
+        out = dual_replay_compare(project_root=Path.cwd(), primary_url=primary_url, secondary_url=secondary_url)
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return 0 if bool(out.get("ok")) else 4
+
+    limit = int(_get_opt(argv, "--limit") or "100")
+    store = RulesStore(Path.cwd())
+    if not hasattr(store, "replay_dual_write_failures"):
+        print(json.dumps({"ok": False, "error": "store does not support dual replay"}, ensure_ascii=False, indent=2))
+        return 5
+    out = store.replay_dual_write_failures(limit=limit)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0 if bool(out.get("ok")) else 4
+
+
+def cmd_db_status(argv: list[str]) -> int:
+    _ = argv
+    from pathlib import Path
+
+    store = RulesStore(Path.cwd())
+    if not hasattr(store, "db_status"):
+        print(json.dumps({"ok": False, "error": "store does not support db status"}, ensure_ascii=False, indent=2))
+        return 5
+    out = {"ok": True, **store.db_status()}
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_collect_now(argv: list[str]) -> int:
+    profile = _get_opt(argv, "--profile") or "enhanced"
+    trigger = _get_opt(argv, "--trigger") or "manual"
+    schedule_id = _get_opt(argv, "--schedule-id") or "manual"
+    max_sources = _get_opt(argv, "--max-sources")
+    if not max_sources:
+        max_sources = _get_opt(argv, "--limit-sources")
+    force = (_get_opt(argv, "--force") or "false").strip().lower() in {"1", "true", "yes", "y", "on"}
+    fetch_limit = _get_opt(argv, "--fetch-limit")
+    worker = SchedulerWorker()
+    out = worker._run_collect(
+        schedule_id=schedule_id,
+        profile=profile,
+        trigger=trigger,
+        max_sources=int(max_sources) if max_sources and str(max_sources).isdigit() else None,
+        force=force,
+        fetch_limit=int(fetch_limit) if fetch_limit and str(fetch_limit).isdigit() else 50,
+    )
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0 if bool(out.get("ok")) else 4
+
+
+def cmd_collect_clean(argv: list[str]) -> int:
+    keep_days = int(_get_opt(argv, "--keep-days") or "30")
+    asset_dir = _get_opt(argv, "--collect-asset-dir") or "artifacts/collect"
+    root = Path(__file__).resolve().parents[2]
+    store = CollectAssetStore(root, asset_dir=asset_dir)
+    out = store.cleanup(keep_days=max(1, keep_days))
+    payload = {"ok": True, "collect_asset_dir": str(store.base_dir), **out}
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_analysis_clean(argv: list[str]) -> int:
+    keep_days = int(_get_opt(argv, "--keep-days") or "30")
+    asset_dir = _get_opt(argv, "--analysis-asset-dir") or "artifacts/analysis"
+    root = Path(__file__).resolve().parents[2]
+    store = AnalysisCacheStore(root, asset_dir=asset_dir)
+    out = store.cleanup(keep_days=max(1, keep_days))
+    payload = {"ok": True, "analysis_asset_dir": str(store.base_dir), **out}
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_analysis_recompute(argv: list[str]) -> int:
+    model = _get_opt(argv, "--model") or "primary"
+    prompt_version = _get_opt(argv, "--prompt-version") or "v2"
+    sample = int(_get_opt(argv, "--sample") or "20")
+    asset_dir = _get_opt(argv, "--analysis-asset-dir") or "artifacts/analysis"
+    root = Path(__file__).resolve().parents[2]
+    store = AnalysisCacheStore(root, asset_dir=asset_dir)
+
+    files = sorted(store.base_dir.glob("items-*.jsonl"), reverse=True)
+    if not files:
+        print(json.dumps({"ok": False, "error": "no analysis cache files found"}, ensure_ascii=False, indent=2))
+        return 4
+
+    rows: list[dict] = []
+    with files[0].open("r", encoding="utf-8") as f:
+        for ln in f:
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                rows.append(json.loads(ln))
+            except Exception:
+                continue
+            if len(rows) >= max(1, sample):
+                break
+    if not rows:
+        print(json.dumps({"ok": False, "error": "no valid cache rows"}, ensure_ascii=False, indent=2))
+        return 4
+
+    if str(model).strip().lower() == "primary":
+        primary_model = os.environ.get("MODEL_PRIMARY", "local-heuristic-v1")
+        fallback_model = os.environ.get("MODEL_FALLBACK", "local-lite-v1")
+    elif str(model).strip().lower() == "fallback":
+        primary_model = os.environ.get("MODEL_FALLBACK", "local-lite-v1")
+        fallback_model = os.environ.get("MODEL_FALLBACK", "local-lite-v1")
+    else:
+        primary_model = str(model)
+        fallback_model = str(model)
+    gen = AnalysisGenerator(
+        primary_model=primary_model,
+        fallback_model=fallback_model,
+        model_policy="always_primary",
+        prompt_version=prompt_version,
+    )
+
+    changed = 0
+    kept = 0
+    lines = [
+        f"# Analysis Recompute Compare",
+        f"",
+        f"- source_file: `{files[0]}`",
+        f"- sample: {len(rows)}",
+        f"- model: {model}",
+        f"- prompt_version: {prompt_version}",
+        f"",
+    ]
+    for idx, r in enumerate(rows, 1):
+        item = {
+            "title": r.get("title", ""),
+            "source": r.get("source", ""),
+            "event_type": r.get("event_type", ""),
+            "track": r.get("track", "core"),
+            "relevance_level": r.get("relevance_level", 0),
+            "url": r.get("url", ""),
+        }
+        old_summary = str(r.get("summary", "")).strip()
+        try:
+            new = gen.generate(item, rules={})
+        except Exception as e:
+            new = degraded_analysis(item, str(e))
+        new_summary = str(new.get("summary", "")).strip()
+        if new_summary != old_summary:
+            changed += 1
+        else:
+            kept += 1
+        lines.extend(
+            [
+                f"## {idx}. {str(item.get('title',''))[:80]}",
+                f"- old_model: {r.get('used_model') or r.get('model','')}",
+                f"- new_model: {new.get('used_model') or new.get('model','')}",
+                f"- old_prompt: {r.get('prompt_version','')}",
+                f"- new_prompt: {new.get('prompt_version','')}",
+                f"- changed: {'yes' if new_summary != old_summary else 'no'}",
+                f"- old: {old_summary[:180]}",
+                f"- new: {new_summary[:180]}",
+                "",
+            ]
+        )
+
+    out_file = store.base_dir / f"compare-{int(__import__('time').time())}.md"
+    out_file.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    payload = {
+        "ok": True,
+        "compare_file": str(out_file),
+        "sample": len(rows),
+        "changed": changed,
+        "unchanged": kept,
+        "model": model,
+        "prompt_version": prompt_version,
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_digest_now(argv: list[str]) -> int:
+    profile = _get_opt(argv, "--profile") or "enhanced"
+    trigger = _get_opt(argv, "--trigger") or "manual"
+    schedule_id = _get_opt(argv, "--schedule-id") or "manual"
+    report_date = _get_opt(argv, "--date")
+    send_raw = (_get_opt(argv, "--send") or "true").strip().lower()
+    send = send_raw in {"1", "true", "yes", "y", "on"}
+    use_collect_assets = (_get_opt(argv, "--use-collect-assets") or "true").strip().lower() in {"1", "true", "yes", "y", "on"}
+    collect_window_hours = int(_get_opt(argv, "--collect-window-hours") or "24")
+    collect_asset_dir = _get_opt(argv, "--collect-asset-dir") or "artifacts/collect"
+    out = run_digest(
+        profile=profile,
+        trigger=trigger,
+        schedule_id=schedule_id,
+        send=send,
+        report_date=report_date,
+        collect_window_hours=collect_window_hours,
+        collect_asset_dir=collect_asset_dir,
+        use_collect_assets=use_collect_assets,
+    )
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0 if bool(out.get("ok")) else 4
 
@@ -292,7 +503,8 @@ def main() -> int:
             "Usage: python -m app.workers.cli "
             "rules:validate|rules:print|rules:dryrun|rules:replay|"
             "sources:list|sources:validate|sources:test|sources:diff|sources:retire|"
-            "db:migrate|db:verify|db:dual-replay [options]",
+            "db:migrate|db:verify|db:dual-replay|db:status|"
+            "collect-now|collect-clean|analysis-clean|analysis-recompute|digest-now [options]",
             file=sys.stderr,
         )
         return 2
@@ -324,6 +536,18 @@ def main() -> int:
             return cmd_db_verify(tail)
         if cmd == "db:dual-replay":
             return cmd_db_dual_replay(tail)
+        if cmd == "db:status":
+            return cmd_db_status(tail)
+        if cmd == "collect-now":
+            return cmd_collect_now(tail)
+        if cmd == "collect-clean":
+            return cmd_collect_clean(tail)
+        if cmd == "analysis-clean":
+            return cmd_analysis_clean(tail)
+        if cmd == "analysis-recompute":
+            return cmd_analysis_recompute(tail)
+        if cmd == "digest-now":
+            return cmd_digest_now(tail)
         print(f"Unknown command: {cmd}", file=sys.stderr)
         return 2
     except RuleEngineError as e:
