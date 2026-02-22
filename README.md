@@ -1,294 +1,207 @@
-# New-project-1: 全球 IVD 晨报（规则控制台 + 常驻调度 + 云端兜底）
+# New-project-1: 全球 IVD 晨报（Rules Console + Always-on Scheduler + Ops Dashboard）
 
-一个面向 IVD 行业前沿的自动化系统：按固定 A–G 结构生成《全球 IVD 晨报》，支持本机或 Docker 常驻运行，提供网页规则控制台（草稿校验、试跑预览、发布生效、版本回滚），并保留 GitHub Actions 作为云端兜底补发。
+面向 IVD 行业的自动化晨报系统：
+- 采集（collect）
+- 相关性/分流（core/frontier/drop）
+- 分析与缓存（analysis cache）
+- 质量审计（G 段）
+- 机会指数（H 段）
+- 邮件发送与云端兜底
 
-默认保持 `legacy` 行为不变；增强能力（`enhanced` 规则、常驻调度、质控/输出规则等）均可灰度启用。
-
----
-
-## 1. 能做什么
-
-- **晨报生成与发信**：生成晨报内容，通过 `send_mail_icloud.sh` 走 iCloud SMTP 发送。
-- **网页规则控制台（/admin）**：编辑/校验/预览/发布/回滚；运行侧只读取“已发布版本”。
-- **常驻在线模式（Docker Compose）**：
-  - `admin-api`：规则控制台（FastAPI）
-  - `scheduler-worker`：常驻调度（读取 `scheduler_rules`），并带单并发锁，避免重复跑
-- **云端兜底补发（GitHub Actions: IVD Cloud Backup Mail）**：
-  - 即使缺少 secrets、IMAP/SMTP 失败，也会生成 `reports/*.txt` 诊断并上传 artifact，便于定位
-- **信源管理（sources registry）**：sources 独立为 registry，支持启用/禁用/test。
-- **故事级聚合（story clustering）**：多源同事件只保留 1 条主条目，其余挂到 `other_sources`，并输出 explain。
+默认保持 `legacy` 行为；增强策略在 `enhanced` 下启用（可回滚）。
 
 ---
 
-## 2. 关键入口与目录
+## 1. 当前最新状态（2026-02）
 
-- 生成日报脚本：`scripts/generate_ivd_report.py`
-- 发信脚本（SMTP）：`send_mail_icloud.sh`（读取同目录的 `.mail.env`）
-- 管理台服务入口：`app/admin_server.py`（FastAPI）
-- 调度 Worker：`app/workers/scheduler_worker.py`（APScheduler）
-- 规则与 Schema：`rules/`、`rules/schemas/`
-- 文档：
-  - `docs/RULES_SYSTEM.md`（规则系统与边界）
-  - `docs/RULES_CONSOLE.md`（控制台与 API）
-  - `docs/ALWAYS_ON_RUNBOOK.md`（常驻运行手册）
-  - `CLOUD_BACKUP_SETUP.md`（云端兜底配置）
+项目已落地并集成以下主线能力（PR7–PR18）：
+
+- **PR7 CacheKeyAudit**
+  - analysis cache key 统一为 `url_norm(url)`
+  - hit/miss/mismatch 审计进入 digest 与 acceptance
+- **PR8 SourcePolicy**
+  - 源级策略：`min_trust_tier` / `exclude_domains` / `exclude_source_ids`
+  - collect 与 digest 双保险过滤
+- **PR9 FrontierNarrowing**
+  - frontier 聚焦 IVD 技术雷达
+  - 生物泛论文（无诊断锚点）可降级/剔除
+- **PR10 EvidenceEnforcement**
+  - core 要求 evidence_snippet，缺失时降级模板输出（不硬编）
+- **PR11 Dynamic Source Management**
+  - source/source_group 动态管理、组默认间隔、软删除/恢复
+  - 运行时优先级：`DB overrides > rules workspace > YAML defaults`
+- **PR12 Opportunity Hardening**
+  - signal 同日去重、H 段 contrib 解释、unknown KPI
+- **PR13 Region/Lane Mapping Hardening**
+  - `rules/mappings/*.yaml` 映射归类，降低 `__unknown__`
+- **PR14 Source Item Hardening**
+  - `rss/html_article/html_list/api_json` 模式治理
+  - 列表/静态页守卫，减少污染项
+- **PR15~PR16 Procurement Pack/Core Sources**
+  - 采购源接入、probe 诊断、核心 RSS/API 信源包
+- **PR17 Ops Dashboard Lite**
+  - `/admin/ops` 聚合 digest/collect/acceptance/probe 健康态
+- **PR18 Event Type Hardening**
+  - event_type 关键词优先级 + domain/path fallback
+  - 输出 `unknown_event_type_rate` 与 `event_type_distribution_topN`
 
 ---
 
-## 3. 快速开始（推荐：Docker 常驻）
+## 2. 核心目录
 
-### 3.1 配置环境变量
+- 管理台入口：`app/admin_server.py`
+- 管理台页面/API：`app/web/rules_admin_api.py`
+- 调度 Worker：`app/workers/scheduler_worker.py`
+- CLI 入口：`app/workers/cli.py`
+- 晨报生成：`scripts/generate_ivd_report.py`
+- 验收：`scripts/acceptance_run.py`
+- 规则：`rules/`
+- 文档：`docs/`
 
-1. Docker 环境变量：复制 `.docker.env.example` 为 `.docker.env` 并填写（至少包含管理台登录 `ADMIN_USER/ADMIN_PASS`）。
-2. SMTP 发信：复制 `.mail.env.example` 为 `.mail.env` 并填写（不要提交到 git）。
+重点文档：
+- `docs/RULES_SYSTEM.md`
+- `docs/ALWAYS_ON_RUNBOOK.md`
+- `docs/ANALYSIS_CACHE_CONTRACT.md`
+- `docs/SOURCES_OPERATIONS.md`
+- `docs/SOURCE_FETCH_MODES.md`
+- `docs/OPPORTUNITY_INDEX.md`
+- `docs/PROCUREMENT_ONBOARDING.md`
+- `docs/OPS_DASHBOARD.md`
 
-`.mail.env` 示例：
+---
 
-```bash
-SMTP_HOST=smtp.mail.me.com
-SMTP_PORT=587
-SMTP_USER=your_mail@me.com
-SMTP_PASS=your_app_password
-SMTP_FROM=your_mail@me.com
-SMTP_FROM_NAME=全球IVD晨报
-```
+## 3. 快速启动（Docker，推荐）
 
-### 3.2 启动
+### 3.1 环境准备
 
-建议先做一键预检：
+1. 复制并填写：
+- `.docker.env.example` -> `.docker.env`
+- `.mail.env.example` -> `.mail.env`
 
-```bash
-./scripts/docker_preflight.sh
-# 或
-make docker-preflight
-```
+2. 关键依赖来源：
+- 以 `requirements.txt` 为准（Docker 与本机一致）
 
-可选参数：
-
-```bash
-SKIP_PULL=1 ./scripts/docker_preflight.sh
-```
-
-说明：`SKIP_PULL=1` 会跳过公网拉取测试（适合离线环境）。
-
-预检通过后再执行：
+### 3.2 启动服务
 
 ```bash
 docker compose up -d --build
 ```
 
-访问管理台：
-- `http://127.0.0.1:8090/admin`
+服务：
+- `admin-api`：`http://127.0.0.1:8090/admin`
+- `scheduler-worker`：常驻调度执行
 
 健康检查：
-- `GET http://127.0.0.1:8090/healthz`
+```bash
+curl -fsS http://127.0.0.1:8090/healthz
+```
+
+---
+
+## 4. 本机常用命令（CLI）
+
+环境自检：
+```bash
+python3 -m app.workers.cli env-check
+```
+
+验收（全量）：
+```bash
+python3 -m app.workers.cli acceptance-run --mode full
+```
+
+单次采集（不依赖常驻 scheduler）：
+```bash
+python3 -m app.workers.cli collect-now --force
+```
+
+采购探测（仅 probe，不强制写资产）：
+```bash
+python3 -m app.workers.cli procurement-probe --force true --fetch-limit 5
+```
+
+采购探测并写入 collect assets：
+```bash
+python3 -m app.workers.cli procurement-probe --force true --fetch-limit 5 --write-assets 1
+```
+
+---
+
+## 5. 管理台页面
+
+- `/admin/content`：采集/分流/机会指数相关规则
+- `/admin/qc`：质控规则
+- `/admin/output`：输出规则
+- `/admin/scheduler`：调度策略与触发
+- `/admin/sources`：信源管理（含分组高级参数）
+- `/admin/runs`：运行状态
+- `/admin/ops`：Ops Dashboard Lite
+- `/admin/versions`：版本对比与回滚
 
 说明：
-- `docker-compose.yml` 会把 `./app`、`./rules`、`./data`、`./artifacts`、`./logs` 挂载进容器，方便迭代。
-- `scripts/` 和根目录脚本（如 `send_mail_icloud.sh`）在镜像内，改动后需要 `--build` 才会生效。
-- 默认数据库运行模式为：`PG 主库 + DB_WRITE_MODE=single + DB_READ_MODE=primary`（稳定态）。
+- 信源分组能力已合并进 `/admin/sources`，`/admin/source-groups` 跳转到 `/admin/sources#groups`。
 
 ---
 
-## 4. 控制台怎么用（运营 SOP）
+## 6. 信源与抓取模型
 
-### 4.1 发布规则（不会立刻发信）
+### 6.1 Source 配置能力
 
-通用流程（适用于 `/admin/email`、`/admin/content`、`/admin/qc`、`/admin/output`、`/admin/scheduler`）：
+支持字段（按规则/DB 覆盖）：
+- `enabled`, `source_group`, `trust_tier`, `tags`
+- `fetch.interval_minutes`（源级覆盖，可继承组默认）
+- `fetch.mode`：`rss | html_article | html_list | api_json`
 
-1. 修改左侧表单
-2. 点击 `保存草稿并校验`
-3. 校验通过后点击 `发布生效`
-4. 如发现问题：进入 `/admin/versions` 对对应 ruleset 一键回滚
+### 6.2 运行时优先级
 
-### 4.2 试跑预览（不发信）
+`DB overrides > rules workspace > YAML defaults`
 
-各页面右侧的 `试跑预览(不发信)` 会执行 dry-run，常见输出包括：
-- content 统计：候选/聚合后/入选数量
-- qc 报告：pass/fail + 指标面板
-- output 渲染：A–G 预览（`G` 必须置尾）
-- email 预览：subject/recipients/preview
+### 6.3 页面守卫（PR14）
 
-### 4.3 立刻执行发信（实跑）
-
-进入 `/admin/scheduler`：
-- `Trigger Now`：立即触发一次“采集→生成→发信”（真实发信）
-- `Pause/Resume`：暂停/恢复自动调度
-
-查看结果：
-- `/admin` 运行状态页
-- `artifacts/<run_id>/run_meta.json`
+- 静态/栏目页判定器（listing/nav/about/privacy 等）
+- article-only 提取约束
+- collect 与 digest 双保险 drop
 
 ---
 
-## 5. 本机运行（不使用 Docker）
+## 7. Opportunity Index（H 段）
 
-启动管理台（本机）：
-
-```bash
-ADMIN_USER=admin ADMIN_PASS='change-me' python3 -m app.admin_server
-```
-
-或：
-
-```bash
-./scripts/run_admin.sh
-```
-
-访问：
-- `http://127.0.0.1:8789/admin`
-
-（可选）旧版规则控制台：
-
-```bash
-./scripts/run_rules_console.sh
-```
+- 写入路径：`artifacts/opportunity/opportunity_signals-YYYYMMDD.jsonl`
+- 去重：同日 `signal_key` 去重
+- H 段输出：TopN + `contrib`（Top2 event_type 贡献）
+- KPI：
+  - `unknown_region_rate`
+  - `unknown_lane_rate`
+  - `unknown_event_type_rate`
+  - `event_type_distribution_topN`
 
 ---
 
-## 6. GitHub Actions 云端兜底（IVD Cloud Backup Mail）
+## 8. Procurement（采购信号）
 
-用途：当常驻运行/本机网络异常导致晨报未按时到达时，在云端进行补发。
+- 推荐核心源：`rules/sources/procurement_core_*.yaml`
+- 需要 key 的 API 源默认 `enabled=false`
+- probe 报告输出：
+  - `artifacts/procurement/probe_report-*.json`
+  - `artifacts/procurement/probe_report-*.md`
 
-特点（可靠兜底）：
-- 任意失败路径都会产出 `reports/*.txt` 诊断文件并上传 artifact。
-- `scripts/cloud_backup_send.py` 启动会做 env 自检，缺失项会写报告并以非 0 退出码失败（CI 可见）。
-
-配置方式见：
-- `CLOUD_BACKUP_SETUP.md`
-
-本地自检（dry-run，不连接 IMAP/SMTP，只生成诊断报告）：
-
-```bash
-python3 scripts/cloud_backup_send.py --dry-run --date 2026-02-16
-```
-
-诊断输出：
-- `reports/ivd_backup_YYYY-MM-DD.txt`
+详见：`docs/PROCUREMENT_CORE_SOURCES.md`、`docs/PROCUREMENT_ONBOARDING.md`
 
 ---
 
-## 7. 安全与注意事项
+## 9. 开发与发布建议
 
-- 不要把 `.mail.env`、`.docker.env`、任何 app 专用密码、token、PAT 提交到仓库。
-- 管理台鉴权依赖 `ADMIN_TOKEN` 或 `ADMIN_USER/ADMIN_PASS`；对公网暴露前必须开启鉴权。
-- sources/web 抓取受网络与站点结构影响；建议先在 `/admin/sources` 里 `test` 再启用。
-
----
-
-## 8. 信源健康巡检（Sources Test Harness）
-
-可对 `sources_registry.v1.yaml` 中启用信源做全量可重复测试，并导出 JSON + Markdown 报告：
-
-```bash
-python3 -m app.workers.cli sources:test \
-  --enabled-only \
-  --limit 3 \
-  --workers 6 \
-  --timeout-seconds 20 \
-  --retries 2 \
-  --json-out artifacts/sources_test.json \
-  --md-out artifacts/sources_test.md
-```
-
-单源测试（与 `/admin/sources/{id}/test` 同逻辑）：
-
-```bash
-python3 -m app.workers.cli sources:test --source-id reuters-health-rss --limit 3
-```
-
-可回滚开关（默认都为 `true`）：
-
-- `SOURCES_RSS_DISCOVERY_ENABLED`：RSS 自动发现
-- `SOURCES_INDEX_DISCOVERY_ENABLED`：RSS 索引页子 feed 发现
-- `SOURCES_HTML_FALLBACK_ENABLED`：HTML 通用列表抓取
-
-示例（关闭某能力）：
-
-```bash
-SOURCES_HTML_FALLBACK_ENABLED=false python3 -m app.workers.cli sources:test --enabled-only
-```
+- 提交前至少执行：
+  ```bash
+  python3 -m app.workers.cli acceptance-run --mode full
+  ```
+- 规则严格化务必保留开关，支持一键回滚。
+- 高风险改动优先落在 `enhanced`，`legacy` 保持兼容。
 
 ---
 
-## 9. 数据库迁移（SQLite -> PostgreSQL）
+## 10. 安全注意事项
 
-已支持控制面数据库底座切换与灰度：
-
-- `DATABASE_URL`：主库（可 PostgreSQL 或 SQLite）
-- `DATABASE_URL_SECONDARY`：影子库（灰度对比/双写）
-- `DB_WRITE_MODE=single|dual`
-- `DB_READ_MODE=primary|shadow_compare`
-- `DB_DUAL_STRICT=false|true`（默认 `false`，secondary 写失败仅告警）
-
-当前默认（docker-compose）：
-- `DATABASE_URL=postgresql+psycopg://...@db:5432/ivd`
-- `DATABASE_URL_SECONDARY=`（空）
-- `DB_WRITE_MODE=single`
-- `DB_READ_MODE=primary`
-
-一键脚本：
-
-```bash
-# 预检 + 迁移 + 校验 + 双库回放对比
-DATABASE_URL='postgresql+psycopg://USER:PASS@HOST:5432/DB' \
-DATABASE_URL_SECONDARY='sqlite:///data/rules.db' \
-./scripts/db_cutover.sh go
-
-# 输出 dual 模式 env
-./scripts/db_cutover.sh enable-dual
-
-# 输出回滚 SQLite env
-./scripts/db_cutover.sh rollback
-```
-
-详见：`docs/DB_MIGRATION_PLAN.md` 与 `docs/DB_SCHEMA.md`。
-
-### 9.0 10分钟快速验收（推荐）
-
-```bash
-PYTHONPATH=. alembic upgrade head
-docker compose up -d --build
-
-# 模式确认
-docker compose exec -T admin-api /bin/sh -lc 'echo DATABASE_URL=$DATABASE_URL; echo DATABASE_URL_SECONDARY=$DATABASE_URL_SECONDARY; echo DB_WRITE_MODE=$DB_WRITE_MODE; echo DB_READ_MODE=$DB_READ_MODE'
-docker compose exec -T admin-api /bin/sh -lc 'curl -fsS http://127.0.0.1:8789/healthz'
-
-# 唯一约束确认
-docker compose exec -T db psql -U ivd -d ivd -c "SELECT conname, conrelid::regclass::text AS table_name FROM pg_constraint WHERE conname IN ('uq_send_attempts_send_key','uq_dedupe_keys_dedupe_key','uq_email_rules_profile_version','uq_content_rules_profile_version','uq_qc_rules_profile_version','uq_output_rules_profile_version','uq_scheduler_rules_profile_version') ORDER BY conname;"
-docker compose exec -T db psql -U ivd -d ivd -c "SELECT indexname,indexdef FROM pg_indexes WHERE tablename='run_executions' AND indexname='uq_run_executions_run_key';"
-```
-
-通过标准：
-- `db_backend=postgresql`
-- `DB_WRITE_MODE=single`
-- `DB_READ_MODE=primary`
-- `send_key / dedupe_key / profile+version / run_key` 约束存在
-
-### 9.1 DB 层幂等唯一约束（已生效）
-
-- `profile + version`（5 张规则版本表）
-- `send_key`（`send_attempts`）
-- `run_key`（`run_executions`）
-- `dedupe_key`（`dedupe_keys`）
-
-### 9.2 上线后在线验收（推荐）
-
-```bash
-PYTHONPATH=. alembic upgrade head
-docker compose up -d --build
-
-# 容器内确认运行模式
-docker compose exec -T admin-api /bin/sh -lc 'echo DATABASE_URL=$DATABASE_URL; echo DATABASE_URL_SECONDARY=$DATABASE_URL_SECONDARY; echo DB_WRITE_MODE=$DB_WRITE_MODE; echo DB_READ_MODE=$DB_READ_MODE'
-
-# healthz 确认
-docker compose exec -T admin-api /bin/sh -lc 'curl -fsS http://127.0.0.1:8789/healthz'
-
-# PG 约束确认
-docker compose exec -T db psql -U ivd -d ivd -c "SELECT conname, conrelid::regclass::text AS table_name FROM pg_constraint WHERE conname IN ('uq_send_attempts_send_key','uq_dedupe_keys_dedupe_key','uq_email_rules_profile_version','uq_content_rules_profile_version','uq_qc_rules_profile_version','uq_output_rules_profile_version','uq_scheduler_rules_profile_version') ORDER BY conname;"
-docker compose exec -T db psql -U ivd -d ivd -c "SELECT indexname,indexdef FROM pg_indexes WHERE tablename='run_executions' AND indexname='uq_run_executions_run_key';"
-```
-
-## 9. License
-
-MIT
+- 不要提交：`.mail.env`、`.docker.env`、API key、密码。
+- 管理台必须启用鉴权（`ADMIN_USER/ADMIN_PASS` 或 token）。
+- 外网源可能波动，优先看 `run_meta`、acceptance 报告与 probe 分类定位问题。
