@@ -7,9 +7,10 @@ import re
 from collections import deque
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 EVENT_WEIGHT = {
-    "procurement": 5,
+    "procurement": 6,
     "regulatory": 4,
     "approval": 4,
     "priority_review": 3,
@@ -17,6 +18,120 @@ EVENT_WEIGHT = {
     "technology_update": 2,
     "paper": 1,
 }
+
+PROCUREMENT_HINTS = [
+    "tender",
+    "bid",
+    "award",
+    "procurement",
+    "中标",
+    "集采",
+    "招标",
+    "采购结果",
+]
+
+EVENT_TYPE_KEYWORDS: dict[str, list[str]] = {
+    "regulatory": ["regulation", "regulatory", "mdr", "ivdr", "implementing act", "guideline", "guidance"],
+    "approval": ["approved", "approval", "cleared", "authorized", "fda", "ce mark"],
+    "procurement": ["tender", "bid", "award", "procurement", "中标", "招标", "集采"],
+    "company_move": ["acquire", "acquisition", "sell", "divest", "layoff", "restructure"],
+    "product_launch": ["launch", "introduce", "release", "new solution"],
+    "research": ["study", "trial", "results", "phase", "clinical study"],
+    "market_report": ["market size", "market report", "forecast", "analysis"],
+    "industry_commentary": ["interview", "opinion", "commentary"],
+}
+
+EVENT_TYPE_PRIORITY = [
+    "procurement",
+    "regulatory",
+    "approval",
+    "company_move",
+    "research",
+    "product_launch",
+    "market_report",
+    "industry_commentary",
+]
+
+EVENT_TYPE_ALIAS = {
+    "监管审批与指南": "regulatory",
+    "临床与科研证据": "research",
+    "并购融资/ipo与合作": "company_move",
+    "注册上市/产品发布": "product_launch",
+    "政策与市场动态": "industry_commentary",
+}
+
+EVENT_TYPE_DOMAIN_FALLBACK = {
+    "fda.gov": "regulatory",
+    "ema.europa.eu": "regulatory",
+    "pmda.go.jp": "regulatory",
+    "medtecheurope.org": "regulatory",
+    "statnews.com": "research",
+    "kaloramainformation.com": "market_report",
+    "clinicallab.com": "industry_commentary",
+}
+
+CANONICAL_EVENT_TYPES = {
+    "regulatory",
+    "approval",
+    "procurement",
+    "company_move",
+    "product_launch",
+    "research",
+    "market_report",
+    "industry_commentary",
+    "priority_review",
+    "technology_update",
+    "paper",
+}
+
+
+def _extract_domain(url: str) -> str:
+    u = str(url or "").strip()
+    if not u:
+        return ""
+    try:
+        return str(urlparse(u).netloc or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _extract_path(url: str) -> str:
+    u = str(url or "").strip()
+    if not u:
+        return ""
+    try:
+        return str(urlparse(u).path or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def normalize_event_type(event_type: str, *, text: str = "", url: str = "") -> str:
+    et = str(event_type or "").strip()
+    et_l = et.lower()
+    full = (et + " " + str(text or "")).strip().lower()
+    if any(k in full for k in PROCUREMENT_HINTS):
+        return "procurement"
+    for key in EVENT_TYPE_PRIORITY:
+        kws = EVENT_TYPE_KEYWORDS.get(key, [])
+        if any(kw in full for kw in kws):
+            return key
+    if et in CANONICAL_EVENT_TYPES:
+        return et
+    if et_l in CANONICAL_EVENT_TYPES:
+        return et_l
+    if et in EVENT_TYPE_ALIAS:
+        return EVENT_TYPE_ALIAS[et]
+    if et_l in EVENT_TYPE_ALIAS:
+        return EVENT_TYPE_ALIAS[et_l]
+    host = _extract_domain(url)
+    if host:
+        for d, mapped in EVENT_TYPE_DOMAIN_FALLBACK.items():
+            if d in host:
+                return mapped
+    path = _extract_path(url)
+    if any(x in path for x in ["/fda/", "/ema/", "/pmda/"]):
+        return "regulatory"
+    return "__unknown__"
 
 
 def _ensure_dir(path: Path) -> Path:

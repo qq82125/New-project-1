@@ -1,0 +1,18 @@
+version: "1.0.0"
+sources:
+  - id: procurement_hospital
+    enabled: true
+    connector: rss
+    url: https://example.com/hospital/rss
+    name: Hospital Procurement Announcements
+    region: 中国
+    source_group: procurement
+    trust_tier: B
+    priority: 90
+    fetch:
+      mode: rss
+      interval_minutes: 60
+    tags:
+      - procurement
+      - hospital
+      - china

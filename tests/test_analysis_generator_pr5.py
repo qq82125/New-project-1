@@ -54,11 +54,9 @@ class AnalysisGeneratorPR5Tests(unittest.TestCase):
             root = Path(td)
             cache = AnalysisCacheStore(root, asset_dir="artifacts/analysis")
             item = {
-                "title": "Core IVD diagnostic assay item with cache",
+                "title": "Core item with cache",
                 "url": "https://example.com/core-cache",
                 "source": "FDA",
-                "source_group": "regulatory",
-                "event_type": "监管审批与指南",
                 "track": "core",
                 "relevance_level": 4,
                 "published_at": "2026-02-21T00:00:00Z",
@@ -95,3 +93,4 @@ class AnalysisGeneratorPR5Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

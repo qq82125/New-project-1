@@ -1,0 +1,15 @@
+version: "1.0.0"
+sources:
+  - id: procurement_core_sam_api
+    enabled: false
+    name: "SAM.gov Opportunities API (needs api_key)"
+    type: api
+    connector: api
+    url: "https://api.sam.gov/prod/opportunities/v1/search?limit=10&api_key=YOUR_KEY&ncode=339112&status=active"
+    source_group: procurement
+    trust_tier: "A"
+    fetch:
+      mode: api_json
+      interval_minutes: 240
+    tags: ["procurement","us","sam","api","naics339112"]
+    # NOTE: Replace YOUR_KEY via DB override or env injection; do NOT commit real key.

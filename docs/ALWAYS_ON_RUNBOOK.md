@@ -46,15 +46,10 @@ docker compose up -d --build
 1) 打开：`/admin/sources`
 
 2) 找到某个 source（或编辑/新增）：
-- `fetch_interval_minutes`：源级最小抓取间隔（分钟，留空表示继承 source_group 默认）
-- `source_group`：`regulatory/media/evidence/company/procurement`
+- `fetch.interval_minutes`：该信源最小抓取间隔（分钟）
 - `rate_limit.rps/burst`：采集侧限速参数（用于抓取端节流）
 
-3) 如需批量调节组频率，打开 `/admin/source-groups`：
-- 修改 `default_interval_minutes`
-- 立即影响“源级 interval 为空”的来源
-
-4) 保存后，等待下一次 `collect` job 运行：
+3) 保存后，等待下一次 `collect` job 运行：
 - 列表“最近抓取”会更新：
   - `last_fetched_at`: 最近一次实际抓取时间（仅在 due 且抓取尝试发生时更新）
   - `last_fetch_status`: `成功/失败/跳过`
@@ -146,8 +141,7 @@ curl -u admin:your_pass \
 
 回滚后 worker 会自动 reload，`/admin/scheduler` 的 next_run_time 会随之更新。
 
-### 6.2 回滚 sources（DB 即事实，支持软删除恢复）
+### 6.2 回滚 sources（目前是“DB 即事实”）
 Sources 当前以 SQLite 为准，不走版本表；推荐做法：
 - 小改动：在 `/admin/sources` 直接改回原值或停用（enabled=false）
-- 误删恢复：开启“显示已删除”，对目标 source 点击“恢复”
 - 大批量改动：改动前备份 `data/rules.db`（或使用 sqlite 备份），需要回滚时恢复该文件，然后 `docker compose up -d` 让进程重新读取。

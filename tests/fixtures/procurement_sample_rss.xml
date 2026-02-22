@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Procurement Fixture Feed</title>
+    <link>https://acceptance.local/procurement</link>
+    <description>Local procurement fixture feed for acceptance and regression</description>
+    <item>
+      <title>省级中标公示：PCR 试剂采购结果</title>
+      <link>https://acceptance.local/procurement/award-001</link>
+      <description>某省医疗机构发布 PCR 试剂采购结果，中标供应商已确定。</description>
+      <pubDate>Sat, 21 Feb 2026 10:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Hospital tender award for diagnostic consumables</title>
+      <link>https://acceptance.local/procurement/tender-002</link>
+      <description>Public tender award notice for diagnostic laboratory consumables.</description>
+      <pubDate>Sat, 21 Feb 2026 11:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

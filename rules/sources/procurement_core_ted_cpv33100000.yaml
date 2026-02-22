@@ -1,0 +1,15 @@
+version: "1.0.0"
+sources:
+  - id: procurement_core_ted_cpv33100000
+    enabled: true
+    name: "EU TED RSS (CPV 33100000 Medical Devices)"
+    type: rss
+    connector: rss
+    url: "https://ted.europa.eu/en/simap/rss-feed?cpv=33100000-1&type=1&status=1"
+    source_group: procurement
+    trust_tier: "A"
+    fetch:
+      mode: rss
+      interval_minutes: 240
+    tags: ["procurement","eu","ted","rss","cpv33100000"]
+    # NOTE: This URL is parameterized to return notice <item> entries for CPV 33100000-1.

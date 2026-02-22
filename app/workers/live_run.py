@@ -122,6 +122,7 @@ def run_digest(
             quota_cfg = content_cfg.get("frontier_quota", {}) if isinstance(content_cfg.get("frontier_quota"), dict) else {}
             analysis_cfg = content_cfg.get("analysis_cache", {}) if isinstance(content_cfg.get("analysis_cache"), dict) else {}
             source_policy = content_cfg.get("source_policy", {}) if isinstance(content_cfg.get("source_policy"), dict) else {}
+            source_guard = content_cfg.get("source_guard", {}) if isinstance(content_cfg.get("source_guard"), dict) else {}
             frontier_policy = content_cfg.get("frontier_policy", {}) if isinstance(content_cfg.get("frontier_policy"), dict) else {}
             evidence_policy = content_cfg.get("evidence_policy", {}) if isinstance(content_cfg.get("evidence_policy"), dict) else {}
             opportunity_index = content_cfg.get("opportunity_index", {}) if isinstance(content_cfg.get("opportunity_index"), dict) else {}
@@ -150,6 +151,7 @@ def run_digest(
                     "backoff_seconds": float(analysis_cfg.get("backoff_seconds", 0.5) or 0.5),
                     "asset_dir": str(analysis_cfg.get("asset_dir", "artifacts/analysis")),
                     "source_policy": source_policy,
+                    "source_guard": source_guard,
                     "profile": str(rt.get("active_profile", profile)),
                     "anchors_pack": content_cfg.get("anchors_pack", {}) if isinstance(content_cfg.get("anchors_pack"), dict) else {},
                     "negatives_pack": content_cfg.get("negatives_pack", []) if isinstance(content_cfg.get("negatives_pack"), list) else [],

@@ -1,0 +1,14 @@
+version: "1.0.0"
+sources:
+  - id: procurement_core_ungm_who_rss
+    enabled: true
+    name: "UNGM RSS (WHO & related, BU=14)"
+    type: rss
+    connector: rss
+    url: "https://www.ungm.org/Public/Notice/ExportToRss?BusinessUnitIds=14&NoticeTypes=1,2"
+    source_group: procurement
+    trust_tier: "A"
+    fetch:
+      mode: rss
+      interval_minutes: 240
+    tags: ["procurement","ungm","who","rss","global"]

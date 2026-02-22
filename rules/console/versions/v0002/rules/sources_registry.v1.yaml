@@ -1,618 +1,945 @@
 version: 1
 sources:
-- tags:
+- id: 360dx-rss
+  name: 360Dx
+  connector: web
+  fetcher: html
+  url: https://www.360dx.com/rss-feeds
+  region: 全球
+  enabled: true
+  priority: 80
+  source_group: media
+  trust_tier: A
+  tags:
   - media
   - diagnostics
   - global
   - en
-  region: 北美
-  url: https://www.360dx.com/rss-feeds
-  name: 360Dx
-  id: 360dx-rss
-  fetcher: html
-  enabled: true
-  notes: RSS索引页，优先发现子feed；失败时回退HTML列表抓取
-  trust_tier: A
-  priority: 80
-  discovery_policy:
-    mode: pick_by_keywords
-    keywords:
-    - diagnostics
-    - dx
-    - molecular
-    - sequencing
+  rate_limit: {}
   fetch:
     fallback_after_failures: 2
     fallback_url: https://www.360dx.com
     fallback_fetcher: html
-- tags:
+  parsing: {}
+- id: abbott_newsroom
+  name: Abbott Newsroom
+  connector: web
+  fetcher: html
+  url: https://www.abbott.com/corpnewsroom.html
+  region: 全球
+  enabled: true
+  priority: 84
+  source_group: company
+  trust_tier: A
+  tags:
   - company
   - abbott
   - press
   - diagnostics
-  region: US
-  url: https://www.abbott.com/corpnewsroom.html
-  name: Abbott Newsroom
-  id: abbott_newsroom
-  fetcher: html
-  enabled: true
-  notes: html抓取，配置regex选择器避免parse_empty
-  trust_tier: A
-  priority: 84
-  selectors:
-    item_regex: (?is)<a[^>]+href=['\"][^'\"]*(?:corpnewsroom|newsroom|press-release|news)[^'\"]*['\"][^>]*>.*?</a>
-    title_regex: (?is)>(.*?)</a>
-    link_regex: (?is)href=['\"]([^'\"]+)['\"]
+  rate_limit: {}
   fetch:
     fallback_after_failures: 2
     fallback_url: https://www.abbott.com/media-center/press-releases.html
     fallback_fetcher: html
-- tags:
+  parsing: {}
+- id: biopharma-dive-rss
+  name: BioPharma Dive
+  connector: rss
+  fetcher: rss
+  url: https://www.biopharmadive.com/feeds/news/
+  region: 全球
+  enabled: true
+  priority: 68
+  source_group: media
+  trust_tier: B
+  tags:
   - media
   - global
   - en
-  region: 北美
-  url: https://www.biopharmadive.com/feeds/news/
-  name: BioPharma Dive
-  id: biopharma-dive-rss
-  fetcher: rss
-  enabled: true
-  notes: Biopharma and diagnostics adjacent news
-  trust_tier: B
-  priority: 68
-- tags:
-  - preprint
-  - global
-  - en
-  region: 全球
-  url: https://connect.biorxiv.org/biorxiv_xml.php?subject=all
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: biorxiv-all-rss
   name: bioRxiv (All)
-  id: biorxiv-all-rss
+  connector: rss
   fetcher: rss
+  url: https://connect.biorxiv.org/biorxiv_xml.php?subject=all
+  region: 全球
   enabled: true
-  notes: Preprint all-subject feed, filtered by include keywords
-  trust_tier: B
   priority: 73
-- tags:
+  source_group: evidence
+  trust_tier: B
+  tags:
   - preprint
   - global
   - en
-  region: 全球
-  url: https://connect.biorxiv.org/biorxiv_xml.php?subject=genomics+bioinformatics
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: biorxiv-genomics-atom
   name: bioRxiv (Genomics/Bioinformatics)
-  id: biorxiv-genomics-atom
+  connector: rss
   fetcher: rss
+  url: https://connect.biorxiv.org/biorxiv_xml.php?subject=genomics+bioinformatics
+  region: 全球
   enabled: true
-  notes: Domain-focused preprint feed
-  trust_tier: B
   priority: 72
-- tags:
+  source_group: evidence
+  trust_tier: B
+  tags:
+  - preprint
+  - global
+  - en
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: chict-home-web
+  name: ChiCTR (中国临床试验注册中心)
+  connector: web
+  fetcher: html
+  url: https://www.chictr.org.cn/
+  region: 全球
+  enabled: false
+  priority: 70
+  source_group: media
+  trust_tier: A
+  tags:
   - registry
   - cn
   - zh
-  region: 中国
-  url: https://www.chictr.org.cn/
-  name: ChiCTR (中国临床试验注册中心)
-  id: chict-home-web
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+  deleted_at: '2026-02-22T04:49:15.655172+00:00'
+- id: clarivate-press-web
+  name: Clarivate Press Releases
+  connector: web
   fetcher: html
+  url: https://ir.clarivate.com/press-releases
+  region: 全球
   enabled: false
-  notes: Placeholder web source
-  trust_tier: A
-  priority: 70
-- tags:
+  priority: 60
+  source_group: media
+  trust_tier: B
+  tags:
   - pressrelease
   - global
   - en
-  region: 全球
-  url: https://ir.clarivate.com/press-releases
-  name: Clarivate Press Releases
-  id: clarivate-press-web
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: ema_rss_index
+  name: EMA RSS Feeds (Index)
+  connector: web
   fetcher: html
-  enabled: false
-  notes: Placeholder web source
-  trust_tier: B
-  priority: 60
-- tags:
+  url: https://www.ema.europa.eu/en/news-events/rss-feeds
+  region: 全球
+  enabled: true
+  priority: 92
+  source_group: regulatory
+  trust_tier: A
+  tags:
   - regulatory
   - ema
   - eu
-  region: EU
-  url: https://www.ema.europa.eu/en/news-events/rss-feeds
-  name: EMA RSS Feeds (Index)
-  id: ema_rss_index
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: europepmc-home-web
+  name: Europe PMC
+  connector: web
   fetcher: html
-  enabled: true
-  notes: RSS索引页，发现可用feed并用关键词过滤
+  url: https://europepmc.org/
+  region: 全球
+  enabled: false
+  priority: 73
+  source_group: evidence
   trust_tier: A
-  priority: 92
-- tags:
+  tags:
   - literature
   - eu
   - en
-  region: 欧洲
-  url: https://europepmc.org/
-  name: Europe PMC
-  id: europepmc-home-web
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: fda-device-recalls-rss
+  name: FDA Medical Device Recalls
+  connector: web
   fetcher: html
-  enabled: false
-  notes: Placeholder web source
+  url: https://www.fda.gov/about-fda/contact-fda/get-email-updates
+  region: 全球
+  enabled: true
+  priority: 89
+  source_group: regulatory
   trust_tier: A
-  priority: 73
-- tags:
+  tags:
   - regulatory
   - us
   - en
-  region: 北美
-  url: https://www.fda.gov/about-fda/contact-fda/get-email-updates
-  name: FDA Medical Device Recalls
-  id: fda-device-recalls-rss
-  fetcher: html
-  enabled: true
-  notes: RSS索引页，按关键词发现 Medical Devices/Recall 子feed
-  trust_tier: A
-  priority: 89
-  discovery_policy:
-    mode: pick_by_keywords
-    keywords:
-    - recall
-    - medical devices
-    - devices
-    - cdrh
+  rate_limit: {}
   fetch:
     fallback_after_failures: 2
     fallback_url: https://www.fda.gov/medical-devices/medical-device-recalls-and-safety-alerts
     fallback_fetcher: html
-- tags:
+  parsing: {}
+- id: fda-medwatch-rss
+  name: FDA MedWatch
+  connector: rss
+  fetcher: rss
+  url: https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/medwatch/rss.xml
+  region: 全球
+  enabled: true
+  priority: 88
+  source_group: regulatory
+  trust_tier: A
+  tags:
   - regulatory
   - us
   - en
-  region: 北美
-  url: https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/medwatch/rss.xml
-  name: FDA MedWatch
-  id: fda-medwatch-rss
-  fetcher: rss
-  enabled: true
-  notes: US regulatory alerts
-  trust_tier: A
-  priority: 88
-- tags:
-  - regulatory
-  - fda
-  - devices
-  - ivd
-  region: US
-  url: https://www.fda.gov/medical-devices/medical-devices-news-and-events/cdrh-new-news-and-updates
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: fda_cdrh_news_updates
   name: FDA CDRH News and Updates
-  id: fda_cdrh_news_updates
+  connector: web
   fetcher: html
+  url: https://www.fda.gov/medical-devices/medical-devices-news-and-events/cdrh-new-news-and-updates
+  region: 全球
   enabled: true
-  notes: 官方页面，优先发现RSS，无则HTML抓取
-  trust_tier: A
   priority: 94
-- tags:
+  source_group: regulatory
+  trust_tier: A
+  tags:
   - regulatory
   - fda
   - devices
   - ivd
-  region: US
-  url: https://www.fda.gov/about-fda/contact-fda/get-email-updates
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: fda_rss_medical_devices
   name: FDA RSS - Medical Devices
-  id: fda_rss_medical_devices
+  connector: rss
   fetcher: rss
+  url: https://www.fda.gov/about-fda/contact-fda/get-email-updates
+  region: 全球
   enabled: true
-  notes: 索引页，支持RSS auto-discovery
-  trust_tier: A
   priority: 93
-- tags:
-  - media
-  - global
-  - en
-  - ivd
-  region: 北美
-  url: https://www.fiercebiotech.com/rss/xml
-  name: Fierce Biotech
-  id: fierce-biotech-rss
-  fetcher: rss
-  enabled: true
-  notes: IVD/biotech industry media
-  trust_tier: B
-  priority: 75
-- tags:
-  - media
-  - global
-  - en
-  - ivd
-  region: 北美
-  url: https://www.genomeweb.com/rss.xml
-  name: GenomeWeb
-  id: genomeweb-rss
-  fetcher: rss
-  enabled: true
-  notes: Genomics and diagnostics media
+  source_group: regulatory
   trust_tier: A
+  tags:
+  - regulatory
+  - fda
+  - devices
+  - ivd
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: fierce-biotech-rss
+  name: Fierce Biotech
+  connector: rss
+  fetcher: rss
+  url: https://www.fiercebiotech.com/rss/xml
+  region: 全球
+  enabled: true
+  priority: 75
+  source_group: media
+  trust_tier: B
+  tags:
+  - media
+  - global
+  - en
+  - ivd
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: genomeweb-rss
+  name: GenomeWeb
+  connector: rss
+  fetcher: rss
+  url: https://www.genomeweb.com/rss.xml
+  region: 全球
+  enabled: true
   priority: 82
-- tags:
+  source_group: media
+  trust_tier: A
+  tags:
+  - media
+  - global
+  - en
+  - ivd
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: globenewswire-press-rss
+  name: GlobeNewswire Press Releases
+  connector: rss
+  fetcher: rss
+  url: https://www.globenewswire.com/RssFeed/subjectcode/72-Press%20Releases/feedTitle/GlobeNewswire%20-%20Press%20Releases
+  region: 全球
+  enabled: true
+  priority: 77
+  source_group: media
+  trust_tier: B
+  tags:
   - media
   - pressrelease
   - global
   - en
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: google-scholar-home-web
+  name: Google Scholar
+  connector: web
+  fetcher: html
+  url: https://scholar.google.com/
   region: 全球
-  url: https://www.globenewswire.com/RssFeed/subjectcode/72-Press%20Releases/feedTitle/GlobeNewswire%20-%20Press%20Releases
-  name: GlobeNewswire Press Releases
-  id: globenewswire-press-rss
-  fetcher: rss
-  enabled: true
-  notes: Company press releases
+  enabled: false
+  priority: 50
+  source_group: evidence
   trust_tier: B
-  priority: 77
-- tags:
+  tags:
   - literature
   - global
   - en
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: google_news_ivd_24h
+  name: Google News RSS - IVD + molecular diagnostics (24h)
+  connector: google_news
+  fetcher: google_news
+  url: https://news.google.com/rss/search?q=IVD+molecular+diagnostics+when:24h
   region: 全球
-  url: https://scholar.google.com/
-  name: Google Scholar
-  id: google-scholar-home-web
-  fetcher: html
   enabled: false
-  notes: Placeholder web source
-  trust_tier: B
-  priority: 50
-- tags:
+  priority: 18
+  source_group: media
+  trust_tier: C
+  tags:
   - aggregator
   - google_news
   - ivd
-  region: Global
-  url: https://news.google.com/rss/search?q=IVD+molecular+diagnostics+when:24h
-  name: Google News RSS - IVD + molecular diagnostics (24h)
-  id: google_news_ivd_24h
-  fetcher: google_news
-  enabled: false
-  notes: 噪音高，默认关闭，仅兜底
-  trust_tier: C
-  priority: 18
-- tags:
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: iivd.rss
+  name: iivd.net 资讯
+  connector: web
+  fetcher: html
+  url: https://www.iivd.net/portal.php?mod=list&catid=17
+  region: 全球
+  enabled: true
+  priority: 74
+  source_group: media
+  trust_tier: B
+  tags:
   - media
   - cn
   - zh
   - ivd
-  region: 中国
-  url: https://www.iivd.net/portal.php?mod=list&catid=17
-  name: iivd.net 资讯
-  id: iivd.rss
-  fetcher: html
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: imdrf_news
+  name: IMDRF News & Events
+  connector: rss
+  fetcher: rss
+  url: https://www.imdrf.org/news-events/news.xml
+  region: 全球
   enabled: true
-  notes: User-owned site source
-  trust_tier: B
-  priority: 74
-- tags:
+  priority: 95
+  source_group: regulatory
+  trust_tier: A
+  tags:
   - regulatory
   - imdrf
-  region: Global
-  url: https://www.imdrf.org/news-events/news.xml
-  name: IMDRF News & Events
-  id: imdrf_news
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: kalorama_blog
+  name: Kalorama Information Blog
+  connector: rss
   fetcher: rss
+  url: https://kaloramainformation.com/blog/
+  region: 全球
   enabled: true
-  notes: ''
-  trust_tier: A
-  priority: 95
-- tags:
+  priority: 70
+  source_group: media
+  trust_tier: B
+  tags:
   - market_research
   - ivd
-  region: US
-  url: https://kaloramainformation.com/blog/
-  name: Kalorama Information Blog
-  id: kalorama_blog
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: lancet-current-rss
+  name: The Lancet (Current Issue)
+  connector: rss
   fetcher: rss
+  url: https://www.thelancet.com/rssfeed/lancet_current.xml
+  region: 全球
   enabled: true
-  notes: 优先RSS auto-discovery；无则HTML抓取
-  trust_tier: B
-  priority: 70
-- tags:
+  priority: 91
+  source_group: evidence
+  trust_tier: A
+  tags:
   - journal
   - global
   - en
-  region: 全球
-  url: https://www.thelancet.com/rssfeed/lancet_current.xml
-  name: The Lancet (Current Issue)
-  id: lancet-current-rss
-  fetcher: rss
-  enabled: true
-  notes: Clinical journal feed
-  trust_tier: A
-  priority: 91
-- tags:
-  - preprint
-  - global
-  - en
-  region: 全球
-  url: https://connect.medrxiv.org/medrxiv_xml.php?subject=all
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: medrxiv-all-rss
   name: medRxiv (All)
-  id: medrxiv-all-rss
+  connector: rss
   fetcher: rss
+  url: https://connect.medrxiv.org/medrxiv_xml.php?subject=all
+  region: 全球
   enabled: true
-  notes: Preprint all-subject feed, filtered by include keywords
-  trust_tier: B
   priority: 73
-- tags:
+  source_group: evidence
+  trust_tier: B
+  tags:
   - preprint
   - global
   - en
-  region: 全球
-  url: https://connect.medrxiv.org/medrxiv_xml.php?subject=infectious+diseases
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: medrxiv-infectious-atom
   name: medRxiv (Infectious Diseases)
-  id: medrxiv-infectious-atom
+  connector: rss
   fetcher: rss
+  url: https://connect.medrxiv.org/medrxiv_xml.php?subject=infectious+diseases
+  region: 全球
   enabled: true
-  notes: Domain-focused preprint feed
-  trust_tier: B
   priority: 72
-- tags:
+  source_group: evidence
+  trust_tier: B
+  tags:
+  - preprint
+  - global
+  - en
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: medtech-dive-rss
+  name: MedTech Dive
+  connector: rss
+  fetcher: rss
+  url: https://www.medtechdive.com/feeds/news/
+  region: 全球
+  enabled: true
+  priority: 70
+  source_group: media
+  trust_tier: B
+  tags:
   - media
   - global
   - en
-  region: 北美
-  url: https://www.medtechdive.com/feeds/news/
-  name: MedTech Dive
-  id: medtech-dive-rss
-  fetcher: rss
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: medtech_europe_newsletters
+  name: MedTech Europe Newsletters
+  connector: web
+  fetcher: html
+  url: https://www.medtecheurope.org/medtech-views/newsletters/
+  region: 全球
   enabled: true
-  notes: MedTech business news
+  priority: 72
+  source_group: media
   trust_tier: B
-  priority: 70
-- tags:
+  tags:
   - thinktank
   - europe
   - industry
-  region: EU
-  url: https://www.medtecheurope.org/medtech-views/newsletters/
-  name: MedTech Europe Newsletters
-  id: medtech_europe_newsletters
-  fetcher: html
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: mhra-alerts-atom
+  name: MHRA Alerts
+  connector: rss
+  fetcher: rss
+  url: https://www.gov.uk/drug-device-alerts.atom
+  region: 全球
   enabled: true
-  notes: html 抓取标题/链接/发布日期
-  trust_tier: B
-  priority: 72
-- tags:
+  priority: 88
+  source_group: regulatory
+  trust_tier: A
+  tags:
   - regulatory
   - eu
   - en
-  region: 欧洲
-  url: https://www.gov.uk/drug-device-alerts.atom
-  name: MHRA Alerts
-  id: mhra-alerts-atom
-  fetcher: rss
-  enabled: true
-  notes: UK safety alerts
-  trust_tier: A
-  priority: 88
-- tags:
-  - journal
-  - global
-  - en
-  region: 全球
-  url: https://www.nature.com/nature.rss
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: nature-rss
   name: Nature
-  id: nature-rss
+  connector: rss
   fetcher: rss
+  url: https://www.nature.com/nature.rss
+  region: 全球
   enabled: true
-  notes: Broad journal feed, filtered by include keywords
-  trust_tier: A
   priority: 92
-- tags:
+  source_group: evidence
+  trust_tier: A
+  tags:
   - journal
   - global
   - en
-  region: 全球
-  url: https://www.nejm.org/action/showFeed?jc=nejm&type=etoc&feed=rss
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: nejm-etoc-rss
   name: NEJM (eTOC)
-  id: nejm-etoc-rss
+  connector: rss
   fetcher: rss
+  url: https://www.nejm.org/action/showFeed?jc=nejm&type=etoc&feed=rss
+  region: 全球
   enabled: true
-  notes: Clinical journal feed
-  trust_tier: A
   priority: 92
-- tags:
+  source_group: evidence
+  trust_tier: A
+  tags:
+  - journal
+  - global
+  - en
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: nmpa-home-web
+  name: NMPA
+  connector: web
+  fetcher: html
+  url: https://www.nmpa.gov.cn/
+  region: 全球
+  enabled: true
+  priority: 95
+  source_group: regulatory
+  trust_tier: A
+  tags:
   - regulatory
   - cn
   - zh
-  region: 中国
-  url: https://www.nmpa.gov.cn/
-  name: NMPA
-  id: nmpa-home-web
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: pmda-home-web
+  name: PMDA
+  connector: web
   fetcher: html
+  url: https://www.pmda.go.jp/english/index.html
+  region: 全球
   enabled: true
-  notes: China national regulatory portal
+  priority: 92
+  source_group: regulatory
   trust_tier: A
-  priority: 95
-- tags:
+  tags:
   - regulatory
   - apac
   - en
-  region: 亚太
-  url: https://www.pmda.go.jp/english/index.html
-  name: PMDA
-  id: pmda-home-web
-  fetcher: html
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: prnewswire-press-rss
+  name: PR Newswire Press Releases
+  connector: rss
+  fetcher: rss
+  url: https://www.prnewswire.com/rss/news-releases-list.rss
+  region: 全球
   enabled: true
-  notes: Japan PMDA portal
-  trust_tier: A
-  priority: 92
-- tags:
+  priority: 78
+  source_group: media
+  trust_tier: B
+  tags:
   - media
   - pressrelease
   - global
   - en
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: pubmed-home-web
+  name: PubMed
+  connector: web
+  fetcher: html
+  url: https://pubmed.ncbi.nlm.nih.gov/
   region: 全球
-  url: https://www.prnewswire.com/rss/news-releases-list.rss
-  name: PR Newswire Press Releases
-  id: prnewswire-press-rss
-  fetcher: rss
-  enabled: true
-  notes: Company press releases
-  trust_tier: B
-  priority: 78
-- tags:
+  enabled: false
+  priority: 75
+  source_group: evidence
+  trust_tier: A
+  tags:
   - literature
   - global
   - en
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: reuters-health-rss
+  name: Reuters Healthcare
+  connector: rss
+  fetcher: rss
+  url: https://www.reutersagency.com/feed/?best-topics=healthcare-pharmaceuticals
   region: 全球
-  url: https://pubmed.ncbi.nlm.nih.gov/
-  name: PubMed
-  id: pubmed-home-web
-  fetcher: html
-  enabled: false
-  notes: Placeholder web source
+  enabled: true
+  priority: 100
+  source_group: media
   trust_tier: A
-  priority: 75
-- tags:
+  tags:
   - media
   - global
   - en
-  region: 北美
-  url: https://www.reutersagency.com/feed/?best-topics=healthcare-pharmaceuticals
-  name: Reuters Healthcare
-  id: reuters-health-rss
-  fetcher: rss
-  enabled: true
-  notes: High-priority global media
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: roche_media_subscribe
+  name: Roche Media Subscribe
+  connector: web
+  fetcher: html
+  url: https://www.roche.com/media/subscribe
+  region: 全球
+  enabled: false
+  priority: 65
+  source_group: company
   trust_tier: A
-  priority: 100
-- tags:
+  tags:
   - company
   - roche
   - press
-  region: EU
-  url: https://www.roche.com/media/subscribe
-  name: Roche Media Subscribe
-  id: roche_media_subscribe
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: roche_subscribe_investors
+  name: Roche Investors Subscribe
+  connector: web
   fetcher: html
+  url: https://www.roche.com/investors/subscribe
+  region: 全球
   enabled: false
-  notes: 订阅页，若已有可用Roche RSS则保持禁用
-  trust_tier: A
   priority: 65
-- tags:
+  source_group: company
+  trust_tier: A
+  tags:
   - company
   - roche
   - ir
-  region: EU
-  url: https://www.roche.com/investors/subscribe
-  name: Roche Investors Subscribe
-  id: roche_subscribe_investors
-  fetcher: html
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: rsshub_template
+  name: RSSHub Template (Disabled)
+  connector: rsshub
+  fetcher: rsshub
+  url: rsshub://
+  region: 全球
   enabled: false
-  notes: 订阅页，若已有可用Roche RSS则保持禁用
-  trust_tier: A
-  priority: 65
-- tags:
+  priority: 20
+  source_group: media
+  trust_tier: C
+  tags:
   - aggregator
   - rsshub
-  region: Global
-  url: rsshub://
-  name: RSSHub Template (Disabled)
-  id: rsshub_template
-  fetcher: rsshub
-  enabled: false
-  notes: 通过RSSHUB_BASE_URL + route 转换无RSS页面
-  trust_tier: C
-  priority: 20
+  rate_limit: {}
   fetch:
     rsshub_route: /example/path
-- tags:
+  parsing: {}
+- id: science-stm-etoc-rss
+  name: Science Translational Medicine (eTOC)
+  connector: rss
+  fetcher: rss
+  url: https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=stm
+  region: 全球
+  enabled: true
+  priority: 90
+  source_group: evidence
+  trust_tier: A
+  tags:
   - journal
   - global
   - en
   - translational
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: siemens_healthineers_press
+  name: Siemens Healthineers Press
+  connector: web
+  fetcher: html
+  url: https://www.siemens-healthineers.com/press
   region: 全球
-  url: https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=stm
-  name: Science Translational Medicine (eTOC)
-  id: science-stm-etoc-rss
-  fetcher: rss
   enabled: true
-  notes: Translational journal feed
+  priority: 84
+  source_group: company
   trust_tier: A
-  priority: 90
-- tags:
+  tags:
   - company
   - siemens
   - press
   - diagnostics
-  region: EU
-  url: https://www.siemens-healthineers.com/press
-  name: Siemens Healthineers Press
-  id: siemens_healthineers_press
-  fetcher: html
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: statnews-rss
+  name: STAT
+  connector: rss
+  fetcher: rss
+  url: https://www.statnews.com/feed/
+  region: 全球
   enabled: true
-  notes: 抓取press列表
-  trust_tier: A
-  priority: 84
-- tags:
+  priority: 85
+  source_group: media
+  trust_tier: B
+  tags:
   - media
   - global
   - en
-  region: 北美
-  url: https://www.statnews.com/feed/
-  name: STAT
-  id: statnews-rss
-  fetcher: rss
-  enabled: true
-  notes: Healthcare media
-  trust_tier: B
-  priority: 85
-- tags:
-  - regulatory
-  - apac
-  - en
-  region: 亚太
-  url: https://www.tga.gov.au/feeds/alert/product-recalls.xml
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: tga-recall-rss
   name: TGA Product Recalls
-  id: tga-recall-rss
+  connector: rss
   fetcher: rss
+  url: https://www.tga.gov.au/feeds/alert/product-recalls.xml
+  region: 全球
   enabled: true
-  notes: AU recalls
-  trust_tier: A
   priority: 90
-- tags:
+  source_group: regulatory
+  trust_tier: A
+  tags:
   - regulatory
   - apac
   - en
-  region: 亚太
-  url: https://www.tga.gov.au/feeds/alert/safety-alerts.xml
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: tga-safety-rss
   name: TGA Safety Alerts
-  id: tga-safety-rss
+  connector: rss
   fetcher: rss
-  enabled: true
-  notes: AU regulatory safety updates
-  trust_tier: A
+  url: https://www.tga.gov.au/feeds/alert/safety-alerts.xml
+  region: 全球
+  enabled: false
   priority: 90
-- tags:
+  source_group: regulatory
+  trust_tier: A
+  tags:
+  - regulatory
+  - apac
+  - en
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+  deleted_at: '2026-02-22T04:47:40.156623+00:00'
+- id: todays_clinical_lab_ivd
+  name: Today's Clinical Lab (IVD Tag)
+  connector: rss
+  fetcher: rss
+  url: https://www.clinicallab.com/tag/ivd
+  region: 全球
+  enabled: true
+  priority: 72
+  source_group: media
+  trust_tier: B
+  tags:
   - media
   - clinical_lab
   - ivd
-  region: Global
-  url: https://www.clinicallab.com/tag/ivd
-  name: Today's Clinical Lab (IVD Tag)
-  id: todays_clinical_lab_ivd
-  fetcher: rss
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- id: who_prequal_ivd
+  name: WHO Prequalification - In Vitro Diagnostics
+  connector: web
+  fetcher: html
+  url: https://extranet.who.int/prequal/vitro-diagnostics
+  region: 全球
   enabled: true
-  notes: 优先走 RSS auto-discovery；若无 RSS 则 html 抓取列表
-  trust_tier: B
-  priority: 72
-- tags:
+  priority: 90
+  source_group: regulatory
+  trust_tier: A
+  tags:
   - regulatory
   - who
   - prequalification
   - ivd
-  region: Global
-  url: https://extranet.who.int/prequal/vitro-diagnostics
-  name: WHO Prequalification - In Vitro Diagnostics
-  id: who_prequal_ivd
+  rate_limit: {}
+  fetch: {}
+  parsing: {}
+- tags:
+  - procurement
+  - jp
+  - mhlw
+  url: https://www.mhlw.go.jp/stf/shinsei_boshu/choutatsujouhou/chotatu/index.html
+  name: Japan MHLW Procurement (HTML list)
+  id: procurement_mhlw
+  fetcher: html
+  enabled: false
+  trust_tier: A
+  source_group: procurement
+  fetch:
+    mode: html_list
+    interval_minutes: 240
+    fetch_limit_default: 5
+    list_link_regex: choutatsu|chotatu|nyusatsu|keiyaku|\.html
+    article_required: true
+    article_min_paragraphs: 1
+    article_min_text_chars: 80
+- tags:
+  - procurement
+  - us
+  - sam
+  - api
+  url: https://api.sam.gov/prod/opportunities/v1/search?apikey=YOUR_KEY&keywords=medical%20diagnostic
+  name: SAM.gov Opportunities API (needs API key)
+  id: procurement_sam_api
+  fetcher: api
+  enabled: false
+  trust_tier: A
+  source_group: procurement
+  fetch:
+    mode: api_json
+    interval_minutes: 240
+  notes: 将 YOUR_KEY 替换为真实 key（建议不要提交到仓库，可在 DB sources 或本机 override 中替换）；probe 应能分类
+    needs_api_key。
+- tags:
+  - procurement
+  - cn
+  - ccgp
+  url: https://pub.ccgp.gov.cn/
+  name: China CCGP (probe only; may require browser automation)
+  id: procurement_ccgp
+  fetcher: html
+  enabled: false
+  trust_tier: A
+  source_group: procurement
+  fetch:
+    mode: html_list
+    interval_minutes: 240
+  notes: 可能需要无头浏览器/JS/反爬；先用 probe 观察错误分类（403/guard_static_listing/timeout）。
+- tags:
+  - procurement
+  - china
+  - province
+  region: 中国
+  url: https://example.com/province/rss
+  name: Provincial Procurement Notices
+  id: procurement_china_province
+  fetcher: rss
+  enabled: true
+  notes: Placeholder provincial procurement RSS source
+  trust_tier: A
+  priority: 92
+  source_group: procurement
+  fetch:
+    mode: rss
+    interval_minutes: 60
+- tags:
+  - procurement
+  - hospital
+  - china
+  region: 中国
+  url: https://example.com/hospital/rss
+  name: Hospital Procurement Announcements
+  id: procurement_hospital
+  fetcher: rss
+  enabled: true
+  notes: Placeholder hospital procurement RSS source
+  trust_tier: B
+  priority: 90
+  source_group: procurement
+  fetch:
+    mode: rss
+    interval_minutes: 60
+- tags:
+  - procurement
+  - global
+  - tender
+  region: 全球
+  url: https://example.com/procurement/article-page
+  name: Global Tender Monitor
+  id: procurement_global_tender
   fetcher: html
   enabled: true
-  notes: 通常无标准RSS，可选rsshub_route转换
+  notes: Placeholder global tender HTML article source
+  trust_tier: B
+  priority: 86
+  source_group: procurement
+  fetch:
+    mode: html_article
+    interval_minutes: 120
+    article_required: true
+    article_min_paragraphs: 1
+    article_min_text_chars: 120
+- tags:
+  - procurement
+  - eu
+  - ted
+  - rss
+  - cpv33100000
+  url: https://ted.europa.eu/en/simap/rss-feed?cpv=33100000-1&type=1&status=1
+  name: EU TED RSS (CPV 33100000 Medical Devices)
+  id: procurement_core_ted_cpv33100000
+  fetcher: rss
+  enabled: true
   trust_tier: A
-  priority: 90
+  source_group: procurement
+  fetch:
+    mode: rss
+    interval_minutes: 240
+  notes: CPV 33100000-1 医疗器械采购公告 RSS。
+- tags:
+  - procurement
+  - tw
+  - pcc
+  - rss
+  - medical
+  url: https://web.pcc.gov.tw/prkms/rss/tender/list?keyword=%E9%86%AB%E7%99%82&type=tender
+  name: Taiwan PCC Tender RSS (keyword=醫療)
+  id: procurement_core_pcc_medical_rss
+  fetcher: rss
+  enabled: true
+  trust_tier: A
+  source_group: procurement
+  fetch:
+    mode: rss
+    interval_minutes: 120
+- tags:
+  - procurement
+  - ungm
+  - who
+  - rss
+  - global
+  url: https://www.ungm.org/Public/Notice/ExportToRss?BusinessUnitIds=14&NoticeTypes=1,2
+  name: UNGM RSS (WHO & related, BU=14)
+  id: procurement_core_ungm_who_rss
+  fetcher: rss
+  enabled: true
+  trust_tier: A
+  source_group: procurement
+  fetch:
+    mode: rss
+    interval_minutes: 240
+- tags:
+  - procurement
+  - us
+  - sam
+  - api
+  - naics339112
+  url: https://api.sam.gov/prod/opportunities/v1/search?limit=10&api_key=YOUR_KEY&ncode=339112&status=active
+  name: SAM.gov Opportunities API (needs api_key)
+  id: procurement_core_sam_api
+  fetcher: api
+  enabled: false
+  trust_tier: A
+  source_group: procurement
+  fetch:
+    mode: api_json
+    interval_minutes: 240
+  notes: Replace YOUR_KEY via DB override or env injection; do NOT commit real key.
 groups:
   media_global:
   - 360dx-rss
@@ -658,6 +985,17 @@ groups:
   market_research_thinktank:
   - kalorama_blog
   - medtech_europe_newsletters
+  procurement:
+  - procurement_ccgp
+  - procurement_china_province
+  - procurement_core_pcc_medical_rss
+  - procurement_core_sam_api
+  - procurement_core_ted_cpv33100000
+  - procurement_core_ungm_who_rss
+  - procurement_global_tender
+  - procurement_hospital
+  - procurement_mhlw
+  - procurement_sam_api
   meta_aggregators:
   - google_news_ivd_24h
   - rsshub_template

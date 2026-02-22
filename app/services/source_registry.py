@@ -9,13 +9,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 from urllib.request import Request, urlopen
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import feedparser
 import yaml
 
+from app.services.html_article_extractor import extract_article
+from app.services.page_classifier import is_static_or_listing_url
 from app.services.source_policy import normalize_source_policy, source_passes_min_trust_tier
 from app.services.rules_store import RulesStore
 
@@ -365,10 +367,107 @@ def _generic_html_list_entries(
     return samples, "generic_html_empty"
 
 
+def _extract_links_for_html_list(
+    html: str,
+    page_url: str,
+    *,
+    limit: int = 5,
+    link_regex: str = "",
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    pattern = None
+    if str(link_regex or "").strip():
+        try:
+            pattern = re.compile(str(link_regex), flags=re.I)
+        except Exception:
+            pattern = None
+
+    for m in re.finditer(r"<a[^>]+href=['\"]([^'\"]+)['\"][^>]*>(.*?)</a>", html, flags=re.I | re.S):
+        href = str(m.group(1) or "").strip()
+        title = _clean_title(str(m.group(2) or ""))
+        if not href:
+            continue
+        if href.startswith("//"):
+            u = f"https:{href}"
+        elif href.startswith("http://") or href.startswith("https://"):
+            u = href
+        else:
+            u = urljoin(page_url, href)
+        if not _is_valid_url(u):
+            continue
+        if not _same_host(page_url, u):
+            continue
+        low = href.lower()
+        if any(x in low for x in ("javascript:", "mailto:", "#", "/login", "signin", "register")):
+            continue
+        if pattern is not None and not (pattern.search(href) or pattern.search(u)):
+            continue
+        if pattern is None:
+            # conservative fallback when regex is missing
+            if not re.search(r"(notice|bulletin|announcement|tender|bid|award|procurement|/detail|id=\d+|\.html?$)", low):
+                continue
+        if u in seen:
+            continue
+        seen.add(u)
+        rows.append({"title": title or u, "url": u})
+        if len(rows) >= max(1, int(limit or 5)):
+            break
+    return rows
+
+
 def _fetch_url_with_retry(url: str, headers: dict[str, str], timeout: int, retries: int) -> dict[str, Any]:
+    parsed = urlparse(str(url or "").strip())
+    if parsed.scheme == "file":
+        try:
+            host = str(parsed.netloc or "").strip()
+            raw_path = unquote(str(parsed.path or "").strip())
+            if host:
+                raw_path = f"{host}{raw_path}"
+            if not raw_path:
+                return {
+                    "ok": False,
+                    "data": b"",
+                    "http_status": None,
+                    "content_type": "",
+                    "error_type": "missing_config",
+                    "error_message": "file url missing path",
+                }
+            p = Path(raw_path)
+            if not p.is_absolute():
+                p = Path.cwd() / raw_path
+            if not p.exists():
+                return {
+                    "ok": False,
+                    "data": b"",
+                    "http_status": 404,
+                    "content_type": "",
+                    "error_type": "http_error",
+                    "error_message": f"file not found: {p}",
+                }
+            data = p.read_bytes()
+            return {
+                "ok": True,
+                "data": data,
+                "http_status": 200,
+                "content_type": "application/rss+xml" if p.suffix.lower() in {".xml", ".rss"} else "text/plain",
+                "error_type": "",
+                "error_message": "",
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "data": b"",
+                "http_status": None,
+                "content_type": "",
+                "error_type": "network_error",
+                "error_message": f"{type(e).__name__}: {e}",
+            }
+
     attempt = 0
     last_err = ""
     last_type = "network_error"
+    last_status: int | None = None
     while attempt <= max(0, retries):
         attempt += 1
         req = Request(url, headers=headers)
@@ -388,8 +487,18 @@ def _fetch_url_with_retry(url: str, headers: dict[str, str], timeout: int, retri
         except HTTPError as e:
             last_type = "http_error"
             last_err = f"HTTPError: {getattr(e, 'code', '')} {e}"
-            if int(getattr(e, "code", 0) or 0) in (403, 404):
+            code = int(getattr(e, "code", 0) or 0)
+            last_status = code or None
+            if code in (403, 404):
                 break
+            return {
+                "ok": False,
+                "data": b"",
+                "http_status": code,
+                "content_type": "",
+                "error_type": last_type,
+                "error_message": last_err,
+            }
         except TimeoutError as e:
             last_type = "timeout"
             last_err = f"TimeoutError: {e}"
@@ -410,7 +519,7 @@ def _fetch_url_with_retry(url: str, headers: dict[str, str], timeout: int, retri
     return {
         "ok": False,
         "data": b"",
-        "http_status": None,
+        "http_status": last_status,
         "content_type": "",
         "error_type": last_type,
         "error_message": last_err,
@@ -1049,11 +1158,21 @@ def _normalize_sample_rows(rows: list[dict[str, Any]], limit: int) -> list[dict[
         t = str(x.get("title") or "").strip()
         u = str(x.get("url") or x.get("link") or "").strip()
         d = str(x.get("published_at") or x.get("date") or "").strip()
+        s = str(x.get("summary") or x.get("description") or "").strip()
+        es = str(x.get("evidence_snippet") or "").strip()
         if not t and not u:
             continue
         row = {"title": t, "url": u}
         if d:
             row["published_at"] = d
+        if s:
+            row["summary"] = s
+        if es:
+            row["evidence_snippet"] = es
+        if isinstance(x.get("article_meta"), dict):
+            row["article_meta"] = x.get("article_meta")  # type: ignore[assignment]
+        if str(x.get("item_type", "")).strip():
+            row["item_type"] = str(x.get("item_type", "")).strip()
         out.append(row)
     return out
 
@@ -1062,11 +1181,13 @@ def _rss_entries_from_bytes(data: bytes, limit: int) -> list[dict[str, str]]:
     feed = feedparser.parse(data)
     rows: list[dict[str, str]] = []
     for e in getattr(feed, "entries", [])[: max(1, limit)]:
+        summary = str(getattr(e, "summary", "") or getattr(e, "description", "") or "").strip()
         rows.append(
             {
                 "title": str(getattr(e, "title", "") or "").strip(),
                 "url": str(getattr(e, "link", "") or "").strip(),
                 "published_at": str(getattr(e, "published", "") or getattr(e, "updated", "") or "").strip(),
+                "summary": summary,
             }
         )
     return _normalize_sample_rows(rows, limit)
@@ -1078,6 +1199,7 @@ def fetch_source_entries(
     limit: int = 50,
     timeout_seconds: int | None = None,
     retries: int | None = None,
+    source_guard: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Unified source fetch logic used by both test endpoint and runtime collectors.
@@ -1087,9 +1209,17 @@ def fetch_source_entries(
     url = str(source.get("url", "")).strip()
     sid = str(source.get("id", "")).strip()
     fetch = source.get("fetch", {}) if isinstance(source.get("fetch"), dict) else {}
+    sg = source_guard if isinstance(source_guard, dict) else {}
+    guard_enabled = bool(sg.get("enabled", False))
+    enforce_article_only = bool(sg.get("enforce_article_only", guard_enabled))
+    guard_min_paragraphs = int(sg.get("article_min_paragraphs", 2) or 2)
+    guard_min_chars = int(sg.get("article_min_text_chars", 200) or 200)
+    guard_allow_body_fetch_rss = bool(sg.get("allow_body_fetch_for_rss", False))
+    fetch_mode = str(fetch.get("mode", "")).strip().lower()
     timeout = _safe_int(timeout_seconds if timeout_seconds is not None else fetch.get("timeout_seconds"), 20)
     retry_n = _safe_int(retries if retries is not None else fetch.get("retry"), 2)
     headers = fetch.get("headers_json", {}) if isinstance(fetch.get("headers_json"), dict) else {}
+    user_agent = str(fetch.get("user_agent", "")).strip()
     auth_ref = str(fetch.get("auth_ref") or "").strip()
     if auth_ref:
         token = os.environ.get(auth_ref, "").strip()
@@ -1097,7 +1227,7 @@ def fetch_source_entries(
             headers = dict(headers)
             if "Authorization" not in headers:
                 headers["Authorization"] = token if (" " in token) else f"Bearer {token}"
-    h = {"User-Agent": "Mozilla/5.0 CodexIVD/1.0"}
+    h = {"User-Agent": user_agent or "Mozilla/5.0 CodexIVD/1.0"}
     h.update({str(k): str(v) for k, v in headers.items()})
 
     out: dict[str, Any] = {
@@ -1122,14 +1252,42 @@ def fetch_source_entries(
         "duration_ms": 0,
         "discovered_feed_url": "",
         "discovered_child_feeds": [],
+        "warnings": [],
+        "dropped_static_or_listing_count": 0,
+        "dropped_too_short_count": 0,
+        "dropped_by_domain_topN": [],
+        "drop_reasons": {},
     }
+
+    if fetch_mode not in {"rss", "html_article", "html_list", "api_json"}:
+        if connector == "rss":
+            fetch_mode = "rss"
+        elif connector == "api":
+            fetch_mode = "api_json"
+        else:
+            fetch_mode = "rss"
+            out["warnings"].append("fetch.mode_missing_defaulted_to_rss")
+
+    drop_domains: dict[str, int] = {}
+    drop_reasons: dict[str, int] = {}
+
+    def _mark_drop(reason: str, target_url: str) -> None:
+        rs = str(reason or "dropped")
+        drop_reasons[rs] = drop_reasons.get(rs, 0) + 1
+        host = str(urlparse(str(target_url or "")).hostname or "").strip().lower()
+        if host:
+            drop_domains[host] = drop_domains.get(host, 0) + 1
+        if rs == "static_or_listing_page":
+            out["dropped_static_or_listing_count"] = int(out.get("dropped_static_or_listing_count", 0) or 0) + 1
+        if rs in {"too_short", "too_few_paragraphs"}:
+            out["dropped_too_short_count"] = int(out.get("dropped_too_short_count", 0) or 0) + 1
 
     rss_discovery_enabled = _env_bool("SOURCES_RSS_DISCOVERY_ENABLED", True)
     index_discovery_enabled = _env_bool("SOURCES_INDEX_DISCOVERY_ENABLED", True)
     html_fallback_enabled = _env_bool("SOURCES_HTML_FALLBACK_ENABLED", True)
 
     try:
-        if connector == "rss":
+        if fetch_mode == "rss":
             res = _fetch_url_with_retry(url, h, timeout, retry_n)
             out["http_status"] = res.get("http_status")
             if not res.get("ok"):
@@ -1181,15 +1339,134 @@ def fetch_source_entries(
                     out["errors"] = [out["error_message"]]
                     out["error"] = out["error_message"]
                     return out
-            out["samples"] = samples
-            out["entries"] = samples
-            out["sample"] = samples
-            out["items_count"] = len(samples)
-            out["ok"] = bool(samples)
+            final_samples: list[dict[str, Any]] = []
+            for row in samples:
+                row_url = str((row or {}).get("url", "")).strip()
+                if guard_enabled and is_static_or_listing_url(
+                    row_url,
+                    source_group=str(source.get("source_group", "")).strip() or None,
+                ):
+                    _mark_drop("static_or_listing_page", row_url)
+                    continue
+                summary = str((row or {}).get("summary", "")).strip()
+                if not summary and (bool(fetch.get("allow_body_fetch_for_rss", guard_allow_body_fetch_rss))):
+                    r_html = _fetch_url_with_retry(row_url, h, timeout, retry_n)
+                    if r_html.get("ok"):
+                        html = bytes(r_html.get("data") or b"").decode("utf-8", errors="ignore")
+                        ex = extract_article(
+                            row_url,
+                            html,
+                            {
+                                "source_group": str(source.get("source_group", "")).strip(),
+                                "article_min_paragraphs": int(fetch.get("article_min_paragraphs", guard_min_paragraphs) or guard_min_paragraphs),
+                                "article_min_text_chars": int(fetch.get("article_min_text_chars", guard_min_chars) or guard_min_chars),
+                            },
+                        )
+                        if bool(ex.get("ok")):
+                            summary = str(ex.get("evidence_snippet", "")).strip()
+                            if summary:
+                                row["evidence_snippet"] = summary
+                            if ex.get("published_at"):
+                                row["published_at"] = str(ex.get("published_at"))
+                            row["article_meta"] = ex.get("article_meta", {})
+                            row["item_type"] = "rss"
+                        else:
+                            rs = str(ex.get("reason", "static_or_listing_page")).strip() or "static_or_listing_page"
+                            _mark_drop(rs, row_url)
+                            continue
+                if summary:
+                    row["summary"] = summary
+                final_samples.append(row)
+
+            out["samples"] = _normalize_sample_rows(final_samples, limit)
+            out["entries"] = out["samples"]
+            out["sample"] = out["samples"]
+            out["items_count"] = len(out["samples"])
+            out["ok"] = bool(out["samples"])
             out["status"] = "ok" if out["ok"] else "fail"
+            out["drop_reasons"] = drop_reasons
+            out["dropped_by_domain_topN"] = [
+                {"domain": k, "count": v}
+                for k, v in sorted(drop_domains.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+            ]
             return out
 
-        if connector == "html":
+        if fetch_mode == "api_json":
+            if ("YOUR_KEY" in url.upper()) or ("YOUR_TOKEN" in url.upper()):
+                out["error_type"] = "needs_api_key"
+                out["error_message"] = "api key placeholder detected in URL"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+                return out
+            if str(fetch.get("auth_ref") or "").strip() and not any(str(k).lower() == "authorization" for k in h.keys()):
+                out["error_type"] = "needs_api_key"
+                out["error_message"] = "auth_ref configured but no token resolved"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+                return out
+            res = _fetch_url_with_retry(url, h, timeout, retry_n)
+            out["http_status"] = res.get("http_status")
+            if not res.get("ok"):
+                out["error_type"] = str(res.get("error_type") or "network_error")
+                out["error_message"] = str(res.get("error_message") or "request failed")
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+                return out
+            raw = bytes(res.get("data") or b"").decode("utf-8", errors="ignore")
+            try:
+                obj = json.loads(raw or "{}")
+            except Exception:
+                out["error_type"] = "parse_error"
+                out["error_message"] = "api_json response is not valid JSON"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+                return out
+
+            candidates: list[Any] = []
+            if isinstance(obj, list):
+                candidates = obj
+            elif isinstance(obj, dict):
+                for k in ("results", "items", "list", "data", "notices"):
+                    v = obj.get(k)
+                    if isinstance(v, list):
+                        candidates = v
+                        break
+
+            samples: list[dict[str, str]] = []
+            for it in candidates[: max(1, int(limit or 50))]:
+                if not isinstance(it, dict):
+                    continue
+                title = str(
+                    it.get("title")
+                    or it.get("name")
+                    or it.get("noticeTitle")
+                    or it.get("description")
+                    or ""
+                ).strip()
+                u = str(
+                    it.get("url")
+                    or it.get("link")
+                    or it.get("noticeUrl")
+                    or url
+                ).strip()
+                if not title and not u:
+                    continue
+                samples.append({"title": title or str(source.get("name", sid)), "url": u})
+
+            out["samples"] = _normalize_sample_rows(samples, limit)
+            out["entries"] = out["samples"]
+            out["sample"] = out["samples"]
+            out["items_count"] = len(out["samples"])
+            out["ok"] = bool(out["samples"])
+            out["status"] = "ok" if out["ok"] else "fail"
+            if not out["ok"]:
+                out["error_type"] = "parse_empty"
+                out["error_message"] = "api_json returned no list-like entries"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+            return out
+
+        if fetch_mode in {"html_article", "html_list"}:
             res = _fetch_url_with_retry(url, h, timeout, retry_n)
             out["http_status"] = res.get("http_status")
             if not res.get("ok"):
@@ -1200,60 +1477,149 @@ def fetch_source_entries(
                 return out
             html = bytes(res.get("data") or b"").decode("utf-8", errors="ignore")
 
-            tags = [str(x).strip().lower() for x in source.get("tags", [])] if isinstance(source.get("tags"), list) else []
-            if index_discovery_enabled and "regulatory" in tags:
-                child = _extract_child_feeds(html, url, same_host_only=True)
-                out["discovered_child_feeds"] = child
-                if child:
-                    default_kws = ["medical devices", "devices", "cdrh", "ivd", "guidance", "alert", "news", "update"]
-                    policy = source.get("discovery_policy", "pick_by_keywords")
-                    chosen = _pick_child_feed(child, policy, keywords=default_kws)
-                    out["discovered_feed_url"] = chosen
-                    if chosen:
-                        r2 = _fetch_url_with_retry(chosen, h, timeout, retry_n)
-                        out["http_status"] = r2.get("http_status") or out["http_status"]
-                        if r2.get("ok"):
-                            samples = _rss_entries_from_bytes(bytes(r2.get("data") or b""), limit)
-                            if samples:
-                                out["samples"] = samples
-                                out["entries"] = samples
-                                out["sample"] = samples
-                                out["items_count"] = len(samples)
-                                out["ok"] = True
-                                out["status"] = "ok"
-                                return out
+            if fetch_mode == "html_article":
+                if guard_enabled and is_static_or_listing_url(
+                    url,
+                    source_group=str(source.get("source_group", "")).strip() or None,
+                ):
+                    _mark_drop("static_or_listing_page", url)
+                    out["error_type"] = "static_or_listing_page"
+                    out["error_message"] = "source url matched static/listing guard"
+                    out["drop_reasons"] = drop_reasons
+                    out["dropped_by_domain_topN"] = [
+                        {"domain": k, "count": v}
+                        for k, v in sorted(drop_domains.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+                    ]
+                    return out
+                ex = extract_article(
+                    url,
+                    html,
+                    {
+                        "source_group": str(source.get("source_group", "")).strip(),
+                        "article_min_paragraphs": int(fetch.get("article_min_paragraphs", guard_min_paragraphs) or guard_min_paragraphs),
+                        "article_min_text_chars": int(fetch.get("article_min_text_chars", guard_min_chars) or guard_min_chars),
+                    },
+                )
+                if not bool(ex.get("ok")):
+                    rs = str(ex.get("reason", "static_or_listing_page")).strip() or "static_or_listing_page"
+                    _mark_drop(rs, url)
+                    out["error_type"] = rs
+                    out["error_message"] = "html_article source is not a valid article page"
+                    out["drop_reasons"] = drop_reasons
+                    out["dropped_by_domain_topN"] = [
+                        {"domain": k, "count": v}
+                        for k, v in sorted(drop_domains.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+                    ]
+                    return out
+                sample = {
+                    "title": str(ex.get("title", "")).strip() or str(source.get("name", sid)),
+                    "url": url,
+                    "published_at": str(ex.get("published_at", "")).strip(),
+                    "summary": str(ex.get("evidence_snippet", "")).strip(),
+                    "evidence_snippet": str(ex.get("evidence_snippet", "")).strip(),
+                    "article_meta": ex.get("article_meta", {}),
+                    "item_type": "html_article",
+                }
+                out["samples"] = _normalize_sample_rows([sample], limit)
+                out["entries"] = out["samples"]
+                out["sample"] = out["samples"]
+                out["items_count"] = len(out["samples"])
+                out["ok"] = bool(out["samples"])
+                out["status"] = "ok" if out["ok"] else "fail"
+                out["drop_reasons"] = drop_reasons
+                out["dropped_by_domain_topN"] = [
+                    {"domain": k, "count": v}
+                    for k, v in sorted(drop_domains.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+                ]
+                return out
 
-            if not html_fallback_enabled:
-                out["status"] = "skip"
-                out["error_type"] = "html_fallback_disabled"
-                out["error_message"] = "html fallback parser disabled"
+            source_group = str(source.get("source_group", "")).strip().lower()
+            if source_group != "procurement":
+                out["error_type"] = "unsupported_mode"
+                out["error_message"] = "html_list is only supported for procurement sources"
                 out["errors"] = [out["error_message"]]
                 out["error"] = out["error_message"]
                 return out
 
-            rows, parse_mode = _generic_html_list_entries(
-                html, url, limit=limit, selectors=source.get("selectors", {})
+            link_regex = str(fetch.get("list_link_regex", "")).strip()
+            detail_links = _extract_links_for_html_list(
+                html,
+                url,
+                limit=int(fetch.get("fetch_limit_default", limit) or limit),
+                link_regex=link_regex,
             )
-            samples = _normalize_sample_rows(rows, limit)
-            if not samples and _is_probable_js_page(html):
+            if not detail_links and _is_probable_js_page(html):
                 out["status"] = "skip"
                 out["error_type"] = "js_required"
                 out["error_message"] = "page likely requires JS rendering"
                 out["errors"] = [out["error_message"]]
                 out["error"] = out["error_message"]
                 return out
-            if not samples:
-                out["error_type"] = "parse_empty" if parse_mode != "selector_regex" else "selector_miss"
-                out["error_message"] = "no items parsed from html page"
+            if not detail_links:
+                out["error_type"] = "parse_empty"
+                out["error_message"] = "no detail links extracted from html_list page"
                 out["errors"] = [out["error_message"]]
                 out["error"] = out["error_message"]
                 return out
-            out["samples"] = samples
-            out["entries"] = samples
-            out["sample"] = samples
-            out["items_count"] = len(samples)
-            out["ok"] = True
-            out["status"] = "ok"
+
+            samples: list[dict[str, Any]] = []
+            for row in detail_links[: max(1, int(limit or 50))]:
+                detail_url = str(row.get("url", "")).strip()
+                if not detail_url:
+                    continue
+                if guard_enabled and is_static_or_listing_url(detail_url, source_group="procurement"):
+                    _mark_drop("static_or_listing_page", detail_url)
+                    continue
+                rd = _fetch_url_with_retry(detail_url, h, timeout, retry_n)
+                if not rd.get("ok"):
+                    _mark_drop("not_article", detail_url)
+                    continue
+                detail_html = bytes(rd.get("data") or b"").decode("utf-8", errors="ignore")
+                ex = extract_article(
+                    detail_url,
+                    detail_html,
+                    {
+                        "source_group": "procurement",
+                        "article_min_paragraphs": int(fetch.get("article_min_paragraphs", 1) or 1),
+                        "article_min_text_chars": int(fetch.get("article_min_text_chars", 120) or 120),
+                    },
+                )
+                if not bool(ex.get("ok")):
+                    _mark_drop(str(ex.get("reason", "not_article")) or "not_article", detail_url)
+                    continue
+                snippet = str(ex.get("evidence_snippet", "")).strip()
+                samples.append(
+                    {
+                        "title": str(ex.get("title", "")).strip() or str(row.get("title", "")) or str(source.get("name", sid)),
+                        "url": detail_url,
+                        "published_at": str(ex.get("published_at", "")).strip(),
+                        "summary": snippet,
+                        "evidence_snippet": snippet,
+                        "article_meta": ex.get("article_meta", {}),
+                        "item_type": "html_article",
+                    }
+                )
+
+            out["samples"] = _normalize_sample_rows(samples, limit)
+            out["entries"] = out["samples"]
+            out["sample"] = out["samples"]
+            out["items_count"] = len(out["samples"])
+            out["ok"] = bool(out["samples"])
+            out["status"] = "ok" if out["ok"] else "fail"
+            if not out["ok"]:
+                if int(out.get("dropped_static_or_listing_count", 0) or 0) > 0:
+                    out["error_type"] = "static_or_listing_page"
+                    out["error_message"] = "detail links were dropped by static/listing guard"
+                else:
+                    out["error_type"] = "not_article"
+                    out["error_message"] = "no detail page passed article extraction"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+            out["drop_reasons"] = drop_reasons
+            out["dropped_by_domain_topN"] = [
+                {"domain": k, "count": v}
+                for k, v in sorted(drop_domains.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+            ]
             return out
 
         if connector == "rsshub":

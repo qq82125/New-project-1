@@ -1,0 +1,15 @@
+version: "1.0.0"
+sources:
+  - id: procurement_sam_api
+    enabled: false
+    name: SAM.gov Opportunities API (needs API key)
+    type: api
+    connector: api
+    url: "https://api.sam.gov/prod/opportunities/v1/search?apikey=YOUR_KEY&keywords=medical%20diagnostic"
+    source_group: procurement
+    trust_tier: "A"
+    fetch:
+      mode: api_json
+      interval_minutes: 240
+    tags: ["procurement","us","sam","api"]
+    # NOTE: 将 YOUR_KEY 替换为真实 key（建议不要提交到仓库，可在 DB sources 或本机 override 中替换）；probe 应能分类 needs_api_key。

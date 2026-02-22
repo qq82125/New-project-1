@@ -1,0 +1,18 @@
+version: "1.0.0"
+sources:
+  - id: procurement_china_province
+    enabled: true
+    connector: rss
+    url: https://example.com/province/rss
+    name: Provincial Procurement Notices
+    region: 中国
+    source_group: procurement
+    trust_tier: A
+    priority: 92
+    fetch:
+      mode: rss
+      interval_minutes: 60
+    tags:
+      - procurement
+      - china
+      - province

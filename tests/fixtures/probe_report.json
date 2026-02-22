@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "generated_at": "2026-02-22T05:40:00Z",
+  "totals": {
+    "ok": 8,
+    "empty": 1,
+    "dropped": 2,
+    "error": 3
+  },
+  "by_error_kind": {
+    "guard_static_listing": 2,
+    "timeout": 1,
+    "parse_error": 3
+  },
+  "per_source": [
+    {
+      "source_id": "s1",
+      "status": "error",
+      "error_kind": "parse_error",
+      "written_count": 0,
+      "dropped_count_by_reason": {}
+    },
+    {
+      "source_id": "s2",
+      "status": "ok",
+      "error_kind": "",
+      "written_count": 5,
+      "dropped_count_by_reason": {}
+    }
+  ]
+}

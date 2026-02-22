@@ -26,9 +26,9 @@ class RelevancePR1Tests(unittest.TestCase):
             {"source_group": "journal", "event_type": "临床与科研证据"},
             {},
         )
-        self.assertIn(track, {"frontier", "core"})
+        self.assertEqual(track, "frontier")
         self.assertGreaterEqual(level, 2)
-        self.assertIn(str(explain.get("final_reason", "")), {"frontier_anchor_hit", "core_anchor_hit"})
+        self.assertIn("frontier", str(explain.get("final_reason", "")))
 
     def test_finance_layoff_low_or_filtered(self) -> None:
         text = "Company reports quarterly revenue and announces layoff and restructuring"
@@ -38,7 +38,7 @@ class RelevancePR1Tests(unittest.TestCase):
             {},
         )
         self.assertEqual(level, 0)
-        self.assertIn(str(explain.get("final_reason", "")), {"raw_score_non_positive", "negative_without_diagnostic_anchor", "strong_negative_without_diagnostic_anchor"})
+        self.assertIn("negative", str(explain.get("final_reason", "")))
         self.assertIn("layoff", " ".join(explain.get("negatives_hit", [])))
 
     def test_drug_trial_with_diagnostic_not_hard_filtered(self) -> None:
@@ -71,7 +71,7 @@ class RelevancePR1Tests(unittest.TestCase):
             {"source_group": "media", "event_type": "政策与市场动态"},
             {},
         )
-        self.assertGreaterEqual(level, 1)
+        self.assertEqual(level, 1)
 
     def test_legacy_default_no_track_split(self) -> None:
         self.assertFalse(_resolve_track_split_enabled(use_enhanced=False, content_cfg={}))

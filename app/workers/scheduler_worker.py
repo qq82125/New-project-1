@@ -6,7 +6,7 @@ import random
 import sys
 import time
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -147,7 +147,7 @@ class SchedulerWorker:
             from apscheduler.triggers.interval import IntervalTrigger  # type: ignore
         except Exception as e:
             raise SystemExit(
-                "APScheduler is required but not installed. Install with: pip install apscheduler\n"
+                "APScheduler is required but not installed. Install with: pip install -r requirements.txt\n"
                 f"import_error={e}"
             )
 
@@ -343,9 +343,24 @@ class SchedulerWorker:
             content_cfg.get("source_policy", {}) if isinstance(content_cfg.get("source_policy"), dict) else {},
             profile=str(rt.get("active_profile", profile)),
         )
+        source_guard_cfg_raw = content_cfg.get("source_guard", {}) if isinstance(content_cfg.get("source_guard"), dict) else {}
+        source_guard = {
+            "enabled": bool(source_guard_cfg_raw.get("enabled", str(rt.get("active_profile", profile)).strip().lower() == "enhanced")),
+            "enforce_article_only": bool(source_guard_cfg_raw.get("enforce_article_only", True)),
+            "article_min_paragraphs": int(source_guard_cfg_raw.get("article_min_paragraphs", 2) or 2),
+            "article_min_text_chars": int(source_guard_cfg_raw.get("article_min_text_chars", 200) or 200),
+            "allow_body_fetch_for_rss": bool(source_guard_cfg_raw.get("allow_body_fetch_for_rss", False)),
+        }
         dropped_by_source_policy_count = 0
         dropped_by_source_policy_reasons: dict[str, int] = {}
+        dropped_static_or_listing_count = 0
+        dropped_too_short_count = 0
+        dropped_static_or_listing_domains: dict[str, int] = {}
         interval_defaulted_count = 0
+        sources_attempted: list[str] = []
+        sources_written_counts: dict[str, int] = {}
+        sources_dropped_counts: dict[str, dict[str, int]] = {}
+        sources_fetch_errors: dict[str, str] = {}
 
         rows = list_sources_for_profile(self.project_root, profile)
         rows = [r for r in rows if bool(r.get("enabled", True))]
@@ -355,6 +370,7 @@ class SchedulerWorker:
             sid = str(s.get("id", "")).strip()
             if not sid:
                 continue
+            sources_attempted.append(sid)
             source_url = str(s.get("url", "")).strip()
             source_tt = str(s.get("trust_tier", "C")).strip().upper() or "C"
             if not source_passes_min_trust_tier(source_tt, source_policy):
@@ -363,12 +379,16 @@ class SchedulerWorker:
                 dropped_by_source_policy_reasons["below_min_trust_tier"] = (
                     dropped_by_source_policy_reasons.get("below_min_trust_tier", 0) + 1
                 )
+                dropped = sources_dropped_counts.setdefault(sid, {})
+                dropped["below_min_trust_tier"] = dropped.get("below_min_trust_tier", 0) + 1
                 continue
             rs = exclusion_reason(sid, source_url, source_policy)
             if rs:
                 skipped += 1
                 dropped_by_source_policy_count += 1
                 dropped_by_source_policy_reasons[rs] = dropped_by_source_policy_reasons.get(rs, 0) + 1
+                dropped = sources_dropped_counts.setdefault(sid, {})
+                dropped[rs] = dropped.get(rs, 0) + 1
                 continue
             t0 = time.time()
             fetch_cfg = s.get("fetch", {}) if isinstance(s.get("fetch"), dict) else {}
@@ -381,16 +401,20 @@ class SchedulerWorker:
                 interval_min = 60
                 interval_defaulted_count += 1
                 errors.append(f"{sid}:interval_defaulted_to_60")
+                dropped = sources_dropped_counts.setdefault(sid, {})
+                dropped["interval_defaulted_to_60"] = dropped.get("interval_defaulted_to_60", 0) + 1
 
             last_fetched_at = str(s.get("last_fetched_at") or "").strip()
             due = _is_due(last_fetched_at=last_fetched_at, interval_min=interval_min, now_ts=now)
 
             if not force and not due:
                 skipped += 1
-                # record as skipped (keep last_fetched_at unchanged)
-                # Keep last_fetched_at unchanged; only update status field.
+                dropped = sources_dropped_counts.setdefault(sid, {})
+                dropped["not_due"] = dropped.get("not_due", 0) + 1
+                # not_due should not overwrite the last effective fetch status.
+                # We only record an event for auditing so UI can continue to show
+                # the most recent real fetch result (ok/fail) instead of "skipped".
                 try:
-                    self.store.record_source_fetch(sid, status="skipped", http_status=None, error=None)
                     self.store.record_source_fetch_event(
                         run_id=run_id,
                         source_id=sid,
@@ -453,7 +477,25 @@ class SchedulerWorker:
                 limit=max(5, int(fetch_limit or 50)),
                 timeout_seconds=max(3, timeout_s),
                 retries=max(0, retries),
+                source_guard=source_guard,
             )
+            dropped_static_or_listing_count += int(result.get("dropped_static_or_listing_count", 0) or 0)
+            dropped_too_short_count += int(result.get("dropped_too_short_count", 0) or 0)
+            result_drop_reasons = result.get("drop_reasons", {})
+            if isinstance(result_drop_reasons, dict):
+                dropped = sources_dropped_counts.setdefault(sid, {})
+                for rk, rv in result_drop_reasons.items():
+                    kk = str(rk).strip() or "dropped"
+                    dropped[kk] = dropped.get(kk, 0) + int(rv or 0)
+            dtop = result.get("dropped_by_domain_topN", [])
+            if isinstance(dtop, list):
+                for row in dtop:
+                    if not isinstance(row, dict):
+                        continue
+                    dm = str(row.get("domain", "")).strip()
+                    if not dm:
+                        continue
+                    dropped_static_or_listing_domains[dm] = dropped_static_or_listing_domains.get(dm, 0) + int(row.get("count", 0) or 0)
             ok = bool(result.get("ok"))
             status = "ok" if ok else "fail"
             if ok and fallback_used:
@@ -462,6 +504,8 @@ class SchedulerWorker:
             err = result.get("error")
             if fallback_used and not ok:
                 err = f"[fallback] {err}" if err else "[fallback] fetch_failed"
+            if not ok and str(err or "").strip():
+                sources_fetch_errors[sid] = str(err).strip()
             items_count = len(result.get("samples", []) if isinstance(result.get("samples"), list) else [])
             try:
                 self.store.record_source_fetch(
@@ -505,6 +549,7 @@ class SchedulerWorker:
                         items=entries_kept,
                         rules_runtime={
                             "source_policy": source_policy,
+                            "source_guard": source_guard,
                             "profile": str(rt.get("active_profile", profile)),
                             "anchors_pack": content_cfg.get("anchors_pack", {}) if isinstance(content_cfg.get("anchors_pack"), dict) else {},
                             "negatives_pack": content_cfg.get("negatives_pack", []) if isinstance(content_cfg.get("negatives_pack"), list) else [],
@@ -514,11 +559,15 @@ class SchedulerWorker:
                     )
                     assets_written += int(wr.get("written", 0))
                     deduped_count += int(wr.get("skipped", 0))
+                    sources_written_counts[sid] = sources_written_counts.get(sid, 0) + int(wr.get("written", 0) or 0)
                     dropped_by_source_policy_count += int(wr.get("dropped_by_source_policy", 0) or 0)
                     wr_reasons = wr.get("dropped_by_source_policy_reasons", {})
                     if isinstance(wr_reasons, dict):
+                        dropped = sources_dropped_counts.setdefault(sid, {})
                         for rk, rv in wr_reasons.items():
                             dropped_by_source_policy_reasons[str(rk)] = dropped_by_source_policy_reasons.get(str(rk), 0) + int(rv or 0)
+                            kk = str(rk).strip() or "dropped"
+                            dropped[kk] = dropped.get(kk, 0) + int(rv or 0)
 
                     # For non-RSS sources, keep at least one observable stub if parser produced no rows.
                     connector = str(source_for_fetch.get("connector") or source_for_fetch.get("fetcher") or "").lower()
@@ -534,9 +583,11 @@ class SchedulerWorker:
                         )
                         assets_written += int(sw.get("written", 0))
                         deduped_count += int(sw.get("skipped", 0))
+                        sources_written_counts[sid] = sources_written_counts.get(sid, 0) + int(sw.get("written", 0) or 0)
                 except Exception as e:
                     msg = f"{sid}:append_failed:{e}"
                     errors.append(msg)
+                    sources_fetch_errors[sid] = str(e)
             else:
                 failed += 1
                 sources_failed_count += 1
@@ -554,8 +605,10 @@ class SchedulerWorker:
                         )
                         assets_written += int(sw.get("written", 0))
                         deduped_count += int(sw.get("skipped", 0))
+                        sources_written_counts[sid] = sources_written_counts.get(sid, 0) + int(sw.get("written", 0) or 0)
                     except Exception as e:
                         errors.append(f"{sid}:stub_failed:{e}")
+                        sources_fetch_errors[sid] = str(e)
 
         meta = {
             "run_id": run_id,
@@ -572,6 +625,8 @@ class SchedulerWorker:
                 "assets_written": assets_written,
                 "assets_skipped": deduped_count,
                 "dropped_by_source_policy": dropped_by_source_policy_count,
+                "dropped_static_or_listing": dropped_static_or_listing_count,
+                "dropped_too_short": dropped_too_short_count,
                 "interval_defaulted": interval_defaulted_count,
             },
             "collect_asset_dir": self._collect_asset_dir,
@@ -582,7 +637,17 @@ class SchedulerWorker:
             "sources_failed_count": sources_failed_count,
             "dropped_by_source_policy_count": dropped_by_source_policy_count,
             "dropped_by_source_policy_reasons": dropped_by_source_policy_reasons,
+            "dropped_static_or_listing_count": dropped_static_or_listing_count,
+            "dropped_too_short_count": dropped_too_short_count,
+            "dropped_static_or_listing_top_domains": [
+                {"domain": k, "count": v}
+                for k, v in sorted(dropped_static_or_listing_domains.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+            ],
             "interval_defaulted_count": interval_defaulted_count,
+            "sources_attempted": sources_attempted,
+            "sources_written_counts": sources_written_counts,
+            "sources_dropped_counts": sources_dropped_counts,
+            "sources_fetch_errors": sources_fetch_errors,
             "errors": errors,
         }
         meta_path = artifacts_dir / "run_meta.json"
@@ -612,6 +677,10 @@ class SchedulerWorker:
             "deduped_count": meta["deduped_count"],
             "sources_fetched_count": meta["sources_fetched_count"],
             "sources_failed_count": meta["sources_failed_count"],
+            "sources_attempted": meta.get("sources_attempted", []),
+            "sources_written_counts": meta.get("sources_written_counts", {}),
+            "sources_dropped_counts": meta.get("sources_dropped_counts", {}),
+            "sources_fetch_errors": meta.get("sources_fetch_errors", {}),
             "errors": meta["errors"],
             "artifacts_dir": str(artifacts_dir),
         }
@@ -643,10 +712,16 @@ class SchedulerWorker:
             return
 
         for s in specs:
+            next_run_time = None
             if s.type == "cron":
                 trig = self.CronTrigger.from_crontab(str(s.cron), timezone=tz)
             else:
                 trig = self.IntervalTrigger(minutes=int(s.interval_minutes or 60), timezone=tz)
+                # Run interval jobs once shortly after (re)start, then continue by interval.
+                try:
+                    next_run_time = datetime.now(ZoneInfo(tz)) + timedelta(seconds=5)
+                except Exception:
+                    next_run_time = datetime.now(timezone.utc) + timedelta(seconds=5)
 
             self.scheduler.add_job(
                 self._run_job,
@@ -663,6 +738,7 @@ class SchedulerWorker:
                 max_instances=max_instances,
                 coalesce=coalesce,
                 misfire_grace_time=misfire,
+                next_run_time=next_run_time,
                 replace_existing=True,
             )
         _log(f"scheduled_jobs={len(specs)} tz={tz} misfire_grace={misfire}s")

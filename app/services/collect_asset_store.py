@@ -6,12 +6,21 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from app.core.track_relevance import compute_relevance
 from app.services.analysis_cache_store import AnalysisCacheStore
 from app.services.analysis_generator import AnalysisGenerator, degraded_analysis
+from app.services.classification_maps import (
+    classify_lane as map_classify_lane,
+    classify_region as map_classify_region,
+    load_lane_map,
+    load_region_map,
+    normalize_unknown as map_normalize_unknown,
+)
+from app.services.page_classifier import is_static_or_listing_url
 from app.services.opportunity_index import compute_opportunity_index
-from app.services.opportunity_store import EVENT_WEIGHT, OpportunityStore
+from app.services.opportunity_store import EVENT_WEIGHT, OpportunityStore, normalize_event_type
 from app.services.source_policy import exclusion_reason, filter_rows_for_digest, normalize_source_policy
 from app.utils.url_norm import url_norm
 
@@ -66,7 +75,7 @@ def _extract_evidence_snippet(item: dict[str, Any], *, max_chars: int = 240) -> 
 
 
 def _event_weight_key(event_type: str) -> str:
-    et = str(event_type or "").strip().lower()
+    et = normalize_event_type(event_type).strip().lower()
     if not et:
         return ""
     if et in EVENT_WEIGHT:
@@ -139,13 +148,20 @@ class CollectAssetStore:
         skipped = 0
         dropped_by_source_policy = 0
         dropped_reasons: dict[str, int] = {}
+        dropped_static_or_listing = 0
 
         rows: list[str] = []
+        source_guard = rules_runtime.get("source_guard", {}) if isinstance(rules_runtime.get("source_guard"), dict) else {}
+        source_guard_enabled = bool(source_guard.get("enabled", str(rules_runtime.get("profile", "legacy")).strip().lower() == "enhanced"))
         for it in items:
             title = str(it.get("title", "")).strip()
             url = str(it.get("url", it.get("link", ""))).strip()
             if not title or not url:
                 skipped += 1
+                continue
+            if source_guard_enabled and is_static_or_listing_url(url):
+                skipped += 1
+                dropped_static_or_listing += 1
                 continue
             drop_reason = exclusion_reason(source_id, url, source_policy)
             if drop_reason:
@@ -212,6 +228,7 @@ class CollectAssetStore:
             "skipped": skipped,
             "dropped_by_source_policy": dropped_by_source_policy,
             "dropped_by_source_policy_reasons": dropped_reasons,
+            "dropped_static_or_listing_count": dropped_static_or_listing,
         }
 
     def append_stub_item(
@@ -362,12 +379,15 @@ def render_digest_from_assets(
     _generator: AnalysisGenerator | None = None,
 ) -> Any:
     analysis_cfg = analysis_cfg or {}
+    profile = str(analysis_cfg.get("profile", "legacy")).strip().lower() or "legacy"
     source_policy = normalize_source_policy(
         analysis_cfg.get("source_policy", {}) if isinstance(analysis_cfg.get("source_policy"), dict) else {},
-        profile=str(analysis_cfg.get("profile", "legacy")),
+        profile=profile,
     )
+    source_guard_cfg = analysis_cfg.get("source_guard", {}) if isinstance(analysis_cfg.get("source_guard"), dict) else {}
+    source_guard_enabled = bool(source_guard_cfg.get("enabled", profile == "enhanced"))
+    source_guard_enforce_article_only = bool(source_guard_cfg.get("enforce_article_only", True))
     evidence_policy_cfg = analysis_cfg.get("evidence_policy", {}) if isinstance(analysis_cfg.get("evidence_policy"), dict) else {}
-    profile = str(analysis_cfg.get("profile", "legacy")).strip().lower() or "legacy"
     require_evidence_for_core = bool(evidence_policy_cfg.get("require_evidence_for_core", profile == "enhanced"))
     min_snippet_chars = int(evidence_policy_cfg.get("min_snippet_chars", 80) or 80)
     degrade_if_missing_evidence = bool(evidence_policy_cfg.get("degrade_if_missing", True))
@@ -425,6 +445,8 @@ def render_digest_from_assets(
     degraded_count = 0
     degraded_reasons: dict[str, int] = {}
     source_policy_dropped_rows: dict[str, int] = {}
+    dropped_static_or_listing_count = 0
+    dropped_static_or_listing_domains: dict[str, int] = {}
     dropped_bio_general_count = 0
     bio_general_terms_count: dict[str, int] = {}
     evidence_missing_core_count = 0
@@ -434,12 +456,31 @@ def render_digest_from_assets(
     opportunity_signals_deduped = 0
     opportunity_signals_dropped_probe = 0
     opportunity_index_kpis: dict[str, Any] = {}
+    region_maps = load_region_map(Path("."))
+    lane_maps = load_lane_map(Path("."))
 
     lines: list[str] = [subject, ""]
 
     items_filtered, source_policy_dropped_count, source_policy_dropped_rows = filter_rows_for_digest(items, policy=source_policy)
     items = []
     for r in items_filtered:
+        item_url = str(r.get("url", "")).strip()
+        if source_guard_enabled and is_static_or_listing_url(item_url):
+            dropped_static_or_listing_count += 1
+            dm = str(urlparse(item_url).hostname or "").strip().lower() if item_url else ""
+            if dm:
+                dropped_static_or_listing_domains[dm] = dropped_static_or_listing_domains.get(dm, 0) + 1
+            continue
+        if source_guard_enabled and source_guard_enforce_article_only:
+            item_type = str(r.get("item_type", "")).strip().lower()
+            if item_type == "html_article":
+                am = r.get("article_meta", {}) if isinstance(r.get("article_meta"), dict) else {}
+                if not am:
+                    dropped_static_or_listing_count += 1
+                    dm = str(urlparse(item_url).hostname or "").strip().lower() if item_url else ""
+                    if dm:
+                        dropped_static_or_listing_domains[dm] = dropped_static_or_listing_domains.get(dm, 0) + 1
+                    continue
         title = str(r.get("title", "")).strip()
         summary = str(r.get("summary", "")).strip()
         text = f"{title} {summary}".strip()
@@ -465,10 +506,42 @@ def render_digest_from_assets(
         rr["track"] = track
         rr["relevance_level"] = int(level)
         rr["relevance_explain"] = explain
+        region_in = map_normalize_unknown(rr.get("region", ""))
+        lane_in = map_normalize_unknown(rr.get("lane", ""))
+        if region_in != "__unknown__":
+            rr["region"] = region_in
+            rr["region_source"] = "item"
+        else:
+            rm = map_classify_region(str(rr.get("url", "")).strip(), region_maps)
+            rr["region"] = rm
+            rr["region_source"] = "domain_map" if rm != "__unknown__" else "unknown"
+        if lane_in != "__unknown__":
+            rr["lane"] = lane_in
+            rr["lane_source"] = "item"
+        else:
+            lane_text = " ".join(
+                [
+                    str(rr.get("title", "")).strip(),
+                    str(rr.get("summary", "")).strip(),
+                    str(rr.get("evidence_snippet", "")).strip(),
+                ]
+            ).strip()
+            lm = map_classify_lane(lane_text, lane_maps)
+            rr["lane"] = lm
+            rr["lane_source"] = "keyword_map" if lm != "__unknown__" else "unknown"
         items.append(rr)
         if opportunity_store is not None:
             try:
-                et = str(rr.get("event_type", "")).strip() or "__unknown__"
+                et = normalize_event_type(
+                    str(rr.get("event_type", "")).strip(),
+                    text=" ".join(
+                        [
+                            str(rr.get("title", "")).strip(),
+                            str(rr.get("summary", "")).strip(),
+                        ]
+                    ),
+                    url=str(rr.get("url", "")).strip(),
+                )
                 wk = _event_weight_key(et)
                 wres = opportunity_store.append_signal(
                     {
@@ -722,6 +795,14 @@ def render_digest_from_assets(
         lines.append(
             f"dropped_by_source_policy_count：{source_policy_dropped_count} | dropped_by_source_policy_top3：{sp_top}"
         )
+    if dropped_static_or_listing_count > 0:
+        dom_top = "; ".join(
+            [f"{k}:{v}" for k, v in sorted(dropped_static_or_listing_domains.items(), key=lambda kv: (-kv[1], kv[0]))[:5]]
+        ) or "无"
+        lines.append(
+            f"dropped_static_or_listing_count：{dropped_static_or_listing_count} | "
+            f"dropped_static_or_listing_top_domains：{dom_top}"
+        )
     if opportunity_enabled:
         lines.append(
             "opportunity_signals_written/deduped/dropped_probe："
@@ -772,6 +853,18 @@ def render_digest_from_assets(
                 + f"unknown_lane_rate={float(kpis.get('unknown_lane_rate', 0.0) or 0.0):.2f}, "
                 + f"unknown_event_type_rate={float(kpis.get('unknown_event_type_rate', 0.0) or 0.0):.2f}"
             )
+            region_top = kpis.get("unknown_region_top_domains", []) if isinstance(kpis.get("unknown_region_top_domains"), list) else []
+            lane_top = kpis.get("unknown_lane_top_terms", []) if isinstance(kpis.get("unknown_lane_top_terms"), list) else []
+            if region_top:
+                lines.append(
+                    "- unknown_region_top_domains: "
+                    + "; ".join([f"{str(x.get('host',''))}:{int(x.get('count',0) or 0)}" for x in region_top[:5]])
+                )
+            if lane_top:
+                lines.append(
+                    "- unknown_lane_top_terms: "
+                    + "; ".join([f"{str(x.get('term',''))}:{int(x.get('count',0) or 0)}" for x in lane_top[:5]])
+                )
         except Exception:
             lines.append("- 暂无显著机会变化")
         lines.append(
@@ -796,6 +889,11 @@ def render_digest_from_assets(
         "analysis_cache_enabled": enable_analysis_cache,
         "dropped_by_source_policy_count": int(source_policy_dropped_count),
         "dropped_by_source_policy_reasons": source_policy_dropped_rows,
+        "dropped_static_or_listing_count": int(dropped_static_or_listing_count),
+        "dropped_static_or_listing_top_domains": [
+            {"domain": k, "count": v}
+            for k, v in sorted(dropped_static_or_listing_domains.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+        ],
         "dropped_bio_general_count": int(dropped_bio_general_count),
         "top_bio_general_terms": [
             {"term": k, "count": v}

@@ -73,6 +73,17 @@
           },
           "additionalProperties": true
         },
+        "source_guard": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "enforce_article_only": { "type": "boolean", "default": true },
+            "article_min_paragraphs": { "type": "integer", "minimum": 1, "maximum": 20, "default": 2 },
+            "article_min_text_chars": { "type": "integer", "minimum": 50, "maximum": 5000, "default": 200 },
+            "allow_body_fetch_for_rss": { "type": "boolean", "default": false }
+          },
+          "additionalProperties": true
+        },
         "time_window": {
           "type": "object",
           "required": ["primary_hours", "fallback_days"],
@@ -278,7 +289,8 @@
               "frontier_policy",
               "evidence_policy",
               "opportunity_index",
-              "source_policy"
+              "source_policy",
+              "source_guard"
             ]
           },
           "description": { "type": "string", "minLength": 0 },

@@ -1,0 +1,18 @@
+{
+  "run_id": "run-pr17-digest",
+  "status": "success",
+  "profile": "enhanced",
+  "started_at": "2026-02-22T00:01:00Z",
+  "analysis": {
+    "items_before_dedupe": 120,
+    "items_after_dedupe": 85,
+    "analysis_cache_hit": 44,
+    "analysis_cache_miss": 9,
+    "analysis_degraded_count": 3,
+    "evidence_missing_core_count": 2,
+    "unknown_region_rate": 0.12,
+    "unknown_track_rate": 0.08,
+    "opportunity_signals_written": 10,
+    "opportunity_signals_deduped": 4
+  }
+}

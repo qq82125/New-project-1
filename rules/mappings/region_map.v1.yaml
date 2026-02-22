@@ -1,0 +1,24 @@
+domain_suffix:
+  ".jp": "亚太"
+  ".kr": "亚太"
+  ".tw": "亚太"
+  ".cn": "中国"
+  ".com": "北美"
+  ".eu": "欧洲"
+  ".uk": "欧洲"
+
+domain_contains:
+  "pmda.go.jp": "亚太"
+  "mhlw.go.jp": "亚太"
+  "fda.gov": "北美"
+  "cdc.gov": "北美"
+  "ema.europa.eu": "欧洲"
+  "ec.europa.eu": "欧洲"
+  "medtechdive.com": "北美"
+  "biopharmadive.com": "北美"
+  "clinicallab.com": "北美"
+  "lancet.com": "欧洲"
+  "kaloramainformation.com": "北美"
+  "iivd.net": "中国"
+
+url_path_contains: {}

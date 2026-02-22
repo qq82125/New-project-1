@@ -1,0 +1,76 @@
+lanes:
+  肿瘤检测:
+    any:
+      - "cancer"
+      - "tumor"
+      - "oncology"
+      - "mced"
+      - "multi-cancer"
+      - "liquid biopsy"
+      - "ctdna"
+  感染检测:
+    any:
+      - "infection"
+      - "infectious"
+      - "sepsis"
+      - "pathogen"
+      - "covid"
+      - "influenza"
+      - "respiratory"
+      - "antimicrobial"
+  生殖与遗传检测:
+    any:
+      - "nipt"
+      - "prenatal"
+      - "ivf"
+      - "pgta"
+      - "carrier screening"
+      - "genetic"
+      - "genomics"
+  心血管:
+    any:
+      - "cardio"
+      - "cardiac"
+      - "troponin"
+      - "heart"
+  神经退行:
+    any:
+      - "alzheimer"
+      - "p-tau"
+      - "ptau"
+      - "neuro"
+  糖尿病与代谢:
+    any:
+      - "diabetes"
+      - "hba1c"
+      - "glucose"
+  免疫发光与免疫分析:
+    any:
+      - "immunoassay"
+      - "chemiluminescence"
+      - "elisa"
+  分子诊断:
+    any:
+      - "pcr"
+      - "ddpcr"
+      - "digital pcr"
+      - "ngs"
+      - "sequencing"
+      - "ldt"
+      - "clia"
+      - "diagnostic"
+      - "diagnostics"
+      - "assay"
+      - "test"
+  POCT:
+    any:
+      - "point-of-care"
+      - "poct"
+      - "rapid test"
+  输血与移植:
+    any:
+      - "transplant"
+      - "hla"
+      - "donor"
+
+default_lane: "__unknown__"

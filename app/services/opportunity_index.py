@@ -3,8 +3,15 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
-from app.services.opportunity_store import OpportunityStore
+from app.services.classification_maps import (
+    classify_lane as map_classify_lane,
+    classify_region as map_classify_region,
+    load_lane_map,
+    load_region_map,
+)
+from app.services.opportunity_store import OpportunityStore, normalize_event_type
 
 
 def _normalize_unknown(value: Any) -> str:
@@ -38,6 +45,14 @@ def _format_contrib_top2(breakdown: dict[str, dict[str, int]]) -> list[dict[str,
     return rows[:2]
 
 
+def _host_from_row(row: dict[str, Any]) -> str:
+    u = str((row or {}).get("url_norm", "")).strip() or str((row or {}).get("url", "")).strip()
+    try:
+        return str(urlparse(u).netloc or "").strip().lower()
+    except Exception:
+        return ""
+
+
 def compute_opportunity_index(
     project_root: Path,
     *,
@@ -65,6 +80,8 @@ def compute_opportunity_index(
     store = OpportunityStore(project_root, asset_dir=asset_dir)
     cur_rows = store.load_signals(wd, now_utc=now_utc)
     prev_rows = store.load_signals(wd * 2, now_utc=now_utc - dt.timedelta(days=wd))
+    region_map = load_region_map(project_root / "rules")
+    lane_map = load_lane_map(project_root / "rules")
 
     cur_scores: dict[tuple[str, str], int] = {}
     prev_scores: dict[tuple[str, str], int] = {}
@@ -74,11 +91,41 @@ def compute_opportunity_index(
     unknown_region = 0
     unknown_lane = 0
     unknown_event_type = 0
+    unknown_region_domains: dict[str, int] = {}
+    unknown_lane_sources: dict[str, int] = {}
+    event_type_distribution: dict[str, dict[str, int]] = {}
 
     for r in cur_rows:
+        row_url = str((r or {}).get("url_norm", "")).strip() or str((r or {}).get("url", "")).strip()
         region = _normalize_unknown((r or {}).get("region", ""))
         lane = _normalize_unknown((r or {}).get("lane", ""))
-        event_type = _normalize_unknown((r or {}).get("event_type", ""))
+        if region == "__unknown__":
+            rm = map_classify_region(row_url, region_map)
+            if rm != "__unknown__":
+                region = rm
+        if lane == "__unknown__":
+            lane_text = " ".join(
+                [
+                    row_url,
+                    str((r or {}).get("event_type", "")).strip(),
+                    str((r or {}).get("source_id", "")).strip(),
+                ]
+            ).strip()
+            lm = map_classify_lane(lane_text, lane_map)
+            if lm != "__unknown__":
+                lane = lm
+        event_type = normalize_event_type(
+            str((r or {}).get("event_type", "")).strip(),
+            text=" ".join(
+                [
+                    str((r or {}).get("source_id", "")).strip(),
+                    str((r or {}).get("lane", "")).strip(),
+                    str((r or {}).get("region", "")).strip(),
+                ]
+            ),
+            url=row_url,
+        )
+        event_type = _normalize_unknown(event_type)
         if _is_probe_value(region) or _is_probe_value(lane):
             continue
         try:
@@ -91,18 +138,42 @@ def compute_opportunity_index(
         cur_total += 1
         if region == "__unknown__":
             unknown_region += 1
+            host = _host_from_row(r or {})
+            if host:
+                unknown_region_domains[host] = unknown_region_domains.get(host, 0) + 1
         if lane == "__unknown__":
             unknown_lane += 1
+            src = str((r or {}).get("source_id", "")).strip() or "__unknown_source__"
+            unknown_lane_sources[src] = unknown_lane_sources.get(src, 0) + 1
         if event_type == "__unknown__":
             unknown_event_type += 1
+        et_stat = event_type_distribution.setdefault(event_type, {"count": 0, "weight_sum": 0})
+        et_stat["count"] = int(et_stat.get("count", 0) or 0) + 1
+        et_stat["weight_sum"] = int(et_stat.get("weight_sum", 0) or 0) + w1
         bk = breakdown.setdefault(f"{region}|{lane}", {})
         by_et = bk.setdefault(event_type, {"weight_sum": 0, "count": 0})
         by_et["weight_sum"] = int(by_et.get("weight_sum", 0) or 0) + w1
         by_et["count"] = int(by_et.get("count", 0) or 0) + 1
 
     for r in prev_rows:
+        row_url = str((r or {}).get("url_norm", "")).strip() or str((r or {}).get("url", "")).strip()
         region = _normalize_unknown((r or {}).get("region", ""))
         lane = _normalize_unknown((r or {}).get("lane", ""))
+        if region == "__unknown__":
+            rm = map_classify_region(row_url, region_map)
+            if rm != "__unknown__":
+                region = rm
+        if lane == "__unknown__":
+            lane_text = " ".join(
+                [
+                    row_url,
+                    str((r or {}).get("event_type", "")).strip(),
+                    str((r or {}).get("source_id", "")).strip(),
+                ]
+            ).strip()
+            lm = map_classify_lane(lane_text, lane_map)
+            if lm != "__unknown__":
+                lane = lm
         if _is_probe_value(region) or _is_probe_value(lane):
             continue
         try:
@@ -175,6 +246,21 @@ def compute_opportunity_index(
             "unknown_region_rate": unknown_region_rate,
             "unknown_lane_rate": unknown_lane_rate,
             "unknown_event_type_rate": unknown_event_rate,
+            "unknown_region_top_domains": [
+                {"host": k, "count": v}
+                for k, v in sorted(unknown_region_domains.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+            ],
+            "unknown_lane_top_terms": [
+                {"term": k, "count": v}
+                for k, v in sorted(unknown_lane_sources.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+            ],
+            "event_type_distribution_topN": [
+                {"event_type": k, "count": int(v.get("count", 0) or 0), "weight_sum": int(v.get("weight_sum", 0) or 0)}
+                for k, v in sorted(
+                    event_type_distribution.items(),
+                    key=lambda kv: (-int(kv[1].get("count", 0) or 0), -int(kv[1].get("weight_sum", 0) or 0), kv[0]),
+                )[:5]
+            ],
         },
         "top": top_rows,
     }

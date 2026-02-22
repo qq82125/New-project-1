@@ -56,6 +56,12 @@ defaults:
     exclude_domains: []
     exclude_source_ids: []
     drop_if_url_matches: []
+  source_guard:
+    enabled: false
+    enforce_article_only: false
+    article_min_paragraphs: 2
+    article_min_text_chars: 200
+    allow_body_fetch_for_rss: false
   evidence_policy:
     require_evidence_for_core: false
     min_snippet_chars: 80

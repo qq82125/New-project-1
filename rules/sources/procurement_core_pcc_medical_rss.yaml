@@ -1,0 +1,14 @@
+version: "1.0.0"
+sources:
+  - id: procurement_core_pcc_medical_rss
+    enabled: true
+    name: "Taiwan PCC Tender RSS (keyword=醫療)"
+    type: rss
+    connector: rss
+    url: "https://web.pcc.gov.tw/prkms/rss/tender/list?keyword=%E9%86%AB%E7%99%82&type=tender"
+    source_group: procurement
+    trust_tier: "A"
+    fetch:
+      mode: rss
+      interval_minutes: 120
+    tags: ["procurement","tw","pcc","rss","medical"]

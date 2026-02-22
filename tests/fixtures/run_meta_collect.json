@@ -1,0 +1,19 @@
+{
+  "run_id": "collect-pr17",
+  "purpose": "collect",
+  "profile": "enhanced",
+  "ts": 1771737600.0,
+  "assets_written_count": 222,
+  "sources_failed_count": 5,
+  "dropped_static_or_listing_count": 9,
+  "dropped_static_or_listing_top_domains": [
+    {
+      "domain": "example.com",
+      "count": 6
+    },
+    {
+      "domain": "foo.org",
+      "count": 3
+    }
+  ]
+}

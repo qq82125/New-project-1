@@ -1,0 +1,21 @@
+version: "1.0.0"
+sources:
+  - id: procurement_global_tender
+    enabled: true
+    connector: html
+    url: https://example.com/procurement/article-page
+    name: Global Tender Monitor
+    region: 全球
+    source_group: procurement
+    trust_tier: B
+    priority: 86
+    fetch:
+      mode: html_article
+      interval_minutes: 120
+      article_required: true
+      article_min_paragraphs: 1
+      article_min_text_chars: 120
+    tags:
+      - procurement
+      - global
+      - tender

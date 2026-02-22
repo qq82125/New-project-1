@@ -20,6 +20,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicC
 from pydantic import BaseModel, Field
 
 from app.rules.engine import RuleEngine
+from app.services.ops_metrics import evaluate_health, find_latest_json, normalize_metrics, safe_load_json
 from app.services.rules_store import RulesStore
 from app.services.rules_versioning import get_workspace_rules_root
 from app.services.source_registry import (
@@ -773,8 +774,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           <a class="nav" href="/admin/output">输出规则</a>
           <a class="nav" href="/admin/scheduler">调度规则</a>
           <a class="nav" href="/admin/sources">信源管理</a>
-          <a class="nav" href="/admin/source-groups">信源分组</a>
           <a class="nav" href="/admin/runs">运行状态</a>
+          <a class="nav" href="/admin/ops">Ops 看板</a>
           <a class="nav" href="/admin/versions">版本与回滚</a>
           <div class="sidehint">必须先通过草稿校验，才允许发布生效</div>
         </aside>
@@ -3453,14 +3454,85 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     def page_sources(_: dict[str, str] = Depends(_auth_guard)) -> str:
         style = """
         <style>
-          /* Keep the Sources table readable on narrower screens */
           .actionscol button { padding: 6px 8px; font-size: 12px; }
           .actionscol select { width: 100%; padding: 6px 8px; font-size: 12px; }
+          .sources-table .summary-row td { vertical-align: top; }
+          .sources-table { width: 100%; border-collapse: collapse; }
+          .sources-table thead th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            background: rgba(10, 16, 28, 0.96);
+            backdrop-filter: blur(4px);
+          }
+          .sources-table .details-row td { background: rgba(8,14,28,.55); border-top: 0; }
+          .sources-table .details-box { border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
+          .sources-table .details-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; }
+          .sources-table .details-grid .k { color: var(--muted); font-size: 12px; }
+          .sources-table .details-grid .v { word-break: break-word; }
+          .status-inline { display: inline-flex; align-items: center; gap: 6px; }
+          .status-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--muted); box-shadow: 0 0 0 2px rgba(255,255,255,.06) inset; }
+          .status-dot.ok { background: #24c879; }
+          .status-dot.warn { background: #e8b84f; }
+          .status-dot.err { background: #ef5a5a; }
+          .status-dot.muted { background: #7f8da8; }
+          .status-text { font-size: 12px; color: var(--muted); }
+          .status-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+          .status-sub {
+            display: inline-flex;
+            align-items: center;
+            height: 18px;
+            padding: 0 8px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: rgba(255,255,255,.03);
+            font-size: 11px;
+            color: var(--muted);
+            line-height: 1;
+            white-space: nowrap;
+          }
+          .cell-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+          .tags-mini { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; line-height: 18px; }
+          .tags-fold summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+          .time-rel { white-space: nowrap; }
+          .toggle-chip {
+            display: inline-flex; align-items: center; gap: 8px;
+            height: 36px; padding: 0 12px; border: 1px solid var(--border);
+            border-radius: 10px; background: rgba(10,16,28,.45); white-space: nowrap;
+          }
+          .toggle-chip input { width: auto; min-width: auto; margin: 0; }
+          .toggle-chip span { font-size: 12px; color: var(--muted); line-height: 1; }
           details.help { margin-top: 10px; }
           details.help summary { cursor: pointer; color: var(--muted); font-size: 12px; }
           details.help .box { margin-top: 8px; border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: rgba(10,16,28,.45); }
           details.help ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
           details.help li { margin: 6px 0; }
+          details.groups-advanced { margin-top: 14px; }
+          details.groups-advanced > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+          .groups-box { margin-top: 8px; border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: rgba(10,16,28,.35); }
+          .list-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin: 8px 0;
+          }
+          .list-meta { color: var(--muted); font-size: 12px; }
+          .sources-list-wrap {
+            height: 72vh;
+            min-height: 420px;
+            max-height: 900px;
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: rgba(8,14,28,.28);
+          }
+          @media (max-width: 1100px){
+            .sources-list-wrap {
+              height: 56vh;
+              min-height: 340px;
+            }
+          }
         </style>
         """
         body = """
@@ -3474,9 +3546,22 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 <option value="enabled">仅启用</option>
                 <option value="disabled">仅停用</option>
               </select>
-              <label class="small" style="display:flex;align-items:center;gap:6px"><input id="show_deleted" type="checkbox"/>显示已删除</label>
-              <input id="filter_tag" style="width:160px" placeholder="按标签过滤"/>
-              <input id="filter_region" style="width:140px" placeholder="按地区过滤"/>
+              <select id="filter_group" style="width:160px">
+                <option value="">全部分组</option>
+                <option value="regulatory">regulatory</option>
+                <option value="media">media</option>
+                <option value="evidence">evidence</option>
+                <option value="company">company</option>
+                <option value="procurement">procurement</option>
+              </select>
+              <select id="filter_mode" style="width:160px">
+                <option value="">全部模式</option>
+                <option value="rss">rss</option>
+                <option value="html_article">html_article</option>
+                <option value="html_list">html_list</option>
+                <option value="api_json">api_json</option>
+              </select>
+              <label class="toggle-chip"><input id="show_deleted" type="checkbox"/><span>显示已删除</span></label>
             </div>
             <label>信源ID（唯一）</label><input id="id" placeholder="例如：reuters-health-rss"/>
 	            <label>名称</label><input id="name" placeholder="例如：Reuters Healthcare"/>
@@ -3549,7 +3634,23 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           <div class="card">
             <h4>信源列表</h4>
             <button onclick="loadSources()">刷新</button>
-            <div id="table"></div>
+            <div class="list-toolbar">
+              <div id="list_meta" class="list-meta">加载中...</div>
+              <button onclick="scrollSourceListTop()">回到顶部</button>
+            </div>
+            <div class="sources-list-wrap" id="sources_list_wrap">
+              <div id="table"></div>
+            </div>
+            <details id="groups" class="groups-advanced">
+              <summary>分组参数（高级）</summary>
+              <div class="groups-box">
+                <p class="small">修改 group 默认 interval 后，所有“源级 interval 为空”的 source 会立即继承新值。</p>
+                <div class="row">
+                  <button onclick="loadGroups()">刷新分组</button>
+                </div>
+                <div id="groups_table"></div>
+              </div>
+            </details>
             <div class="drawer" id="drawer" style="display:none"></div>
           </div>
         </div>
@@ -3567,6 +3668,45 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           if(!iso) return '';
           try { return new Date(iso).toLocaleString(); } catch(e) { return String(iso); }
         }
+        function fmtRelativeTime(iso){
+          if(!iso) return { rel:'-', abs:'' };
+          const d = new Date(iso);
+          if(Number.isNaN(d.getTime())) return { rel:String(iso), abs:String(iso) };
+          const now = new Date();
+          const diffSec = Math.floor((now.getTime() - d.getTime()) / 1000);
+          const abs = d.toLocaleString();
+          if(diffSec < 0) return { rel:'just now', abs };
+          if(diffSec < 60) return { rel: diffSec + 's ago', abs };
+          const m = Math.floor(diffSec / 60);
+          if(m < 60) return { rel: m + 'm ago', abs };
+          const h = Math.floor(m / 60);
+          if(h < 24) return { rel: h + 'h ago', abs };
+          const day = Math.floor(h / 24);
+          return { rel: day + 'd ago', abs };
+        }
+        function fmtDurationMin(totalMin){
+          const v = Math.max(0, Math.floor(Number(totalMin)||0));
+          const h = Math.floor(v / 60);
+          const m = v % 60;
+          if(h > 0 && m > 0) return `${h}h ${m}m`;
+          if(h > 0) return `${h}h`;
+          return `${m}m`;
+        }
+        function nextDueInfo(lastFetchedAt, intervalMinutes){
+          if(!lastFetchedAt) return null;
+          const iv = Number(intervalMinutes || 0);
+          if(!Number.isFinite(iv) || iv <= 0) return null;
+          const d = new Date(lastFetchedAt);
+          if(Number.isNaN(d.getTime())) return null;
+          const due = new Date(d.getTime() + iv * 60 * 1000);
+          const now = new Date();
+          const remainMs = due.getTime() - now.getTime();
+          return {
+            dueAt: due,
+            dueAtText: due.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            remainMin: Math.ceil(remainMs / 60000),
+          };
+        }
         function prettyUrl(u){
           try {
             const x = new URL(u);
@@ -3580,6 +3720,12 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           const t = (s.id+' '+s.name+' '+(s.region||'')+' '+(s.tags||[]).join(' ')+' '+(s.url||'')).toLowerCase();
           return t.includes(q.toLowerCase());
         }
+        function detailsId(id){ return 'detail_' + String(id||'').replaceAll(/[^a-zA-Z0-9_-]/g,'_'); }
+        function toggleDetails(id){
+          const el = document.getElementById(detailsId(id));
+          if(!el) return;
+          el.style.display = (el.style.display === 'none' || !el.style.display) ? 'table-row' : 'none';
+        }
         function showDrawer(title, obj){
           const d = document.getElementById('drawer');
           d.style.display = 'block';
@@ -3590,62 +3736,94 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           d.style.display = 'none';
           d.innerHTML = '';
         }
-	        function renderRow(s){
-	          const lastFetchRaw = s.last_fetched_at || '';
-	          const lastFetch = esc(fmtTime(lastFetchRaw) || lastFetchRaw || '-');
-	          // Show exactly one primary status pill to keep table clean.
-	          const st = String(s.last_fetch_status||'').toLowerCase();
-	          const testOk = !!(s.last_success_at && !s.last_error);
-	          const testFail = !!(s.last_error);
-	          let mainLabel = '';
-	          let mainClass = '';
-	          let mainTitle = '';
-	          if(st==='fail'){
-	            mainLabel = '抓取失败';
-	            mainClass = 'err';
-	            mainTitle = `来源：调度抓取（worker）` + (s.last_fetch_error ? `\\n错误：${String(s.last_fetch_error)}` : '') + (s.last_fetch_http_status ? `\\nHTTP：${String(s.last_fetch_http_status)}` : '');
-	          }else if(st==='ok_fallback'){
-	            mainLabel = '回退成功';
-	            mainClass = 'warn';
-	            mainTitle = `来源：调度抓取（worker）\\n已启用备用抓取配置` + (s.last_fetch_http_status ? `\\nHTTP：${String(s.last_fetch_http_status)}` : '');
-	          }else if(st==='ok'){
-	            mainLabel = '抓取成功';
-	            mainTitle = `来源：调度抓取（worker）` + (s.last_fetch_http_status ? `\\nHTTP：${String(s.last_fetch_http_status)}` : '');
-	          }else if(st==='skipped'){
-	            mainLabel = '抓取跳过';
-	            mainTitle = '来源：调度抓取（worker）\\n未到最小抓取间隔';
-	          }else if(testFail){
-	            mainLabel = '测试失败';
-	            mainClass = 'err';
-	            mainTitle = `来源：手动测试\\n错误：${String(s.last_error||'')}` + (s.last_http_status ? `\\nHTTP：${String(s.last_http_status)}` : '');
-	          }else if(testOk){
-	            mainLabel = '测试成功';
-	            mainTitle = `来源：手动测试` + (s.last_success_at ? `\\n时间：${String(s.last_success_at)}` : '') + (s.last_http_status ? `\\nHTTP：${String(s.last_http_status)}` : '');
-	          }
-	          const statusPills = mainLabel ? `<span class="pill ${mainClass}" title="${esc(mainTitle)}">${esc(mainLabel)}</span>` : '';
-	          const urlText = prettyUrl(s.url||'');
-	          const urlCell = s.url ? `<a class="url" href="${esc(s.url)}" target="_blank" title="${esc(s.url)}">${esc(urlText)}</a>` : '';
+        function scrollSourceListTop(){
+          const el = document.getElementById('sources_list_wrap');
+          if(el) el.scrollTop = 0;
+        }
+        function renderRow(s){
+          const lastFetchRaw = s.last_fetched_at || '';
+          const lastFetchInfo = fmtRelativeTime(lastFetchRaw);
+          const lastFetch = `<span class="time-rel" title="${esc(lastFetchInfo.abs || '-')}">${esc(lastFetchInfo.rel || '-')}</span>`;
+          const st = String(s.last_fetch_status||'').toLowerCase();
+          const testOk = !!(s.last_success_at && !s.last_error);
+          const testFail = !!(s.last_error);
+          let mainLabel = '';
+          let mainClass = '';
+          let mainTitle = '';
+          if(s.deleted_at){
+            mainLabel = '已删除';
+            mainClass = 'muted';
+            mainTitle = s.deleted_at ? `软删除时间：${String(s.deleted_at)}` : '软删除';
+          }else if(!s.enabled){
+            mainLabel = '已停用';
+            mainClass = 'muted';
+            mainTitle = '当前为停用状态（不会参与调度抓取）';
+          }else if(st==='fail'){
+            mainLabel = '抓取失败';
+            mainClass = 'err';
+            mainTitle = `来源：调度抓取（worker）` + (s.last_fetch_error ? `\\n错误：${String(s.last_fetch_error)}` : '') + (s.last_fetch_http_status ? `\\nHTTP：${String(s.last_fetch_http_status)}` : '');
+          }else if(st==='ok_fallback'){
+            mainLabel = '回退成功';
+            mainClass = 'warn';
+            mainTitle = `来源：调度抓取（worker）\\n已启用备用抓取配置` + (s.last_fetch_http_status ? `\\nHTTP：${String(s.last_fetch_http_status)}` : '');
+          }else if(st==='ok'){
+            mainLabel = '抓取成功';
+            mainClass = 'ok';
+            mainTitle = `来源：调度抓取（worker）` + (s.last_fetch_http_status ? `\\nHTTP：${String(s.last_fetch_http_status)}` : '');
+          }else if(st==='skipped'){
+            mainLabel = '抓取跳过';
+            mainClass = 'muted';
+            mainTitle = '来源：调度抓取（worker）\\n未到最小抓取间隔';
+          }else if(testFail){
+            mainLabel = '测试失败';
+            mainClass = 'err';
+            mainTitle = `来源：手动测试\\n错误：${String(s.last_error||'')}` + (s.last_http_status ? `\\nHTTP：${String(s.last_http_status)}` : '');
+          }else if(testOk){
+            mainLabel = '测试成功';
+            mainClass = 'ok';
+            mainTitle = `来源：手动测试` + (s.last_success_at ? `\\n时间：${String(s.last_success_at)}` : '') + (s.last_http_status ? `\\nHTTP：${String(s.last_http_status)}` : '');
+          }
+          const statusShort = mainLabel || (s.enabled ? '待抓取' : '已停用');
+          const statusClass = mainClass || 'muted';
+          const intervalNum = Number(s.effective_interval_minutes ?? s.fetch_interval_minutes ?? 0);
+          let statusSub = '';
+          if (s.enabled && st === 'skipped') {
+            const nd = nextDueInfo(lastFetchRaw, intervalNum);
+            if (nd && nd.remainMin > 0) {
+              statusSub = `<div class="status-sub" title="下次抓取：${esc(nd.dueAt.toLocaleString())}">下次 +${esc(fmtDurationMin(nd.remainMin))}</div>`;
+            }
+          } else if (s.enabled && statusShort === '待抓取') {
+            statusSub = intervalNum > 0
+              ? `<div class="status-sub" title="首轮抓取将在下一轮调度执行">首轮 ≤${esc(fmtDurationMin(intervalNum))}</div>`
+              : `<div class="status-sub" title="首轮抓取将在下一轮调度执行">首轮待抓取</div>`;
+          }
+          const statusText = `<div class="status-cell"><span class="status-inline" title="${esc(mainTitle || statusShort)}"><span class="status-dot ${esc(statusClass)}"></span><span class="status-text">${esc(statusShort)}</span></span>${statusSub}</div>`;
+          const urlText = prettyUrl(s.url||'');
+          const urlCell = s.url ? `<a class="url" href="${esc(s.url)}" target="_blank" title="${esc(s.url)}">${esc(urlText)}</a>` : '';
           const toggleLabel = s.enabled ? '停用' : '启用';
           const delLabel = s.deleted_at ? '恢复' : '删除';
-            const f = s.fetch || {};
-            const authRef = (f.auth_ref || '').trim();
-            const authPill = authRef
-              ? (s.auth_configured ? `<span class="pill">鉴权✓</span>` : `<span class="pill err" title="未在容器环境变量中找到该 auth_ref">鉴权×</span>`)
-              : '';
-	          return `
-	            <tr data-id="${esc(s.id)}">
-	              <td class="nowrap">${s.enabled ? '启用' : '停用'}</td>
-	              <td>${esc(s.name)} ${authPill} ${statusPills}</td>
-	              <td class="nowrap">${esc(s.fetcher || s.connector)}</td>
-	              <td class="urlcol">${urlCell}</td>
-	              <td class="nowrap">${s.priority}</td>
-	              <td class="nowrap">${esc(s.region||'')}</td>
-                <td class="nowrap">${esc(s.source_group||'')}</td>
-                <td class="nowrap">${esc(String(s.effective_interval_minutes ?? s.fetch_interval_minutes ?? '-'))} <span class="small">(${esc(s.interval_source||'-')})</span></td>
-                <td class="nowrap">${s.deleted_at ? '已删除' : '-'}</td>
-	              <td class="tagcol">${esc((s.tags||[]).join(','))}</td>
-	              <td>${lastFetch}</td>
-	              <td class="actionscol">
+          const f = s.fetch || {};
+          const authRef = (f.auth_ref || '').trim();
+          const authPill = authRef
+            ? (s.auth_configured ? `<span class="pill">鉴权✓</span>` : `<span class="pill err" title="未在容器环境变量中找到该 auth_ref">鉴权×</span>`)
+            : '';
+          const mode = String((s.fetch||{}).mode || s.fetcher || s.connector || '');
+          const tagsRaw = (s.tags||[]).join(',');
+          const tags = esc(tagsRaw);
+          const tagsCount = (s.tags||[]).length;
+          const tagsMini = `<span class="tags-mini" title="${tags || '-'}">tags(${tagsCount})</span>`;
+          const interval = `${esc(String(s.effective_interval_minutes ?? s.fetch_interval_minutes ?? '-'))} <span class="small">(${esc(s.interval_source||'-')})</span>`;
+          const detailRowId = detailsId(s.id);
+          return `
+            <tr class="summary-row" data-id="${esc(s.id)}">
+              <td class="nowrap"><button onclick="toggleDetails('${esc(s.id)}')">详情</button></td>
+              <td class="nowrap">${statusText}</td>
+              <td><div class="cell-name">${esc(s.name)} ${authPill} ${tagsMini}</div></td>
+              <td class="nowrap">${esc(s.source_group||'')}</td>
+              <td class="nowrap">${esc(mode)}</td>
+              <td class="nowrap">${interval}</td>
+              <td>${lastFetch}</td>
+              <td class="actionscol">
                 <select onchange="doAction('${esc(s.id)}', this.value); this.value='';">
                   <option value="">选择…</option>
                   <option value="edit">编辑</option>
@@ -3653,6 +3831,22 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   <option value="test">测试</option>
                   <option value="${s.deleted_at ? 'restore' : 'delete'}">${delLabel}</option>
                 </select>
+              </td>
+            </tr>
+            <tr id="${detailRowId}" class="details-row" style="display:none">
+              <td colspan="8">
+                <div class="details-box">
+                  <div class="details-grid">
+                    <div><div class="k">ID</div><div class="v">${esc(s.id||'')}</div></div>
+                    <div><div class="k">链接</div><div class="v">${urlCell || '-'}</div></div>
+                    <div><div class="k">方式</div><div class="v">${esc(s.fetcher || s.connector || '-')}</div></div>
+                    <div><div class="k">地区</div><div class="v">${esc(s.region||'-')}</div></div>
+                    <div><div class="k">优先级</div><div class="v">${esc(s.priority ?? '-')}</div></div>
+                    <div><div class="k">删除状态</div><div class="v">${s.deleted_at ? '已删除' : '-'}</div></div>
+                    <div><div class="k">标签</div><div class="v"><details class="tags-fold"><summary>tags(${tagsCount})</summary><div>${tags || '-'}</div></details></div></div>
+                    <div><div class="k">最近错误</div><div class="v">${esc(s.last_fetch_error || s.last_error || '-')}</div></div>
+                  </div>
+                </div>
               </td>
             </tr>`;
         }
@@ -3662,23 +3856,24 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           if (!j || !j.ok) { document.getElementById('table').textContent = JSON.stringify(j,null,2); return; }
           const q = (document.getElementById('q').value||'').trim();
           const fe = document.getElementById('filter_enabled').value;
-          const ft = (document.getElementById('filter_tag').value||'').trim().toLowerCase();
-          const fr = (document.getElementById('filter_region').value||'').trim().toLowerCase();
+          const fg = (document.getElementById('filter_group').value||'').trim().toLowerCase();
+          const fm = (document.getElementById('filter_mode').value||'').trim().toLowerCase();
           const filtered = (j.sources||[]).filter(s=>{
             if(fe==='enabled' && !s.enabled) return false;
             if(fe==='disabled' && s.enabled) return false;
-            if(ft){
-              const tags = (s.tags||[]).map(x=>String(x).toLowerCase());
-              if(!tags.some(x=>x.includes(ft))) return false;
-            }
-            if(fr){
-              const rg = String(s.region||'').toLowerCase();
-              if(!rg.includes(fr)) return false;
-            }
+            if(fg && String(s.source_group||'').toLowerCase() !== fg) return false;
+            const mode = String((s.fetch||{}).mode || s.fetcher || s.connector || '').toLowerCase();
+            if(fm && mode !== fm) return false;
             return matchQ(s,q);
           });
           const rows = filtered.map(renderRow).join('');
-		          document.getElementById('table').innerHTML = `<table><thead><tr><th>状态</th><th>名称</th><th>方式</th><th>链接</th><th>优先级</th><th>地区</th><th>分组</th><th>有效间隔</th><th>删除状态</th><th>标签</th><th>最近抓取</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`;
+          const total = (j.sources||[]).length;
+          const shown = filtered.length;
+          const metaEl = document.getElementById('list_meta');
+          if(metaEl){
+            metaEl.textContent = `总计 ${total} 条 | 当前筛选 ${shown} 条`;
+          }
+          document.getElementById('table').innerHTML = `<table class="sources-table"><thead><tr><th>详情</th><th>状态</th><th>名称</th><th>分组</th><th>模式</th><th>有效间隔</th><th>最近抓取</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`;
 	          window._sources = j.sources||[];
 	        }
         function editSource(id){
@@ -3799,54 +3994,51 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           const j = await api(`/admin/api/sources/${encodeURIComponent(id)}/restore`,'POST',{});
           if(j && j.ok) { toast('ok','已恢复',id); loadSources(); } else { toast('err','恢复失败',JSON.stringify(j)); }
         }
-        document.getElementById('q').addEventListener('input', ()=>{ loadSources(); });
-        document.getElementById('filter_enabled').addEventListener('change', ()=>{ loadSources(); });
-        document.getElementById('show_deleted').addEventListener('change', ()=>{ loadSources(); });
-        document.getElementById('filter_tag').addEventListener('input', ()=>{ loadSources(); });
-        document.getElementById('filter_region').addEventListener('input', ()=>{ loadSources(); });
-        loadSources();
-        """
-        return _page_shell("信源管理", style + body, js)
-
-    @app.get("/admin/source-groups", response_class=HTMLResponse)
-    def page_source_groups(_: dict[str, str] = Depends(_auth_guard)) -> str:
-        body = """
-        <div class="card">
-          <h4>信源分组默认配置</h4>
-          <p class="small">修改 group 默认 interval 后，所有“源级 interval 为空”的 source 会立即继承新值。</p>
-          <button onclick="loadGroups()">刷新</button>
-          <div id="tb"></div>
-        </div>
-        """
-        js = """
-        function esc(s){ return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
         async function loadGroups(){
           const j = await api('/admin/api/source-groups');
-          if(!j || !j.ok){ document.getElementById('tb').textContent = JSON.stringify(j,null,2); return; }
+          if(!j || !j.ok){
+            document.getElementById('groups_table').textContent = JSON.stringify(j,null,2);
+            return;
+          }
           const rows = (j.groups||[]).map(g => `
             <tr>
               <td>${esc(g.group_key)}</td>
-              <td><input id="n_${esc(g.group_key)}" value="${esc(g.display_name||'')}" /></td>
-              <td><input id="i_${esc(g.group_key)}" type="number" min="1" max="1440" value="${g.default_interval_minutes ?? ''}" /></td>
-              <td><select id="e_${esc(g.group_key)}"><option value="true" ${g.enabled?'selected':''}>启用</option><option value="false" ${!g.enabled?'selected':''}>停用</option></select></td>
+              <td><input id="gn_${esc(g.group_key)}" value="${esc(g.display_name||'')}" /></td>
+              <td><input id="gi_${esc(g.group_key)}" type="number" min="1" max="1440" value="${g.default_interval_minutes ?? ''}" /></td>
+              <td><select id="ge_${esc(g.group_key)}"><option value="true" ${g.enabled?'selected':''}>启用</option><option value="false" ${!g.enabled?'selected':''}>停用</option></select></td>
               <td><button onclick="saveGroup('${esc(g.group_key)}')">保存</button></td>
             </tr>
           `).join('');
-          document.getElementById('tb').innerHTML = `<table><thead><tr><th>group_key</th><th>display_name</th><th>default_interval_minutes</th><th>enabled</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`;
+          document.getElementById('groups_table').innerHTML = `<table><thead><tr><th>group_key</th><th>display_name</th><th>default_interval_minutes</th><th>enabled</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`;
         }
         async function saveGroup(key){
           const payload = {
-            display_name: document.getElementById('n_'+key).value.trim() || key,
-            default_interval_minutes: document.getElementById('i_'+key).value ? Number(document.getElementById('i_'+key).value) : null,
-            enabled: document.getElementById('e_'+key).value === 'true'
+            display_name: document.getElementById('gn_'+key).value.trim() || key,
+            default_interval_minutes: document.getElementById('gi_'+key).value ? Number(document.getElementById('gi_'+key).value) : null,
+            enabled: document.getElementById('ge_'+key).value === 'true'
           };
           const j = await api('/admin/api/source-groups/'+encodeURIComponent(key),'PATCH',payload);
-          if(j && j.ok){ toast('ok','分组已保存',key); loadGroups(); }
-          else { toast('err','保存失败', JSON.stringify(j)); }
+          if(j && j.ok){
+            toast('ok','分组已保存',key);
+            loadGroups();
+            loadSources();
+          } else {
+            toast('err','保存失败', JSON.stringify(j));
+          }
         }
+        document.getElementById('q').addEventListener('input', ()=>{ loadSources(); });
+        document.getElementById('filter_enabled').addEventListener('change', ()=>{ loadSources(); });
+        document.getElementById('filter_group').addEventListener('change', ()=>{ loadSources(); });
+        document.getElementById('filter_mode').addEventListener('change', ()=>{ loadSources(); });
+        document.getElementById('show_deleted').addEventListener('change', ()=>{ loadSources(); });
+        loadSources();
         loadGroups();
         """
-        return _page_shell("信源分组", body, js)
+        return _page_shell("信源管理", style + body, js)
+
+    @app.get("/admin/source-groups")
+    def page_source_groups(_: dict[str, str] = Depends(_auth_guard)) -> RedirectResponse:
+        return RedirectResponse(url="/admin/sources#groups", status_code=307)
 
     @app.get("/admin/versions", response_class=HTMLResponse)
     def page_versions(_: dict[str, str] = Depends(_auth_guard)) -> str:
@@ -4069,6 +4261,247 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         loadVersions();
         """
         return _page_shell("版本与回滚", body, js)
+
+    def _to_rel(path: str) -> str:
+        if not path:
+            return ""
+        try:
+            rp = Path(path).resolve()
+            return str(rp.relative_to(root.resolve()))
+        except Exception:
+            return str(path)
+
+    def _pick_latest(*paths: str | None) -> str | None:
+        candidates: list[Path] = []
+        for p in paths:
+            if not p:
+                continue
+            pp = Path(p)
+            if pp.exists() and pp.is_file():
+                candidates.append(pp)
+        if not candidates:
+            return None
+        candidates.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+        return str(candidates[0])
+
+    @app.get("/admin/api/ops/summary")
+    def api_ops_summary(limit: int = 20, _: dict[str, str] = Depends(_auth_guard)) -> dict[str, Any]:
+        artifacts_dir = root / "artifacts"
+        errors: list[str] = []
+
+        digest_meta_path = _pick_latest(
+            str(artifacts_dir / "run_meta.json"),
+            find_latest_json(str(artifacts_dir / "run-*/run_meta.json")),
+            find_latest_json(str(artifacts_dir / "*digest*.json")),
+        )
+        collect_meta_path = _pick_latest(
+            str(artifacts_dir / "collect_meta.json"),
+            find_latest_json(str(artifacts_dir / "collect-*/run_meta.json")),
+            find_latest_json(str(artifacts_dir / "*collect*.json")),
+        )
+        acceptance_path = _pick_latest(str(artifacts_dir / "acceptance" / "acceptance_report.json"))
+        probe_path = _pick_latest(find_latest_json(str(artifacts_dir / "procurement" / "probe_report-*.json")))
+
+        digest_obj, digest_err = safe_load_json(digest_meta_path)
+        collect_obj, collect_err = safe_load_json(collect_meta_path)
+        acceptance_obj, acceptance_err = safe_load_json(acceptance_path)
+        probe_obj, probe_err = safe_load_json(probe_path)
+
+        if digest_err:
+            errors.append(f"digest: {digest_err}")
+        if collect_err:
+            errors.append(f"collect: {collect_err}")
+        if acceptance_err:
+            errors.append(f"acceptance: {acceptance_err}")
+        if probe_err:
+            errors.append(f"procurement_probe: {probe_err}")
+
+        probe_metrics = normalize_metrics(probe_obj) if isinstance(probe_obj, dict) else None
+        if isinstance(probe_metrics, dict) and probe_metrics.get("per_source") and isinstance(probe_metrics["per_source"], list):
+            probe_metrics["per_source"] = probe_metrics["per_source"][: max(1, min(int(limit or 20), 50))]
+        if isinstance(probe_metrics, dict) and probe_metrics.get("by_error_kind") and isinstance(probe_metrics["by_error_kind"], list):
+            probe_metrics["by_error_kind"] = probe_metrics["by_error_kind"][: max(1, min(int(limit or 20), 50))]
+
+        summary = {
+            "digest": normalize_metrics(digest_obj) if isinstance(digest_obj, dict) else None,
+            "collect": normalize_metrics(collect_obj) if isinstance(collect_obj, dict) else None,
+            "acceptance": normalize_metrics(acceptance_obj) if isinstance(acceptance_obj, dict) else None,
+            "procurement_probe": probe_metrics,
+            "files": {
+                "digest_meta_path": _to_rel(digest_meta_path or ""),
+                "collect_meta_path": _to_rel(collect_meta_path or ""),
+                "acceptance_path": _to_rel(acceptance_path or ""),
+                "probe_path": _to_rel(probe_path or ""),
+            },
+            "errors": errors,
+        }
+        summary["health"] = evaluate_health(summary)
+        return summary
+
+    @app.get("/admin/ops", response_class=HTMLResponse)
+    def page_ops(_: dict[str, str] = Depends(_auth_guard)) -> str:
+        body = """
+        <style>
+          .ops-grid { display:grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+          .ops-card {
+            min-height: 320px;
+            display: flex;
+            flex-direction: column;
+          }
+          .ops-head { margin-bottom: 8px; }
+          .ops-head h4 { margin: 0 0 8px 0; }
+          .ops-body {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+          }
+          .ops-scroll {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: rgba(8,14,28,.35);
+            padding: 8px;
+          }
+          .ops-pre {
+            margin: 0;
+            max-height: 100%;
+            overflow: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+          }
+          .ellipsis {
+            display: inline-block;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            vertical-align: bottom;
+          }
+          .ops-empty {
+            min-height: 56px;
+            display: flex;
+            align-items: center;
+            color: var(--muted);
+          }
+          .ops-warn-list {
+            min-height: 120px;
+            max-height: 220px;
+            overflow: auto;
+          }
+          @media (max-width: 1100px){
+            .ops-grid { grid-template-columns: 1fr; }
+          }
+        </style>
+        <div class="card" style="margin-bottom:14px">
+          <h4>Health Status</h4>
+          <div id="healthOverall" style="font-size:18px;font-weight:800">加载中...</div>
+          <div id="healthRules" style="margin-top:8px">加载中...</div>
+        </div>
+        <div class="ops-grid">
+          <div class="card ops-card">
+            <div class="ops-head">
+              <h4>Digest</h4>
+            </div>
+            <div class="ops-body">
+              <div class="kvs" id="digestMeta">
+                <div>时间戳</div><b>-</b>
+                <div>文件</div><b>-</b>
+              </div>
+              <div class="ops-scroll"><pre class="ops-pre" id="digestJson">加载中...</pre></div>
+            </div>
+          </div>
+          <div class="card ops-card">
+            <div class="ops-head">
+              <h4>Collect</h4>
+            </div>
+            <div class="ops-body">
+              <div class="kvs" id="collectMeta">
+                <div>时间戳</div><b>-</b>
+                <div>文件</div><b>-</b>
+              </div>
+              <div class="ops-scroll"><pre class="ops-pre" id="collectJson">加载中...</pre></div>
+            </div>
+          </div>
+          <div class="card ops-card">
+            <div class="ops-head">
+              <h4>Acceptance</h4>
+            </div>
+            <div class="ops-body">
+              <div class="kvs" id="acceptanceMeta">
+                <div>时间戳</div><b>-</b>
+                <div>文件</div><b>-</b>
+              </div>
+              <div class="ops-scroll"><pre class="ops-pre" id="acceptanceJson">加载中...</pre></div>
+            </div>
+          </div>
+          <div class="card ops-card">
+            <div class="ops-head">
+              <h4>Procurement Probe</h4>
+            </div>
+            <div class="ops-body">
+              <div class="kvs" id="probeMeta">
+                <div>时间戳</div><b>-</b>
+                <div>文件</div><b>-</b>
+              </div>
+              <div class="ops-scroll"><pre class="ops-pre" id="probeJson">加载中...</pre></div>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <h4>Warnings</h4>
+          <div id="warnings" class="ops-warn-list">加载中...</div>
+        </div>
+        """
+        js = """
+        function esc(s){ return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+        function fmt(v){ return (v===null || v===undefined || v==='') ? '暂无数据/文件缺失' : String(v); }
+        function renderMeta(elId, filePath, data){
+          const ts = data && data.timestamp ? data.timestamp : '';
+          const tsTxt = fmt(ts);
+          const fileTxt = fmt(filePath);
+          document.getElementById(elId).innerHTML = `
+            <div>时间戳</div><b class="ellipsis" title="${esc(tsTxt)}">${esc(tsTxt)}</b>
+            <div>文件</div><b class="ellipsis" title="${esc(fileTxt)}">${esc(fileTxt)}</b>
+          `;
+        }
+        function renderJson(elId, data){
+          if(!data){ document.getElementById(elId).innerHTML = '<div class="ops-empty">暂无数据/文件缺失</div>'; return; }
+          document.getElementById(elId).textContent = JSON.stringify(data, null, 2);
+        }
+        function renderHealth(health){
+          const overall = String(health?.overall || 'green');
+          let label = '🟢 系统健康';
+          if(overall === 'yellow') label = '🟡 需要关注';
+          if(overall === 'red') label = '🔴 异常';
+          document.getElementById('healthOverall').textContent = label;
+          const rules = Array.isArray(health?.rules_triggered) ? health.rules_triggered.slice(0,5) : [];
+          document.getElementById('healthRules').innerHTML = rules.length
+            ? `<ul>${rules.map(r => `<li>${esc(r.metric)}: value=${esc(JSON.stringify(r.value))}, threshold=${esc(JSON.stringify(r.threshold))}, level=${esc(r.level)}</li>`).join('')}</ul>`
+            : '无触发规则';
+        }
+        async function loadOps(){
+          const j = await api('/admin/api/ops/summary?limit=20');
+          renderHealth(j?.health || {});
+          renderMeta('digestMeta', j?.files?.digest_meta_path, j?.digest);
+          renderMeta('collectMeta', j?.files?.collect_meta_path, j?.collect);
+          renderMeta('acceptanceMeta', j?.files?.acceptance_path, j?.acceptance);
+          renderMeta('probeMeta', j?.files?.probe_path, j?.procurement_probe);
+          renderJson('digestJson', j?.digest || null);
+          renderJson('collectJson', j?.collect || null);
+          renderJson('acceptanceJson', j?.acceptance || null);
+          renderJson('probeJson', j?.procurement_probe || null);
+          const errs = Array.isArray(j?.errors) ? j.errors : [];
+          document.getElementById('warnings').innerHTML = errs.length
+            ? `<ul>${errs.map(e=>`<li>${esc(e)}</li>`).join('')}</ul>`
+            : '<div class="ops-empty">无</div>';
+        }
+        loadOps();
+        """
+        return _page_shell("Ops Dashboard Lite", body, js)
 
     @app.get("/admin/runs", response_class=HTMLResponse)
     def page_runs(_: dict[str, str] = Depends(_auth_guard)) -> str:

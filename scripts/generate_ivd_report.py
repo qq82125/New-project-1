@@ -15,7 +15,6 @@ import math
 import os
 import re
 import sys
-import time
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -46,10 +45,7 @@ from app.core.track_relevance import (
 )
 from app.services.story_clusterer import StoryClusterer
 from app.services.source_registry import fetch_source_entries, load_sources_registry, select_sources
-from app.services.opportunity_index import compute_opportunity_index
-from app.services.opportunity_store import EVENT_WEIGHT, OpportunityStore
 from app.services.rules_versioning import get_runtime_rules_root
-from app.utils.url_norm import url_norm
 
 
 @dataclass(frozen=True)
@@ -118,10 +114,6 @@ RUNTIME_CONTENT = {
     "anchors_pack": deepcopy(DEFAULT_ANCHORS_PACK),
     "negatives_pack": list(DEFAULT_NEGATIVES_PACK),
     "negatives_strong_pack": list(DEFAULT_NEGATIVE_STRONG),
-    "frontier_policy": {
-        "require_diagnostic_anchor": False,
-        "drop_bio_general_without_diagnostic": False,
-    },
     "dedupe_cluster": {
         "enabled": True,
         "window_hours": 72,
@@ -131,18 +123,6 @@ RUNTIME_CONTENT = {
     },
     "coverage_tracks": ["core", "frontier"],
     "output_tracks": {"enable_track_split": False},
-    "opportunity_index": {
-        "enabled": False,
-        "window_days": 7,
-        "asset_dir": "artifacts/opportunity",
-        "dedupe": {"enabled": True, "tail_lines_scan": 2000},
-        "display": {
-            "top_n": 5,
-            "suppress_unknown_both": True,
-            "unknown_min_score": 5,
-            "mark_low_conf": True,
-        },
-    },
 }
 
 
@@ -310,27 +290,6 @@ def dict_to_item(d: dict) -> Item:
 
 def env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
-
-
-def _opportunity_weight_key(event_type: str) -> str:
-    et = str(event_type or "").strip().lower()
-    if not et:
-        return ""
-    if et in EVENT_WEIGHT:
-        return et
-    if ("招采" in et) or ("procure" in et) or ("tender" in et) or ("bid" in et):
-        return "procurement"
-    if ("监管" in et) or ("指南" in et) or ("regulatory" in et):
-        return "regulatory"
-    if ("审批" in et) or ("批准" in et) or ("approval" in et) or ("clearance" in et):
-        return "approval"
-    if ("优先审评" in et) or ("priority review" in et):
-        return "priority_review"
-    if ("并购" in et) or ("融资" in et) or ("合作" in et) or ("ipo" in et) or ("company" in et):
-        return "company_move"
-    if ("paper" in et) or ("study" in et) or ("preprint" in et) or ("journal" in et) or ("科研" in et):
-        return "paper"
-    return "technology_update"
 
 
 def _write_progress(stage: str, *, total_sources: int | None = None, completed_sources: int | None = None, message: str = "", **extra: Any) -> None:
@@ -847,12 +806,6 @@ def compute_relevance(
         rr["negatives_pack"] = RUNTIME_CONTENT.get("negatives_pack") or DEFAULT_NEGATIVES_PACK
     if not rr.get("negatives_strong_pack"):
         rr["negatives_strong_pack"] = RUNTIME_CONTENT.get("negatives_strong_pack") or DEFAULT_NEGATIVE_STRONG
-    if not rr.get("frontier_policy"):
-        rr["frontier_policy"] = RUNTIME_CONTENT.get("frontier_policy", {})
-    rr.setdefault(
-        "profile",
-        "enhanced" if str(os.environ.get("ENHANCED_RULES_PROFILE", "")).strip().lower() == "enhanced" else "legacy",
-    )
     return core_compute_relevance(text, source_meta or {}, rr)
 
 
@@ -1849,10 +1802,6 @@ def main(dump_relevance_samples: int = 0) -> int:
             "negatives_pack",
             RUNTIME_CONTENT["negatives_pack"],
         )
-        RUNTIME_CONTENT["frontier_policy"] = content_cfg.get(
-            "frontier_policy",
-            RUNTIME_CONTENT["frontier_policy"],
-        )
         rk = content_cfg.get("relevance_keywords", {})
         if isinstance(rk, dict) and rk:
             strong = [str(x).strip() for x in rk.get("anchors_strong", []) if str(x).strip()]
@@ -1874,62 +1823,14 @@ def main(dump_relevance_samples: int = 0) -> int:
             base_cfg=RUNTIME_CONTENT.get("dedupe_cluster", {}),
         )
         RUNTIME_CONTENT["coverage_tracks"] = content_cfg.get("coverage_tracks", RUNTIME_CONTENT["coverage_tracks"])
-        opp_cfg = content_cfg.get("opportunity_index", {})
-        if isinstance(opp_cfg, dict):
-            dedupe_cfg = opp_cfg.get("dedupe", {}) if isinstance(opp_cfg.get("dedupe"), dict) else {}
-            display_cfg = opp_cfg.get("display", {}) if isinstance(opp_cfg.get("display"), dict) else {}
-            RUNTIME_CONTENT["opportunity_index"] = {
-                "enabled": bool(opp_cfg.get("enabled", use_enhanced)),
-                "window_days": max(1, int(opp_cfg.get("window_days", 7) or 7)),
-                "asset_dir": str(opp_cfg.get("asset_dir", "artifacts/opportunity") or "artifacts/opportunity"),
-                "dedupe": {
-                    "enabled": bool(dedupe_cfg.get("enabled", use_enhanced)),
-                    "tail_lines_scan": max(1, int(dedupe_cfg.get("tail_lines_scan", 2000) or 2000)),
-                },
-                "display": {
-                    "top_n": max(1, int(display_cfg.get("top_n", 5) or 5)),
-                    "suppress_unknown_both": bool(display_cfg.get("suppress_unknown_both", True)),
-                    "unknown_min_score": max(0, int(display_cfg.get("unknown_min_score", 5) or 5)),
-                    "mark_low_conf": bool(display_cfg.get("mark_low_conf", True)),
-                },
-            }
-        else:
-            RUNTIME_CONTENT["opportunity_index"] = {
-                "enabled": bool(use_enhanced),
-                "window_days": 7,
-                "asset_dir": "artifacts/opportunity",
-                "dedupe": {"enabled": bool(use_enhanced), "tail_lines_scan": 2000},
-                "display": {
-                    "top_n": 5,
-                    "suppress_unknown_both": True,
-                    "unknown_min_score": 5,
-                    "mark_low_conf": True,
-                },
-            }
     else:
         # Explicitly enforce legacy default.
         RUNTIME_CONTENT["output_tracks"] = {"enable_track_split": False}
-        RUNTIME_CONTENT["frontier_policy"] = {
-            "require_diagnostic_anchor": False,
-            "drop_bio_general_without_diagnostic": False,
-        }
         RUNTIME_CONTENT["dedupe_cluster"] = _resolve_dedupe_cluster_config(
             use_enhanced=False,
             content_cfg={},
             base_cfg=RUNTIME_CONTENT.get("dedupe_cluster", {}),
         )
-        RUNTIME_CONTENT["opportunity_index"] = {
-            "enabled": False,
-            "window_days": 7,
-            "asset_dir": "artifacts/opportunity",
-            "dedupe": {"enabled": False, "tail_lines_scan": 2000},
-            "display": {
-                "top_n": 5,
-                "suppress_unknown_both": True,
-                "unknown_min_score": 5,
-                "mark_low_conf": True,
-            },
-        }
 
     # Media + official feeds, with APAC/China reinforcement.
     sources = [
@@ -2007,20 +1908,6 @@ def main(dump_relevance_samples: int = 0) -> int:
         "excluded_by_keyword": {},
         "samples": [],
     }
-    opp_cfg = RUNTIME_CONTENT.get("opportunity_index", {}) if isinstance(RUNTIME_CONTENT.get("opportunity_index"), dict) else {}
-    opportunity_enabled = bool(opp_cfg.get("enabled", False))
-    opportunity_window_days = max(1, int(opp_cfg.get("window_days", 7) or 7))
-    opportunity_asset_dir = str(opp_cfg.get("asset_dir", "artifacts/opportunity") or "artifacts/opportunity")
-    opportunity_dedupe_cfg = opp_cfg.get("dedupe", {}) if isinstance(opp_cfg.get("dedupe"), dict) else {}
-    opportunity_display_cfg = opp_cfg.get("display", {}) if isinstance(opp_cfg.get("display"), dict) else {}
-    opportunity_dedupe_enabled = bool(opportunity_dedupe_cfg.get("enabled", bool(use_enhanced)))
-    opportunity_tail_lines_scan = max(1, int(opportunity_dedupe_cfg.get("tail_lines_scan", 2000) or 2000))
-    opportunity_top_n = max(1, int(opportunity_display_cfg.get("top_n", 5) or 5))
-    opportunity_store = OpportunityStore(root_dir, asset_dir=opportunity_asset_dir) if opportunity_enabled else None
-    opportunity_signals_written = 0
-    opportunity_signals_deduped = 0
-    opportunity_signals_dropped_probe = 0
-    opportunity_index_kpis: dict[str, Any] = {}
 
     lite_mode = env("DRYRUN_LITE", "").lower() in {"1", "true", "yes", "on"}
     fetch_limit = max(1, int(env("DRYRUN_FETCH_LIMIT", "50") or "50"))
@@ -2239,29 +2126,6 @@ def main(dump_relevance_samples: int = 0) -> int:
                     why = str(relevance_explain.get("final_reason", "")).strip() or "drop"
                     drop_reason_counts[why] = int(drop_reason_counts.get(why, 0)) + 1
                     continue
-                if opportunity_store is not None:
-                    try:
-                        wk = _opportunity_weight_key(event_type)
-                        wres = opportunity_store.append_signal(
-                            {
-                                "date": date_str,
-                                "region": str(region or "__unknown__"),
-                                "lane": str(lane or "__unknown__"),
-                                "event_type": str(event_type or "__unknown__"),
-                                "weight": int(EVENT_WEIGHT.get(wk, 1)),
-                                "source_id": str(source_id or ""),
-                                "url_norm": url_norm(link),
-                                "run_id": run_id,
-                            }
-                            ,
-                            dedupe_enabled=opportunity_dedupe_enabled,
-                            tail_lines_scan=opportunity_tail_lines_scan,
-                        )
-                        opportunity_signals_written += int((wres or {}).get("written", 0) or 0)
-                        opportunity_signals_deduped += int((wres or {}).get("deduped", 0) or 0)
-                        opportunity_signals_dropped_probe += int((wres or {}).get("dropped_probe", 0) or 0)
-                    except Exception:
-                        pass
                 platform_explain_rows.append(
                     {
                         "title": title,
@@ -2818,11 +2682,6 @@ def main(dump_relevance_samples: int = 0) -> int:
         print(f"分流规则缺口说明：{'；'.join(routing_gaps[:3])}")
     if track_contract_warnings:
         print(f"track/relevance断言修正：{len(track_contract_warnings)} 条（详情见 artifacts）")
-    if opportunity_enabled:
-        print(
-            "opportunity_signals_written/deduped/dropped_probe："
-            f"{opportunity_signals_written}/{opportunity_signals_deduped}/{opportunity_signals_dropped_probe}"
-        )
     if dump_relevance_samples > 0:
         try:
             print(f"[RELEVANCE_SAMPLES] n={dump_relevance_samples}", file=sys.stderr)
@@ -2839,54 +2698,6 @@ def main(dump_relevance_samples: int = 0) -> int:
                 )
         except Exception:
             pass
-
-    if opportunity_enabled:
-        print()
-        print(f"H. 机会强度指数（近{opportunity_window_days}天）")
-        try:
-            opp = compute_opportunity_index(
-                root_dir,
-                window_days=opportunity_window_days,
-                asset_dir=opportunity_asset_dir,
-                as_of=date_str,
-                display=opportunity_display_cfg,
-            )
-            rows = opp.get("top", []) if isinstance(opp, dict) else []
-            if not isinstance(rows, list):
-                rows = []
-            if not rows:
-                print("- 暂无显著机会变化")
-            else:
-                for row in rows[:opportunity_top_n]:
-                    delta = int(row.get("delta_vs_prev_window", 0) or 0)
-                    arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "→")
-                    lane = str(row.get("lane", "__unknown__")).strip() or "__unknown__"
-                    region = str(row.get("region", "__unknown__")).strip() or "__unknown__"
-                    score = int(row.get("score", 0) or 0)
-                    low_conf = " [LOW_CONF]" if bool(row.get("low_confidence", False)) else ""
-                    print(f"- {lane}（{region}）：{arrow} {delta:+d} | score={score}{low_conf}")
-                    contrib_rows = row.get("contrib_top2", []) if isinstance(row.get("contrib_top2"), list) else []
-                    if contrib_rows:
-                        parts: list[str] = []
-                        for c in contrib_rows[:2]:
-                            if not isinstance(c, dict):
-                                continue
-                            et = str(c.get("event_type", "__unknown__")).strip() or "__unknown__"
-                            ws = int(c.get("weight_sum", 0) or 0)
-                            cnt = int(c.get("count", 0) or 0)
-                            parts.append(f"{et}={ws} ({cnt})")
-                        if parts:
-                            print(f"  contrib: {'; '.join(parts)}")
-            kpis = opp.get("kpis", {}) if isinstance(opp.get("kpis"), dict) else {}
-            opportunity_index_kpis = dict(kpis)
-            print(
-                "- kpis: "
-                + f"unknown_region_rate={float(kpis.get('unknown_region_rate', 0.0) or 0.0):.2f}, "
-                + f"unknown_lane_rate={float(kpis.get('unknown_lane_rate', 0.0) or 0.0):.2f}, "
-                + f"unknown_event_type_rate={float(kpis.get('unknown_event_type_rate', 0.0) or 0.0):.2f}"
-            )
-        except Exception:
-            print("- 暂无显著机会变化")
 
     artifacts_dir = env("DRYRUN_ARTIFACTS_DIR", "")
     if artifacts_dir:
@@ -3019,15 +2830,6 @@ def main(dump_relevance_samples: int = 0) -> int:
                         "items_before_count": items_before_cluster_count,
                         "items_after_count": items_after_cluster_count,
                         "top_clusters_count": len(top_clusters),
-                    },
-                    "opportunity_index": {
-                        "enabled": opportunity_enabled,
-                        "window_days": opportunity_window_days,
-                        "asset_dir": opportunity_asset_dir,
-                        "signals_written": int(opportunity_signals_written),
-                        "signals_deduped": int(opportunity_signals_deduped),
-                        "signals_dropped_probe": int(opportunity_signals_dropped_probe),
-                        "kpis": opportunity_index_kpis,
                     },
                 },
                 ensure_ascii=False,

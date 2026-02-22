@@ -1,0 +1,15 @@
+version: "1.0.0"
+sources:
+  - id: procurement_ccgp
+    enabled: false
+    name: China CCGP (probe only; may require browser automation)
+    type: html
+    connector: html
+    url: "https://pub.ccgp.gov.cn/"
+    source_group: procurement
+    trust_tier: "A"
+    fetch:
+      mode: html_list
+      interval_minutes: 240
+    tags: ["procurement","cn","ccgp"]
+    # NOTE: 可能需要无头浏览器/JS/反爬；先用 probe 观察错误分类（403/guard_static_listing/timeout）。

@@ -26,11 +26,11 @@ from app.services.source_registry import (
 from app.services.collect_asset_store import CollectAssetStore
 from app.services.analysis_cache_store import AnalysisCacheStore
 from app.services.analysis_generator import AnalysisGenerator, degraded_analysis
+from app.services.fetch_probe import run_procurement_probe
 from scripts.acceptance_run import run_acceptance
 from app.workers.dryrun import main as dryrun_main
 from app.workers.live_run import run_digest
 from app.workers.replay import main as replay_main
-from app.workers.scheduler_worker import SchedulerWorker
 
 
 def _get_opt(argv: list[str], key: str) -> str | None:
@@ -334,7 +334,17 @@ def cmd_collect_now(argv: list[str]) -> int:
         max_sources = _get_opt(argv, "--limit-sources")
     force = (_get_opt(argv, "--force") or "false").strip().lower() in {"1", "true", "yes", "y", "on"}
     fetch_limit = _get_opt(argv, "--fetch-limit")
-    worker = SchedulerWorker()
+    from app.workers.scheduler_worker import SchedulerWorker
+
+    # Build a lightweight worker instance for one-shot collect.
+    # This avoids triggering APScheduler import required by daemon mode.
+    root = Path(__file__).resolve().parents[2]
+    worker = SchedulerWorker.__new__(SchedulerWorker)
+    worker.project_root = root
+    worker.store = RulesStore(root)
+    worker.profile = str(profile)
+    worker._collect_asset_dir = "artifacts/collect"
+    worker._collect_window_hours = 24
     out = worker._run_collect(
         schedule_id=schedule_id,
         profile=profile,
@@ -345,6 +355,35 @@ def cmd_collect_now(argv: list[str]) -> int:
     )
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0 if bool(out.get("ok")) else 4
+
+
+def cmd_env_check(argv: list[str]) -> int:
+    _ = argv
+    checks: dict[str, dict[str, str | bool]] = {}
+    modules = [
+        ("apscheduler", "APScheduler"),
+        ("feedparser", "feedparser"),
+        ("yaml", "PyYAML"),
+        ("requests", "requests"),
+        ("urllib", "urllib(stdlib)"),
+    ]
+    missing: list[str] = []
+    for mod_name, label in modules:
+        try:
+            __import__(mod_name)
+            checks[label] = {"ok": True, "module": mod_name, "error": ""}
+        except Exception as e:
+            checks[label] = {"ok": False, "module": mod_name, "error": f"{type(e).__name__}: {e}"}
+            missing.append(label)
+    payload = {
+        "ok": len(missing) == 0,
+        "python_version": sys.version.split()[0],
+        "checks": checks,
+        "missing": missing,
+        "suggestion": "" if not missing else "Run: pip install -r requirements.txt",
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if payload["ok"] else 4
 
 
 def cmd_collect_clean(argv: list[str]) -> int:
@@ -507,6 +546,30 @@ def cmd_acceptance_run(argv: list[str]) -> int:
     return 0 if bool(out.get("ok")) else 4
 
 
+def cmd_procurement_probe(argv: list[str]) -> int:
+    force = (_get_opt(argv, "--force") or "true").strip().lower() in {"1", "true", "yes", "y", "on"}
+    max_sources_raw = _get_opt(argv, "--max-sources")
+    fetch_limit = int(_get_opt(argv, "--fetch-limit") or "5")
+    include_ids_raw = _get_opt(argv, "--include-source-ids") or ""
+    include_groups_raw = _get_opt(argv, "--include-source-groups") or "procurement"
+    write_assets = (_get_opt(argv, "--write-assets") or "0").strip().lower() in {"1", "true", "yes", "y", "on"}
+    output_dir = _get_opt(argv, "--output-dir") or "artifacts/procurement"
+    include_ids = [x.strip() for x in include_ids_raw.split(",") if x.strip()]
+    include_groups = [x.strip() for x in include_groups_raw.split(",") if x.strip()]
+    out = run_procurement_probe(
+        project_root=Path(__file__).resolve().parents[2],
+        force=force,
+        max_sources=int(max_sources_raw) if max_sources_raw and str(max_sources_raw).isdigit() else None,
+        fetch_limit=max(1, int(fetch_limit or 5)),
+        include_source_ids=include_ids,
+        include_source_groups=include_groups,
+        write_assets=write_assets,
+        output_dir=output_dir,
+    )
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0 if bool(out.get("ok")) else 4
+
+
 def main() -> int:
     argv = sys.argv[1:]
     if not argv:
@@ -515,7 +578,7 @@ def main() -> int:
             "rules:validate|rules:print|rules:dryrun|rules:replay|"
             "sources:list|sources:validate|sources:test|sources:diff|sources:retire|"
             "db:migrate|db:verify|db:dual-replay|db:status|"
-            "collect-now|collect-clean|analysis-clean|analysis-recompute|digest-now|acceptance-run [options]",
+            "collect-now|collect-clean|analysis-clean|analysis-recompute|digest-now|acceptance-run|env-check|procurement-probe [options]",
             file=sys.stderr,
         )
         return 2
@@ -561,6 +624,10 @@ def main() -> int:
             return cmd_digest_now(tail)
         if cmd == "acceptance-run":
             return cmd_acceptance_run(tail)
+        if cmd == "env-check":
+            return cmd_env_check(tail)
+        if cmd == "procurement-probe":
+            return cmd_procurement_probe(tail)
         print(f"Unknown command: {cmd}", file=sys.stderr)
         return 2
     except RuleEngineError as e:

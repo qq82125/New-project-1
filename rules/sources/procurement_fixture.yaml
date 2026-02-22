@@ -1,0 +1,17 @@
+version: "1.0.0"
+sources:
+  - id: procurement_fixture
+    enabled: true
+    connector: rss
+    url: "file://tests/fixtures/procurement_sample_rss.xml"
+    name: Procurement Fixture RSS
+    region: 中国
+    source_group: procurement
+    trust_tier: A
+    priority: 99
+    fetch:
+      mode: rss
+      interval_minutes: 5
+    tags:
+      - procurement
+      - fixture

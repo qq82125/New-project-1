@@ -14,6 +14,7 @@ defaults:
       - company
       - market_research
       - thinktank
+      - procurement
     exclude_tags: []
     include_groups:
       - media_global
@@ -22,6 +23,7 @@ defaults:
       - preprints
       - market_research_thinktank
       - company_major
+      - procurement
     exclude_groups: []
     include_source_ids: []
     exclude_source_ids: []
@@ -131,6 +133,12 @@ defaults:
     exclude_domains: []
     exclude_source_ids: []
     drop_if_url_matches: []
+  source_guard:
+    enabled: true
+    enforce_article_only: true
+    article_min_paragraphs: 2
+    article_min_text_chars: 200
+    allow_body_fetch_for_rss: false
   evidence_policy:
     require_evidence_for_core: true
     min_snippet_chars: 80
@@ -146,6 +154,16 @@ defaults:
       suppress_unknown_both: true
       unknown_min_score: 5
       mark_low_conf: true
+
+    # ---- Ops KPI Guidance (comments only, do NOT convert to fields) ----
+    # Recommended targets:
+    # unknown_region_rate < 0.20
+    # unknown_lane_rate < 0.20
+    # unknown_event_type_rate < 0.10
+    # If exceeded for 3 consecutive days:
+    # 1) improve region/lane mapping
+    # 2) adjust source_group or interval
+    # 3) add procurement sources
   coverage_enforcement:
     a_core_min_items: 8
     f_frontier_quota: 3

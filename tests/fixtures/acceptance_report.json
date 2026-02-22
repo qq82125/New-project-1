@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "generated_at": "2026-02-22T05:30:00Z",
+  "as_of": "2026-02-22",
+  "summary": {
+    "total": 12,
+    "pass": 11,
+    "fail": 1
+  },
+  "checks": [
+    {
+      "id": "c1",
+      "status": "pass"
+    },
+    {
+      "id": "c2",
+      "status": "fail"
+    }
+  ],
+  "quality_pack": {
+    "selected_total": 27
+  }
+}

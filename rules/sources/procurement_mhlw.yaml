@@ -1,0 +1,19 @@
+version: "1.0.0"
+sources:
+  - id: procurement_mhlw
+    enabled: false
+    name: Japan MHLW Procurement (HTML list)
+    type: html
+    connector: html
+    url: "https://www.mhlw.go.jp/stf/shinsei_boshu/choutatsujouhou/chotatu/index.html"
+    source_group: procurement
+    trust_tier: "A"
+    fetch:
+      mode: html_list
+      interval_minutes: 240
+      fetch_limit_default: 5
+      list_link_regex: "choutatsu|chotatu|nyusatsu|keiyaku|\\.html"
+      article_required: true
+      article_min_paragraphs: 1
+      article_min_text_chars: 80
+    tags: ["procurement","jp","mhlw"]
