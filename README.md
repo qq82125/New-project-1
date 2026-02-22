@@ -205,3 +205,56 @@ python3 -m app.workers.cli procurement-probe --force true --fetch-limit 5 --writ
 - 不要提交：`.mail.env`、`.docker.env`、API key、密码。
 - 管理台必须启用鉴权（`ADMIN_USER/ADMIN_PASS` 或 token）。
 - 外网源可能波动，优先看 `run_meta`、acceptance 报告与 probe 分类定位问题。
+
+---
+
+## 11. 常见问题与排障
+
+### 11.1 `docker compose up -d --build` 失败（`python:3.11-slim ... EOF`）
+
+现象：
+- 拉取 `docker.io/library/python:3.11-slim` 时失败
+- 常见报错：`EOF` / `connection reset by peer` / `failed to fetch anonymous token`
+
+原因：
+- Docker Hub 链路抖动或本机网络策略（代理/DNS/出口）波动
+
+建议：
+```bash
+# 先单独拉基础镜像
+docker pull python:3.11-slim
+
+# 再重建服务
+docker compose up -d --build
+```
+
+如仍失败，优先检查：
+- Docker Desktop 代理设置
+- 镜像加速器配置
+- 企业网络出口策略
+
+### 11.2 管理台看起来“代码没更新”
+
+现象：
+- 本地代码已修改，但 `/admin` 页面仍是旧文案/旧逻辑
+
+原因：
+- 运行中的容器镜像仍是旧版本（仅 `up -d` 不会替换镜像）
+
+处理：
+```bash
+docker compose up -d --build
+```
+然后强刷浏览器（`Cmd+Shift+R`）。
+
+### 11.3 信源“编辑已保存但列表没变化”
+
+排查顺序：
+1. 先确认容器是否已更新到最新代码（见 11.2）
+2. 再检查保存返回：
+   - `/admin/api/sources` 返回 `ok=true`
+3. 刷新列表后确认 `mode/fetcher/fetch.mode` 是否变化
+
+补充：
+- 当前信源管理应以前台编辑结果（registry/overrides）为准。
+- 如果出现“写入与展示不一致”，通常是容器未更新或缓存未刷新。
