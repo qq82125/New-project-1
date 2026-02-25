@@ -1,0 +1,2583 @@
+{
+  "ok": true,
+  "generated_at": "20260226-011336",
+  "source_count": 95,
+  "summary": {
+    "total": 95,
+    "ok": 0,
+    "fail": 95,
+    "skip": 0,
+    "coverage_enabled_only": false,
+    "by_fetcher": {
+      "rss": {
+        "total": 16,
+        "ok": 0,
+        "fail": 16,
+        "skip": 0
+      },
+      "google_news": {
+        "total": 79,
+        "ok": 0,
+        "fail": 79,
+        "skip": 0
+      }
+    },
+    "top_failure_reasons": [
+      {
+        "reason": "dns_error",
+        "count": 95
+      }
+    ],
+    "top_failed_sources": [
+      {
+        "source_id": "regulatory-ema-europa-eu-ema-new-medicines-human",
+        "id": "regulatory-ema-europa-eu-ema-new-medicines-human",
+        "name": "EMA New medicines: human",
+        "connector": "rss",
+        "fetcher": "rss",
+        "enabled": false,
+        "url": "https://www.ema.europa.eu/en/new-human-medicine-new.xml",
+        "ok": false,
+        "status": "failed",
+        "items_count": 0,
+        "samples": [],
+        "entries": [],
+        "errors": [
+          "URLError: [Errno 8] nodename nor servname provided, or not known"
+        ],
+        "sample": [],
+        "http_status": null,
+        "error": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "error_type": "dns_error",
+        "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "duration_ms": 325,
+        "discovered_feed_url": "",
+        "discovered_child_feeds": []
+      },
+      {
+        "source_id": "regulatory-ema-europa-eu-ema-epar-human-medicines",
+        "id": "regulatory-ema-europa-eu-ema-epar-human-medicines",
+        "name": "EMA EPAR human medicines",
+        "connector": "rss",
+        "fetcher": "rss",
+        "enabled": false,
+        "url": "https://www.ema.europa.eu/en/human-medicine-new.xml",
+        "ok": false,
+        "status": "failed",
+        "items_count": 0,
+        "samples": [],
+        "entries": [],
+        "errors": [
+          "URLError: [Errno 8] nodename nor servname provided, or not known"
+        ],
+        "sample": [],
+        "http_status": null,
+        "error": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "error_type": "dns_error",
+        "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "duration_ms": 322,
+        "discovered_feed_url": "",
+        "discovered_child_feeds": []
+      },
+      {
+        "source_id": "regulatory-ema-europa-eu-ema-news-and-press-releases",
+        "id": "regulatory-ema-europa-eu-ema-news-and-press-releases",
+        "name": "EMA News and press releases",
+        "connector": "rss",
+        "fetcher": "rss",
+        "enabled": false,
+        "url": "https://www.ema.europa.eu/en/news.xml",
+        "ok": false,
+        "status": "failed",
+        "items_count": 0,
+        "samples": [],
+        "entries": [],
+        "errors": [
+          "URLError: [Errno 8] nodename nor servname provided, or not known"
+        ],
+        "sample": [],
+        "http_status": null,
+        "error": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "error_type": "dns_error",
+        "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "duration_ms": 322,
+        "discovered_feed_url": "",
+        "discovered_child_feeds": []
+      },
+      {
+        "source_id": "evidence-nature-com-nature-biotechnology",
+        "id": "evidence-nature-com-nature-biotechnology",
+        "name": "Nature Biotechnology",
+        "connector": "rss",
+        "fetcher": "rss",
+        "enabled": false,
+        "url": "https://www.nature.com/nbt.rss",
+        "ok": false,
+        "status": "failed",
+        "items_count": 0,
+        "samples": [],
+        "entries": [],
+        "errors": [
+          "URLError: [Errno 8] nodename nor servname provided, or not known"
+        ],
+        "sample": [],
+        "http_status": null,
+        "error": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "error_type": "dns_error",
+        "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "duration_ms": 309,
+        "discovered_feed_url": "",
+        "discovered_child_feeds": []
+      },
+      {
+        "source_id": "regulatory-ema-europa-eu-ema-what-s-new",
+        "id": "regulatory-ema-europa-eu-ema-what-s-new",
+        "name": "EMA What's new",
+        "connector": "rss",
+        "fetcher": "rss",
+        "enabled": false,
+        "url": "https://www.ema.europa.eu/en/whats-new.xml",
+        "ok": false,
+        "status": "failed",
+        "items_count": 0,
+        "samples": [],
+        "entries": [],
+        "errors": [
+          "URLError: [Errno 8] nodename nor servname provided, or not known"
+        ],
+        "sample": [],
+        "http_status": null,
+        "error": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "error_type": "dns_error",
+        "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "duration_ms": 305,
+        "discovered_feed_url": "",
+        "discovered_child_feeds": []
+      },
+      {
+        "source_id": "evidence-nature-com-nature-reviews-cancer",
+        "id": "evidence-nature-com-nature-reviews-cancer",
+        "name": "Nature Reviews Cancer",
+        "connector": "rss",
+        "fetcher": "rss",
+        "enabled": false,
+        "url": "https://www.nature.com/nrc.rss",
+        "ok": false,
+        "status": "failed",
+        "items_count": 0,
+        "samples": [],
+        "entries": [],
+        "errors": [
+          "URLError: [Errno 8] nodename nor servname provided, or not known"
+        ],
+        "sample": [],
+        "http_status": null,
+        "error": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "error_type": "dns_error",
+        "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "duration_ms": 302,
+        "discovered_feed_url": "",
+        "discovered_child_feeds": []
+      },
+      {
+        "source_id": "evidence-nature-com-nature-genetics",
+        "id": "evidence-nature-com-nature-genetics",
+        "name": "Nature Genetics",
+        "connector": "rss",
+        "fetcher": "rss",
+        "enabled": false,
+        "url": "https://www.nature.com/ng.rss",
+        "ok": false,
+        "status": "failed",
+        "items_count": 0,
+        "samples": [],
+        "entries": [],
+        "errors": [
+          "URLError: [Errno 8] nodename nor servname provided, or not known"
+        ],
+        "sample": [],
+        "http_status": null,
+        "error": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "error_type": "dns_error",
+        "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "duration_ms": 300,
+        "discovered_feed_url": "",
+        "discovered_child_feeds": []
+      },
+      {
+        "source_id": "evidence-journals-plos-org-plos-biology",
+        "id": "evidence-journals-plos-org-plos-biology",
+        "name": "PLOS Biology",
+        "connector": "rss",
+        "fetcher": "rss",
+        "enabled": false,
+        "url": "https://journals.plos.org/plosbiology/feed/atom",
+        "ok": false,
+        "status": "failed",
+        "items_count": 0,
+        "samples": [],
+        "entries": [],
+        "errors": [
+          "URLError: [Errno 8] nodename nor servname provided, or not known"
+        ],
+        "sample": [],
+        "http_status": null,
+        "error": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "error_type": "dns_error",
+        "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "duration_ms": 287,
+        "discovered_feed_url": "",
+        "discovered_child_feeds": []
+      },
+      {
+        "source_id": "aggregator-news-google-com-google-news-chictr",
+        "id": "aggregator-news-google-com-google-news-chictr",
+        "name": "Google News: ChiCTR 临床试验",
+        "connector": "google_news",
+        "fetcher": "google_news",
+        "enabled": false,
+        "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=ChiCTR+%E4%B8%B4%E5%BA%8A%E8%AF%95%E9%AA%8C",
+        "ok": false,
+        "status": "failed",
+        "items_count": 0,
+        "samples": [],
+        "entries": [],
+        "errors": [
+          "URLError: [Errno 8] nodename nor servname provided, or not known"
+        ],
+        "sample": [],
+        "http_status": null,
+        "error": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "error_type": "dns_error",
+        "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "duration_ms": 285,
+        "discovered_feed_url": "",
+        "discovered_child_feeds": []
+      },
+      {
+        "source_id": "evidence-nature-com-nature-medicine",
+        "id": "evidence-nature-com-nature-medicine",
+        "name": "Nature Medicine",
+        "connector": "rss",
+        "fetcher": "rss",
+        "enabled": false,
+        "url": "https://www.nature.com/nm.rss",
+        "ok": false,
+        "status": "failed",
+        "items_count": 0,
+        "samples": [],
+        "entries": [],
+        "errors": [
+          "URLError: [Errno 8] nodename nor servname provided, or not known"
+        ],
+        "sample": [],
+        "http_status": null,
+        "error": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "error_type": "dns_error",
+        "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known",
+        "duration_ms": 284,
+        "discovered_feed_url": "",
+        "discovered_child_feeds": []
+      }
+    ],
+    "top_items_count": [
+      {
+        "id": "evidence-nature-com-nature-genetics",
+        "items_count": 0,
+        "fetcher": "rss"
+      },
+      {
+        "id": "regulatory-ema-europa-eu-ema-what-s-new",
+        "items_count": 0,
+        "fetcher": "rss"
+      },
+      {
+        "id": "evidence-nature-com-nature-biotechnology",
+        "items_count": 0,
+        "fetcher": "rss"
+      },
+      {
+        "id": "regulatory-ema-europa-eu-ema-epar-human-medicines",
+        "items_count": 0,
+        "fetcher": "rss"
+      },
+      {
+        "id": "regulatory-ema-europa-eu-ema-news-and-press-releases",
+        "items_count": 0,
+        "fetcher": "rss"
+      },
+      {
+        "id": "regulatory-ema-europa-eu-ema-new-medicines-human",
+        "items_count": 0,
+        "fetcher": "rss"
+      },
+      {
+        "id": "evidence-nature-com-nature-methods",
+        "items_count": 0,
+        "fetcher": "rss"
+      },
+      {
+        "id": "evidence-nature-com-nature-medicine",
+        "items_count": 0,
+        "fetcher": "rss"
+      },
+      {
+        "id": "evidence-nature-com-nature-reviews-drug-discovery",
+        "items_count": 0,
+        "fetcher": "rss"
+      },
+      {
+        "id": "evidence-journals-plos-org-plos-medicine",
+        "items_count": 0,
+        "fetcher": "rss"
+      }
+    ],
+    "manual_review_sources": []
+  },
+  "rows": [
+    {
+      "source_id": "evidence-nature-com-nature-genetics",
+      "name": "Nature Genetics",
+      "fetcher": "rss",
+      "url": "https://www.nature.com/ng.rss",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 300,
+      "sample_titles": [],
+      "tags": [
+        "evidence",
+        "journal",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "regulatory-ema-europa-eu-ema-what-s-new",
+      "name": "EMA What's new",
+      "fetcher": "rss",
+      "url": "https://www.ema.europa.eu/en/whats-new.xml",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 305,
+      "sample_titles": [],
+      "tags": [
+        "regulatory",
+        "eu",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "evidence-nature-com-nature-biotechnology",
+      "name": "Nature Biotechnology",
+      "fetcher": "rss",
+      "url": "https://www.nature.com/nbt.rss",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 309,
+      "sample_titles": [],
+      "tags": [
+        "evidence",
+        "journal",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "regulatory-ema-europa-eu-ema-epar-human-medicines",
+      "name": "EMA EPAR human medicines",
+      "fetcher": "rss",
+      "url": "https://www.ema.europa.eu/en/human-medicine-new.xml",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 322,
+      "sample_titles": [],
+      "tags": [
+        "regulatory",
+        "eu",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "regulatory-ema-europa-eu-ema-news-and-press-releases",
+      "name": "EMA News and press releases",
+      "fetcher": "rss",
+      "url": "https://www.ema.europa.eu/en/news.xml",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 322,
+      "sample_titles": [],
+      "tags": [
+        "regulatory",
+        "eu",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "regulatory-ema-europa-eu-ema-new-medicines-human",
+      "name": "EMA New medicines: human",
+      "fetcher": "rss",
+      "url": "https://www.ema.europa.eu/en/new-human-medicine-new.xml",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 325,
+      "sample_titles": [],
+      "tags": [
+        "regulatory",
+        "eu",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "evidence-nature-com-nature-methods",
+      "name": "Nature Methods",
+      "fetcher": "rss",
+      "url": "https://www.nature.com/nmeth.rss",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 278,
+      "sample_titles": [],
+      "tags": [
+        "evidence",
+        "journal",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "evidence-nature-com-nature-medicine",
+      "name": "Nature Medicine",
+      "fetcher": "rss",
+      "url": "https://www.nature.com/nm.rss",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 284,
+      "sample_titles": [],
+      "tags": [
+        "evidence",
+        "journal",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "evidence-nature-com-nature-reviews-drug-discovery",
+      "name": "Nature Reviews Drug Discovery",
+      "fetcher": "rss",
+      "url": "https://www.nature.com/nrd.rss",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 279,
+      "sample_titles": [],
+      "tags": [
+        "evidence",
+        "journal",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "evidence-journals-plos-org-plos-medicine",
+      "name": "PLOS Medicine",
+      "fetcher": "rss",
+      "url": "https://journals.plos.org/plosmedicine/feed/atom",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 283,
+      "sample_titles": [],
+      "tags": [
+        "evidence",
+        "journal",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "evidence-journals-plos-org-plos-biology",
+      "name": "PLOS Biology",
+      "fetcher": "rss",
+      "url": "https://journals.plos.org/plosbiology/feed/atom",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 287,
+      "sample_titles": [],
+      "tags": [
+        "evidence",
+        "journal",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "evidence-nature-com-nature-reviews-cancer",
+      "name": "Nature Reviews Cancer",
+      "fetcher": "rss",
+      "url": "https://www.nature.com/nrc.rss",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 302,
+      "sample_titles": [],
+      "tags": [
+        "evidence",
+        "journal",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "evidence-journals-plos-org-plos-one",
+      "name": "PLOS ONE",
+      "fetcher": "rss",
+      "url": "https://journals.plos.org/plosone/feed/atom",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 269,
+      "sample_titles": [],
+      "tags": [
+        "evidence",
+        "journal",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "evidence-rss-arxiv-org-arxiv-q-bio",
+      "name": "arXiv q-bio",
+      "fetcher": "rss",
+      "url": "https://rss.arxiv.org/rss/q-bio",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 283,
+      "sample_titles": [],
+      "tags": [
+        "evidence",
+        "preprint",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "evidence-rss-arxiv-org-arxiv-stat-ap",
+      "name": "arXiv stat.AP",
+      "fetcher": "rss",
+      "url": "https://rss.arxiv.org/rss/stat.AP",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 274,
+      "sample_titles": [],
+      "tags": [
+        "evidence",
+        "preprint",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "media-genengnews-com-gen",
+      "name": "GEN",
+      "fetcher": "rss",
+      "url": "https://www.genengnews.com/feed",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 275,
+      "sample_titles": [],
+      "tags": [
+        "media",
+        "us",
+        "en"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-adrs-org-cn",
+      "name": "Google News: adrs.org.cn 不良反应",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=adrs.org.cn+%E4%B8%8D%E8%89%AF%E5%8F%8D%E5%BA%94",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 279,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-chictr",
+      "name": "Google News: ChiCTR 临床试验",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=ChiCTR+%E4%B8%B4%E5%BA%8A%E8%AF%95%E9%AA%8C",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 285,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-cde-org-cn",
+      "name": "Google News: cde.org.cn 受理 公示",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=cde.org.cn+%E5%8F%97%E7%90%86+%E5%85%AC%E7%A4%BA",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 267,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-chinacdc-cn",
+      "name": "Google News: chinacdc.cn 监测",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=chinacdc.cn+%E7%9B%91%E6%B5%8B",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 267,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-cmde-org-cn",
+      "name": "Google News: cmde.org.cn 创新 医疗器械",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=cmde.org.cn+%E5%88%9B%E6%96%B0+%E5%8C%BB%E7%96%97%E5%99%A8%E6%A2%B0",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 274,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-gov-cn",
+      "name": "Google News: gov.cn 药品 管理",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=gov.cn+%E8%8D%AF%E5%93%81+%E7%AE%A1%E7%90%86",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 275,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-most-gov-cn",
+      "name": "Google News: most.gov.cn 生物医药",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=most.gov.cn+%E7%94%9F%E7%89%A9%E5%8C%BB%E8%8D%AF",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 274,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-ndcpa-gov-cn",
+      "name": "Google News: ndcpa.gov.cn 疾控",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=ndcpa.gov.cn+%E7%96%BE%E6%8E%A7",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 274,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-nhc-gov-cn",
+      "name": "Google News: nhc.gov.cn 疫情 通报",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=nhc.gov.cn+%E7%96%AB%E6%83%85+%E9%80%9A%E6%8A%A5",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 264,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-nhsa-gov-cn",
+      "name": "Google News: nhsa.gov.cn 医保 目录",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=nhsa.gov.cn+%E5%8C%BB%E4%BF%9D+%E7%9B%AE%E5%BD%95",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 263,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-nhsa-gov-cn-175c",
+      "name": "Google News: nhsa.gov.cn 集中采购",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=nhsa.gov.cn+%E9%9B%86%E4%B8%AD%E9%87%87%E8%B4%AD",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 268,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-nmpa-gov-cn-5fac",
+      "name": "Google News: nmpa.gov.cn 药品 审评",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=nmpa.gov.cn+%E8%8D%AF%E5%93%81+%E5%AE%A1%E8%AF%84",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 273,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-nmpa-gov-cn",
+      "name": "Google News: nmpa.gov.cn 医疗器械",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=nmpa.gov.cn+%E5%8C%BB%E7%96%97%E5%99%A8%E6%A2%B0",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 280,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-nsfc-gov-cn",
+      "name": "Google News: nsfc.gov.cn 医学 生物",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=nsfc.gov.cn+%E5%8C%BB%E5%AD%A6+%E7%94%9F%E7%89%A9",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 271,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-samr-gov-cn",
+      "name": "Google News: samr.gov.cn 医疗器械",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=samr.gov.cn+%E5%8C%BB%E7%96%97%E5%99%A8%E6%A2%B0",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 265,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-udi-nmpa-gov-cn-udi",
+      "name": "Google News: udi.nmpa.gov.cn UDI",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=udi.nmpa.gov.cn+UDI",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 261,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-adc",
+      "name": "Google News: 中国 ADC 药物",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+ADC+%E8%8D%AF%E7%89%A9",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 264,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-cro-cdmo",
+      "name": "Google News: 中国 CRO CDMO",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+CRO+CDMO",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 274,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-car-t",
+      "name": "Google News: 中国 CAR-T 临床",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+CAR-T+%E4%B8%B4%E5%BA%8A",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 275,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-ivd",
+      "name": "Google News: 中国 IVD 注册",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+IVD+%E6%B3%A8%E5%86%8C",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 275,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-mrna",
+      "name": "Google News: 中国 mRNA 疫苗",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+mRNA+%E7%96%AB%E8%8B%97",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 275,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news",
+      "name": "Google News: 中国 体外诊断 政策",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E4%BD%93%E5%A4%96%E8%AF%8A%E6%96%AD+%E6%94%BF%E7%AD%96",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 266,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-5f8c",
+      "name": "Google News: 中国 创新医疗器械 审批",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%88%9B%E6%96%B0%E5%8C%BB%E7%96%97%E5%99%A8%E6%A2%B0+%E5%AE%A1%E6%89%B9",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 264,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-9135",
+      "name": "Google News: 中国 医保 谈判",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%8C%BB%E4%BF%9D+%E8%B0%88%E5%88%A4",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 274,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-f140",
+      "name": "Google News: 中国 创新药 临床",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%88%9B%E6%96%B0%E8%8D%AF+%E4%B8%B4%E5%BA%8A",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 275,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-ai",
+      "name": "Google News: 中国 医疗AI 医疗器械",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%8C%BB%E7%96%97AI+%E5%8C%BB%E7%96%97%E5%99%A8%E6%A2%B0",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 275,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-2f3a",
+      "name": "Google News: 中国 医疗反腐 政策",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%8C%BB%E7%96%97%E5%8F%8D%E8%85%90+%E6%94%BF%E7%AD%96",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 268,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-bd44",
+      "name": "Google News: 中国 医疗器械 注册",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%8C%BB%E7%96%97%E5%99%A8%E6%A2%B0+%E6%B3%A8%E5%86%8C",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 268,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-539c",
+      "name": "Google News: 中国 医疗器械 集采",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%8C%BB%E7%96%97%E5%99%A8%E6%A2%B0+%E9%9B%86%E9%87%87",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 263,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-2334",
+      "name": "Google News: 中国 医疗行业 并购",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%8C%BB%E7%96%97%E8%A1%8C%E4%B8%9A+%E5%B9%B6%E8%B4%AD",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 274,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-d042",
+      "name": "Google News: 中国 医疗服务 政策",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%8C%BB%E7%96%97%E6%9C%8D%E5%8A%A1+%E6%94%BF%E7%AD%96",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 275,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-c295",
+      "name": "Google News: 中国 基因治疗 临床",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%9F%BA%E5%9B%A0%E6%B2%BB%E7%96%97+%E4%B8%B4%E5%BA%8A",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 274,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-3152",
+      "name": "Google News: 中国 基因编辑",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%9F%BA%E5%9B%A0%E7%BC%96%E8%BE%91",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 281,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-c5c0",
+      "name": "Google News: 中国 核酸药物",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E6%A0%B8%E9%85%B8%E8%8D%AF%E7%89%A9",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 282,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-4365",
+      "name": "Google News: 中国 生物医药 融资",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E7%94%9F%E7%89%A9%E5%8C%BB%E8%8D%AF+%E8%9E%8D%E8%B5%84",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 266,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-ipo",
+      "name": "Google News: 中国 生物科技 IPO",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E7%94%9F%E7%89%A9%E7%A7%91%E6%8A%80+IPO",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 270,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-d2c8",
+      "name": "Google News: 中国 细胞治疗",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E7%BB%86%E8%83%9E%E6%B2%BB%E7%96%97",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 273,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-ae18",
+      "name": "Google News: 中国 生物类似药",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E7%94%9F%E7%89%A9%E7%B1%BB%E4%BC%BC%E8%8D%AF",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 277,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-cbc3",
+      "name": "Google News: 中国 肿瘤 新药",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E8%82%BF%E7%98%A4+%E6%96%B0%E8%8D%AF",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 278,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-50b8",
+      "name": "Google News: 中国 罕见病 用药",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E7%BD%95%E8%A7%81%E7%97%85+%E7%94%A8%E8%8D%AF",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 280,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-ad9a",
+      "name": "Google News: 中国 药品 审评",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E8%8D%AF%E5%93%81+%E5%AE%A1%E8%AF%84",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 279,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-3af1",
+      "name": "Google News: 中国 药品监管 处罚",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E8%8D%AF%E5%93%81%E7%9B%91%E7%AE%A1+%E5%A4%84%E7%BD%9A",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 274,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-132c",
+      "name": "Google News: 中国 药品 真实世界研究",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E8%8D%AF%E5%93%81+%E7%9C%9F%E5%AE%9E%E4%B8%96%E7%95%8C%E7%A0%94%E7%A9%B6",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 278,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-0d9a",
+      "name": "Google News: 中国疾控中心 传染病",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD%E7%96%BE%E6%8E%A7%E4%B8%AD%E5%BF%83+%E4%BC%A0%E6%9F%93%E7%97%85",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 271,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-93a3",
+      "name": "Google News: 国家医保局 集采",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E5%9B%BD%E5%AE%B6%E5%8C%BB%E4%BF%9D%E5%B1%80+%E9%9B%86%E9%87%87",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 276,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-411a",
+      "name": "Google News: 国家卫健委 医疗 政策",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E5%9B%BD%E5%AE%B6%E5%8D%AB%E5%81%A5%E5%A7%94+%E5%8C%BB%E7%96%97+%E6%94%BF%E7%AD%96",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 280,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-nifdc",
+      "name": "Google News: 中检院 NIFDC",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E6%A3%80%E9%99%A2+NIFDC",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 282,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-7cce",
+      "name": "Google News: 药物临床试验登记与信息公示平台",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E8%8D%AF%E7%89%A9%E4%B8%B4%E5%BA%8A%E8%AF%95%E9%AA%8C%E7%99%BB%E8%AE%B0%E4%B8%8E%E4%BF%A1%E6%81%AF%E5%85%AC%E7%A4%BA%E5%B9%B3%E5%8F%B0",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 274,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-3589",
+      "name": "Google News: 国家药监局 药品 批准",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E5%9B%BD%E5%AE%B6%E8%8D%AF%E7%9B%91%E5%B1%80+%E8%8D%AF%E5%93%81+%E6%89%B9%E5%87%86",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 276,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd",
+        "cn"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-cdc-outbreak-investig",
+      "name": "Google News: CDC outbreak investigation",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=CDC+outbreak+investigation",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 275,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-ema-pharmacovigilance",
+      "name": "Google News: EMA pharmacovigilance",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=EMA+pharmacovigilance",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 265,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-fda-warning-letter-ph",
+      "name": "Google News: FDA warning letter pharma",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=FDA+warning+letter+pharma",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 274,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-nejm-drug-trial",
+      "name": "Google News: NEJM drug trial",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=NEJM+drug+trial",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 275,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-nature-biotechnology",
+      "name": "Google News: Nature Biotechnology new",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=Nature+Biotechnology+new",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 274,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-nih-cancer-immunother",
+      "name": "Google News: NIH cancer immunotherapy",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=NIH+cancer+immunotherapy",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 275,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-plos-medicine-trial",
+      "name": "Google News: PLOS medicine trial",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=PLOS+medicine+trial",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 274,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-the-lancet-clinical-t",
+      "name": "Google News: The Lancet clinical trial",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=The+Lancet+clinical+trial",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 277,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-who-vaccine-position",
+      "name": "Google News: WHO vaccine position paper",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=WHO+vaccine+position+paper",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 277,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-alzheimer-drug-trial",
+      "name": "Google News: alzheimer drug trial",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=alzheimer+drug+trial",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 276,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-cell-therapy-clinical",
+      "name": "Google News: cell therapy clinical trial",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=cell+therapy+clinical+trial",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 273,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-biopharma-merger-acqu",
+      "name": "Google News: biopharma merger acquisition",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=biopharma+merger+acquisition",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 273,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-gene-editing-clinical",
+      "name": "Google News: gene editing clinical trial",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=gene+editing+clinical+trial",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 273,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-ivd-regulatory-update",
+      "name": "Google News: ivd regulatory update",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=ivd+regulatory+update",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 270,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-obesity-drug-phase-3",
+      "name": "Google News: obesity drug phase 3",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=obesity+drug+phase+3",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 270,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-medrxiv-clinical",
+      "name": "Google News: medRxiv clinical",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=medRxiv+clinical",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 271,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-rare-disease-drug-app",
+      "name": "Google News: rare disease drug approval",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=rare+disease+drug+approval",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 273,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-site-cdc-gov-mmwr",
+      "name": "Google News: site:cdc.gov mmwr",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Acdc.gov+mmwr",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 277,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-oncology-phase-3-tria",
+      "name": "Google News: oncology phase 3 trial",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=oncology+phase+3+trial",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 281,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-site-clinicaltrials-g",
+      "name": "Google News: site:clinicaltrials.gov oncology",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Aclinicaltrials.gov+oncology",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 268,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-site-ema-europa-eu-ne",
+      "name": "Google News: site:ema.europa.eu new medicines human",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Aema.europa.eu+new+medicines+human",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 271,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-site-fda-gov-drug-app",
+      "name": "Google News: site:fda.gov drug approval",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Afda.gov+drug+approval",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 272,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-site-gov-uk-mhra-medi",
+      "name": "Google News: site:gov.uk MHRA medicines safety",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Agov.uk+MHRA+medicines+safety",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 275,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-site-fda-gov-medical",
+      "name": "Google News: site:fda.gov medical device recall",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Afda.gov+medical+device+recall",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 280,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-site-hsa-gov-sg-healt",
+      "name": "Google News: site:hsa.gov.sg health products",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Ahsa.gov.sg+health+products",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 272,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-site-nih-gov-gene-the",
+      "name": "Google News: site:nih.gov gene therapy",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Anih.gov+gene+therapy",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 267,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-site-pmda-go-jp-appro",
+      "name": "Google News: site:pmda.go.jp approval",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Apmda.go.jp+approval",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 274,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-site-swissmedic-ch-au",
+      "name": "Google News: site:swissmedic.ch authorization",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Aswissmedic.ch+authorization",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 274,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-site-tga-gov-au-medic",
+      "name": "Google News: site:tga.gov.au medicine safety",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Atga.gov.au+medicine+safety",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 273,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    },
+    {
+      "source_id": "aggregator-news-google-com-google-news-site-who-int-disease",
+      "name": "Google News: site:who.int disease outbreak news",
+      "fetcher": "google_news",
+      "url": "https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Awho.int+disease+outbreak+news",
+      "status_code": 0,
+      "content_type": "",
+      "items_count": 0,
+      "error_class": "DNS_ERROR",
+      "elapsed_ms": 273,
+      "sample_titles": [],
+      "tags": [
+        "aggregator",
+        "google_news",
+        "ivd"
+      ],
+      "error_type": "dns_error",
+      "error_message": "URLError: [Errno 8] nodename nor servname provided, or not known"
+    }
+  ],
+  "enable_batches": {
+    "batch1": "artifacts/enable_batch_1.yaml",
+    "batch2": "artifacts/enable_batch_2.yaml",
+    "batch3": "artifacts/enable_batch_3.yaml",
+    "batch1_count": 0,
+    "batch2_count": 0,
+    "batch3_count": 0
+  },
+  "notes_append_suggestions": [
+    {
+      "id": "evidence-nature-com-nature-genetics",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "regulatory-ema-europa-eu-ema-what-s-new",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "evidence-nature-com-nature-biotechnology",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "regulatory-ema-europa-eu-ema-epar-human-medicines",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "regulatory-ema-europa-eu-ema-news-and-press-releases",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "regulatory-ema-europa-eu-ema-new-medicines-human",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "evidence-nature-com-nature-methods",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "evidence-nature-com-nature-medicine",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "evidence-nature-com-nature-reviews-drug-discovery",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "evidence-journals-plos-org-plos-medicine",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "evidence-journals-plos-org-plos-biology",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "evidence-nature-com-nature-reviews-cancer",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "evidence-journals-plos-org-plos-one",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "evidence-rss-arxiv-org-arxiv-q-bio",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "evidence-rss-arxiv-org-arxiv-stat-ap",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "media-genengnews-com-gen",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-adrs-org-cn",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-chictr",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-cde-org-cn",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-chinacdc-cn",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-cmde-org-cn",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-gov-cn",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-most-gov-cn",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-ndcpa-gov-cn",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-nhc-gov-cn",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-nhsa-gov-cn",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-nhsa-gov-cn-175c",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-nmpa-gov-cn-5fac",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-nmpa-gov-cn",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-nsfc-gov-cn",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-samr-gov-cn",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-udi-nmpa-gov-cn-udi",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-adc",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-cro-cdmo",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-car-t",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-ivd",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-mrna",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-5f8c",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-9135",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-f140",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-ai",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-2f3a",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-bd44",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-539c",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-2334",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-d042",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-c295",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-3152",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-c5c0",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-4365",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-ipo",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-d2c8",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-ae18",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-cbc3",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-50b8",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-ad9a",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-3af1",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-132c",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-0d9a",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-93a3",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-411a",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-nifdc",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-7cce",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-3589",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-cdc-outbreak-investig",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-ema-pharmacovigilance",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-fda-warning-letter-ph",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-nejm-drug-trial",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-nature-biotechnology",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-nih-cancer-immunother",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-plos-medicine-trial",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-the-lancet-clinical-t",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-who-vaccine-position",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-alzheimer-drug-trial",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-cell-therapy-clinical",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-biopharma-merger-acqu",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-gene-editing-clinical",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-ivd-regulatory-update",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-obesity-drug-phase-3",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-medrxiv-clinical",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-rare-disease-drug-app",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-site-cdc-gov-mmwr",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-oncology-phase-3-tria",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-site-clinicaltrials-g",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-site-ema-europa-eu-ne",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-site-fda-gov-drug-app",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-site-gov-uk-mhra-medi",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-site-fda-gov-medical",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-site-hsa-gov-sg-healt",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-site-nih-gov-gene-the",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-site-pmda-go-jp-appro",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-site-swissmedic-ch-au",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-site-tga-gov-au-medic",
+      "notes_append": "probe:DNS_ERROR"
+    },
+    {
+      "id": "aggregator-news-google-com-google-news-site-who-int-disease",
+      "notes_append": "probe:DNS_ERROR"
+    }
+  ]
+}
