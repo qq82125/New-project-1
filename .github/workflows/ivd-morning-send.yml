@@ -1,9 +1,6 @@
 name: IVD Morning Send
 
 on:
-  schedule:
-    # 08:30 Beijing time (UTC+8) = 00:30 UTC
-    - cron: "30 0 * * *"
   workflow_dispatch:
 
 permissions:
@@ -46,7 +43,7 @@ jobs:
           SMTP_FROM: ${{ secrets.IVD_SMTP_FROM }}
           TO_EMAIL: ${{ secrets.IVD_TO_EMAIL }}
           REPORT_TZ: "Asia/Shanghai"
-          REPORT_SUBJECT_PREFIX: "全球IVD晨报 - "
+          REPORT_SUBJECT_PREFIX: "全球IVD日报 - "
         run: |
           python3 scripts/send_report_smtp.py reports
 
