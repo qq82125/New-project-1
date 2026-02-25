@@ -29,6 +29,30 @@ def get_env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
 
+def load_mail_env_file(env_file: Path) -> None:
+    """
+    Backward-compatible loader: cloud fallback should work with the same .mail.env
+    used by send_mail_icloud.sh when process env does not provide SMTP vars.
+    """
+    if not env_file.exists():
+        return
+    try:
+        for raw in env_file.read_text(encoding="utf-8").splitlines():
+            ln = raw.strip()
+            if not ln or ln.startswith("#") or "=" not in ln:
+                continue
+            k, v = ln.split("=", 1)
+            key = k.strip()
+            if not key:
+                continue
+            val = v.strip().strip('"').strip("'")
+            if key not in os.environ or not str(os.environ.get(key, "")).strip():
+                os.environ[key] = val
+    except Exception:
+        # Non-fatal: keep runtime deterministic even when .mail.env is malformed.
+        return
+
+
 def now_in_tz(tz_name: str) -> dt.datetime:
     try:
         return dt.datetime.now(ZoneInfo(tz_name))
@@ -84,8 +108,35 @@ def with_send_attempt_db(retention_days: int | None = None) -> sqlite3.Connectio
     return conn
 
 
-def build_send_key(date_str: str, subject: str, to_email: str) -> str:
-    payload = f"{date_str}|{subject.strip()}|{to_email.strip().lower()}"
+def _normalize_edition(value: str) -> str:
+    s = str(value or "").strip().lower()
+    if s in {"morning", "am"}:
+        return "morning"
+    if s in {"evening", "pm"}:
+        return "evening"
+    return "default"
+
+
+def infer_edition(now_local: dt.datetime, date_str: str) -> str:
+    # Keep the split simple and deterministic for backup windows.
+    # Morning backup around 09:30, evening backup around 21:30.
+    if str(now_local.strftime("%Y-%m-%d")) != str(date_str):
+        return "default"
+    return "evening" if now_local.hour >= 15 else "morning"
+
+
+def build_send_key(
+    date_str: str,
+    subject: str,
+    to_email: str,
+    *,
+    edition: str,
+    profile: str,
+) -> str:
+    payload = (
+        f"{date_str}|{_normalize_edition(edition)}|{str(profile or 'legacy').strip().lower()}|"
+        f"{subject.strip()}|{to_email.strip().lower()}"
+    )
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
@@ -228,6 +279,32 @@ def imap_check_sent(
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+def parse_subject_candidates(date_str: str, primary_subject: str) -> list[str]:
+    out: list[str] = []
+    p = str(primary_subject or "").strip()
+    if p:
+        out.append(p)
+    raw = get_env("REPORT_SUBJECT_CANDIDATE_PREFIXES", "")
+    if raw:
+        for token in raw.split(","):
+            pref = str(token or "").strip()
+            if not pref:
+                continue
+            out.append(f"{pref}{date_str}")
+    # dedupe while keeping order
+    unique: list[str] = []
+    seen = set()
+    for it in out:
+        k = it.strip()
+        if not k:
+            continue
+        if k in seen:
+            continue
+        seen.add(k)
+        unique.append(k)
+    return unique
+
+
 def load_body(report_file: str, date_str: str) -> str:
     if report_file and os.path.exists(report_file):
         with open(report_file, "r", encoding="utf-8") as f:
@@ -295,6 +372,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    load_mail_env_file(ROOT_DIR / ".mail.env")
     retention_days = args.send_attempt_retention_days
     if retention_days is None:
         retention_days = parse_int_env("SEND_ATTEMPT_RETENTION_DAYS", 30)
@@ -324,10 +402,33 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     runtime_rules = load_runtime_rules(date_str=date_str, run_id=run_id)
+    if not to_email:
+        rec = runtime_rules.get("email", {}).get("recipients", []) if isinstance(runtime_rules, dict) else []
+        if isinstance(rec, list) and rec:
+            first = str(rec[0] or "").strip()
+            if first.startswith("${") and first.endswith("}"):
+                inner = first[2:-1]
+                if ":-" in inner:
+                    k, d = inner.split(":-", 1)
+                    to_email = str(os.environ.get(k.strip(), d)).strip()
+                else:
+                    to_email = str(os.environ.get(inner.strip(), "")).strip()
+            else:
+                to_email = first
     subject_final = subject_initial
     if runtime_rules.get("enabled"):
         subject_final = runtime_rules.get("email", {}).get("subject", subject_final)
-    send_key = build_send_key(date_str, subject_final, to_email)
+    now_local = now_in_tz(tz_name)
+    edition = _normalize_edition(get_env("REPORT_EDITION", infer_edition(now_local, date_str)))
+    active_profile = str(runtime_rules.get("active_profile", "legacy") or "legacy")
+    send_key = build_send_key(
+        date_str,
+        subject_final,
+        to_email,
+        edition=edition,
+        profile=active_profile,
+    )
+    subject_candidates = parse_subject_candidates(date_str, subject_final)
 
     # Diagnostic report is always produced (success/failure) to make Actions debuggable.
     reports_dir = ensure_reports_dir()
@@ -342,6 +443,9 @@ def main(argv: list[str] | None = None) -> int:
                 f"report_tz: {tz_name}",
                 f"subject_initial: {subject_initial}",
                 f"subject_final: {subject_final}",
+                f"subject_candidates: {subject_candidates}",
+                f"edition: {edition}",
+                f"profile: {active_profile}",
                 f"send_key: {send_key}",
                 f"dry_run: {bool(args.dry_run)}",
                 f"commit_sha: {get_env('GITHUB_SHA','') or get_env('COMMIT_SHA','')}",
@@ -357,14 +461,14 @@ def main(argv: list[str] | None = None) -> int:
         "Rules",
         "\n".join(
             [
-                f"rules_profile={runtime_rules.get('active_profile','legacy')}",
+                f"rules_profile={active_profile}",
                 f"rules_version.email={rv.get('email','')}",
                 f"rules_version.content={rv.get('content','')}",
             ]
         ),
     )
     print(
-        f"[RUN] run_id={run_id} profile={runtime_rules.get('active_profile','legacy')} "
+        f"[RUN] run_id={run_id} profile={active_profile} "
         f"rules_version.email={rv.get('email','')} rules_version.content={rv.get('content','')}",
         file=sys.stderr,
     )
@@ -376,10 +480,6 @@ def main(argv: list[str] | None = None) -> int:
         ("SMTP_USER", smtp_user),
         ("SMTP_PASS", smtp_pass),
         ("TO_EMAIL", to_email),
-        ("IMAP_HOST", imap_host),
-        ("IMAP_PORT", str(imap_port) if imap_port else ""),
-        ("IMAP_USER", imap_user),
-        ("IMAP_PASS", imap_pass),
     ]
     missing = [k for k, v in required_env if not (v or "").strip()]
     if missing:
@@ -428,70 +528,88 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Skip: existing send_attempt success for date={date_str} subject={subject_final}")
         return 0
 
+    imap_ready = bool(imap_host and imap_port and imap_user and imap_pass)
     if args.dry_run:
         write_report(
             diag_path,
             "IMAP Check",
-            "\n".join(
-                [
-                    "status=WOULD_CHECK",
-                    f"host={imap_host}",
-                    f"port={imap_port}",
-                    f"mailbox_hint={mailbox_hint}",
-                    f"subject={subject_final}",
-                ]
+            (
+                "\n".join(
+                    [
+                        "status=WOULD_CHECK",
+                        f"host={imap_host}",
+                        f"port={imap_port}",
+                        f"mailbox_hint={mailbox_hint}",
+                        f"subjects={subject_candidates}",
+                    ]
+                )
+                if imap_ready
+                else "status=SKIP\nreason=imap_credentials_missing\n"
             )
             + "\n",
         )
     else:
-        try:
-            imap_res = imap_check_sent(
-                imap_host, imap_port, imap_user, imap_pass, subject_final, mailbox_hint
-            )
-        except Exception as e:
-            # Defensive: should not happen since imap_check_sent already catches, but keep it reported.
-            write_report(diag_path, "IMAP Check", "status=FAIL\nerror=exception_in_imap_check\n")
-            write_report(diag_path, "IMAP Exception", format_exception_truncated(e))
-            imap_res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        if not imap_ready:
+            write_report(diag_path, "IMAP Check", "status=SKIP\nreason=imap_credentials_missing\n")
+        else:
+            matched_subject = ""
+            last_imap_res: dict[str, Any] | None = None
+            for candidate_subject in subject_candidates:
+                try:
+                    imap_res = imap_check_sent(
+                        imap_host, imap_port, imap_user, imap_pass, candidate_subject, mailbox_hint
+                    )
+                except Exception as e:
+                    write_report(diag_path, "IMAP Check", "status=FAIL\nerror=exception_in_imap_check\n")
+                    write_report(diag_path, "IMAP Exception", format_exception_truncated(e))
+                    imap_res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+                last_imap_res = imap_res
+                if imap_res.get("ok") and bool(imap_res.get("already_sent")):
+                    matched_subject = candidate_subject
+                    break
+                if not imap_res.get("ok"):
+                    break
 
-        if imap_res.get("ok"):
-            found = bool(imap_res.get("already_sent"))
-            write_report(
-                diag_path,
-                "IMAP Check",
-                "\n".join(
-                    [
-                        "status=OK",
-                        f"mailbox={imap_res.get('mailbox','')}",
-                        f"hits={imap_res.get('hits',0)}",
-                        f"found={'true' if found else 'false'}",
-                    ]
-                ),
-            )
-            if imap_res.get("already_sent") and not args.force_send:
-                msg = (
-                    f"Skip: found existing sent mail with subject '{subject_final}' "
-                    f"rules_profile={runtime_rules.get('active_profile', 'legacy')}"
-                )
-                print(msg)
+            if last_imap_res and last_imap_res.get("ok"):
+                found = bool(matched_subject)
                 write_report(
                     diag_path,
-                    "Decision",
-                    "action=SKIP\nreason=already_sent_in_imap\n",
+                    "IMAP Check",
+                    "\n".join(
+                        [
+                            "status=OK",
+                            f"mailbox={last_imap_res.get('mailbox','')}",
+                            f"hits={last_imap_res.get('hits',0)}",
+                            f"found={'true' if found else 'false'}",
+                            f"matched_subject={matched_subject}",
+                            f"checked_subjects={subject_candidates}",
+                        ]
+                    ),
                 )
-                write_report(diag_path, "Result", "status=OK\nexit_code=0\n")
-                return 0
-        else:
-            # IMAP failure must be visible but should not block backup send by default.
-            write_report(
-                diag_path,
-                "IMAP Check",
-                f"status=FAIL\nerror={imap_res.get('error','unknown')}\n",
-            )
-            print(
-                f"IMAP check failed, continue with backup send: {imap_res.get('error','unknown')}",
-                file=sys.stderr,
-            )
+                if found and not args.force_send:
+                    msg = (
+                        f"Skip: found existing sent mail with subject '{matched_subject}' "
+                        f"rules_profile={active_profile}"
+                    )
+                    print(msg)
+                    write_report(
+                        diag_path,
+                        "Decision",
+                        "action=SKIP\nreason=already_sent_in_imap\n",
+                    )
+                    write_report(diag_path, "Result", "status=OK\nexit_code=0\n")
+                    return 0
+            else:
+                imap_err = (last_imap_res or {}).get("error", "unknown")
+                write_report(
+                    diag_path,
+                    "IMAP Check",
+                    f"status=FAIL\nerror={imap_err}\n",
+                )
+                print(
+                    f"IMAP check failed, continue with backup send: {imap_err}",
+                    file=sys.stderr,
+                )
 
     body = load_body(report_file, date_str)
     out = ensure_report_file(body, date_str)
@@ -530,7 +648,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         write_report(diag_path, "Result", "status=OK\nexit_code=0\n")
         print(
-            f"Dry-run: would send backup (report={out}) rules_profile={runtime_rules.get('active_profile', 'legacy')}"
+            f"Dry-run: would send backup (report={out}) rules_profile={active_profile}"
         )
         return 0
 
@@ -590,7 +708,7 @@ def main(argv: list[str] | None = None) -> int:
         write_report(diag_path, "SMTP Send", "status=OK\n")
         write_report(diag_path, "Result", "status=OK\nexit_code=0\n")
         print(
-            f"Backup sent (report={out}) rules_profile={runtime_rules.get('active_profile', 'legacy')}"
+            f"Backup sent (report={out}) rules_profile={active_profile}"
         )
         return 0
     except Exception as e:

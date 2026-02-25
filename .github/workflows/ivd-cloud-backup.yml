@@ -2,8 +2,11 @@ name: IVD Cloud Backup Mail
 
 on:
   schedule:
-    # 08:40 Beijing time (UTC+8) = 00:40 UTC
-    - cron: "40 0 * * *"
+    # Delayed backup windows:
+    # 09:30 Beijing time (UTC+8) = 01:30 UTC
+    - cron: "30 1 * * *"
+    # 21:30 Beijing time (UTC+8) = 13:30 UTC
+    - cron: "30 13 * * *"
   workflow_dispatch:
 
 permissions:
@@ -45,6 +48,7 @@ jobs:
       - name: Env presence check (no secrets printed)
         shell: bash
         env:
+          ENHANCED_RULES_PROFILE: "enhanced"
           SMTP_HOST: smtp.mail.me.com
           SMTP_PORT: "587"
           SMTP_USER: ${{ secrets.IVD_SMTP_USER }}
@@ -54,7 +58,8 @@ jobs:
           IMAP_HOST: imap.mail.me.com
           IMAP_PORT: "993"
           IMAP_SENT_MAILBOX: ${{ secrets.IVD_IMAP_SENT_MAILBOX }}
-          REPORT_SUBJECT_PREFIX: "全球IVD晨报 - "
+          REPORT_SUBJECT_PREFIX: "全球IVD日报 - "
+          REPORT_SUBJECT_CANDIDATE_PREFIXES: "全球IVD日报 - ,全球IVD晨报 - "
           REPORT_TZ: "Asia/Shanghai"
         run: |
           check() {
@@ -80,6 +85,7 @@ jobs:
       - name: Dry-run diagnostics (works even without secrets)
         continue-on-error: true
         env:
+          ENHANCED_RULES_PROFILE: "enhanced"
           SMTP_HOST: smtp.mail.me.com
           SMTP_PORT: "587"
           SMTP_USER: ${{ secrets.IVD_SMTP_USER }}
@@ -89,7 +95,8 @@ jobs:
           IMAP_HOST: imap.mail.me.com
           IMAP_PORT: "993"
           IMAP_SENT_MAILBOX: ${{ secrets.IVD_IMAP_SENT_MAILBOX }}
-          REPORT_SUBJECT_PREFIX: "全球IVD晨报 - "
+          REPORT_SUBJECT_PREFIX: "全球IVD日报 - "
+          REPORT_SUBJECT_CANDIDATE_PREFIXES: "全球IVD日报 - ,全球IVD晨报 - "
           REPORT_TZ: "Asia/Shanghai"
         run: |
           python3 scripts/cloud_backup_send.py --dry-run
@@ -119,6 +126,7 @@ jobs:
       - name: Run cloud backup sender
         if: always()
         env:
+          ENHANCED_RULES_PROFILE: "enhanced"
           SMTP_HOST: smtp.mail.me.com
           SMTP_PORT: "587"
           SMTP_USER: ${{ secrets.IVD_SMTP_USER }}
@@ -128,7 +136,8 @@ jobs:
           IMAP_HOST: imap.mail.me.com
           IMAP_PORT: "993"
           IMAP_SENT_MAILBOX: ${{ secrets.IVD_IMAP_SENT_MAILBOX }}
-          REPORT_SUBJECT_PREFIX: "全球IVD晨报 - "
+          REPORT_SUBJECT_PREFIX: "全球IVD日报 - "
+          REPORT_SUBJECT_CANDIDATE_PREFIXES: "全球IVD日报 - ,全球IVD晨报 - "
           REPORT_TZ: "Asia/Shanghai"
         run: |
           python3 scripts/cloud_backup_send.py
