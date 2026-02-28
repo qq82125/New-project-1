@@ -94,7 +94,7 @@ docker compose up -d --build
 ### 3.3 数据库说明（当前主库）
 
 - Docker 默认主库是 **PostgreSQL**（容器 `db`）  
-- 本机持久化目录：`/Users/GY/Documents/New project 1/pgdata`
+- 本机持久化目录：`~/dev/New-project-1/pgdata`
 - 当前仓库中的 SQLite 文件已归档为历史备份：  
   - `data/rules.db.legacy-20260223.bak`
 

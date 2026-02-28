@@ -13,7 +13,7 @@
 ## 启动方式
 最小启动命令（本地）：
 ```bash
-cd "/Users/GY/Documents/New project 1"
+cd "~/dev/New-project-1"
 ADMIN_USER=admin ADMIN_PASS='your_strong_password' python3 -m app.web.rules_admin_api
 ```
 

@@ -1,7 +1,7 @@
 # 升级自检报告（QC Rules + Output Rules）
 
 日期：2026-02-17  
-仓库路径：`/Users/GY/Documents/New project 1`
+仓库路径：`~/dev/New-project-1`
 
 本报告覆盖 prompt9 要求的自检项：规则校验、Admin 控制台页面可用性、unified dry-run 输出完整性、关键约束校验、回滚能力验证。
 
@@ -57,7 +57,7 @@ python3 -m app.workers.cli rules:dryrun --profile enhanced --date 2026-02-16
 本次 dry-run 运行结果：
 
 - `run_id`：`dryrun-3df1e5d700`
-- `artifacts_dir`：`/Users/GY/Documents/New project 1/artifacts/dryrun-3df1e5d700`
+- `artifacts_dir`：`~/dev/New-project-1/artifacts/dryrun-3df1e5d700`
 
 返回字段检查（关键 load-bearing 字段）：
 

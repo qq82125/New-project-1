@@ -52,7 +52,7 @@ python3 -m app.workers.cli rules:dryrun --profile enhanced
 - 增强：enhanced 出现新增 explain/coverage/dedupe 统计字段
 
 ## 6. 文档联动
-- collect 契约：`/Users/GY/Documents/New project 1/docs/COLLECT_ASSET_CONTRACT.md`
-- analysis cache 契约：`/Users/GY/Documents/New project 1/docs/ANALYSIS_CACHE_CONTRACT.md`
-- 规则系统总览：`/Users/GY/Documents/New project 1/docs/RULES_SYSTEM.md`
+- collect 契约：`~/dev/New-project-1/docs/COLLECT_ASSET_CONTRACT.md`
+- analysis cache 契约：`~/dev/New-project-1/docs/ANALYSIS_CACHE_CONTRACT.md`
+- 规则系统总览：`~/dev/New-project-1/docs/RULES_SYSTEM.md`
 

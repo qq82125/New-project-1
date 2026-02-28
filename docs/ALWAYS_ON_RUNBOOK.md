@@ -7,7 +7,7 @@
 在项目根目录执行：
 
 ```bash
-cd "/Users/GY/Documents/New project 1"
+cd "~/dev/New-project-1"
 docker compose up -d --build
 ```
 
