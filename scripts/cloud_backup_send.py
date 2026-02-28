@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import email.header
+import email.message
 import email.utils
 import imaplib
 import sqlite3
@@ -247,6 +249,38 @@ def pick_sent_mailbox(conn: imaplib.IMAP4_SSL, preferred: str) -> str:
     return preferred or "Sent Messages"
 
 
+def _normalize_subject_text(value: str) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _extract_subject_from_imap_fetch(data: Any) -> str:
+    if not isinstance(data, list):
+        return ""
+    header_bytes = b""
+    for part in data:
+        if isinstance(part, tuple) and len(part) >= 2 and isinstance(part[1], (bytes, bytearray)):
+            header_bytes += bytes(part[1])
+    if not header_bytes:
+        return ""
+    try:
+        msg = email.message_from_bytes(header_bytes)
+    except Exception:
+        return ""
+    raw_subject = str(msg.get("Subject", "") or "")
+    if not raw_subject:
+        return ""
+    chunks: list[str] = []
+    for piece, enc in email.header.decode_header(raw_subject):
+        if isinstance(piece, bytes):
+            try:
+                chunks.append(piece.decode(enc or "utf-8", errors="ignore"))
+            except Exception:
+                chunks.append(piece.decode("utf-8", errors="ignore"))
+        else:
+            chunks.append(str(piece))
+    return _normalize_subject_text("".join(chunks))
+
+
 def imap_check_sent(
     imap_host: str,
     imap_port: int,
@@ -265,15 +299,27 @@ def imap_check_sent(
             status, _ = conn.select(f'"{mailbox}"', readonly=True)
             if status != "OK":
                 return {"ok": False, "error": f"select_failed:{status}", "mailbox": mailbox}
-            status, data = conn.search(None, "HEADER", "Subject", f'"{subject}"')
+            # Avoid non-ASCII search terms (Chinese subjects may raise UnicodeEncodeError in imaplib).
+            since_token = (dt.datetime.utcnow() - dt.timedelta(days=7)).strftime("%d-%b-%Y")
+            status, data = conn.search(None, "SINCE", since_token)
             if status != "OK":
                 return {"ok": False, "error": f"search_failed:{status}", "mailbox": mailbox}
-            hits = data[0].split() if data and data[0] else []
+            ids = data[0].split() if data and data[0] else []
+            target = _normalize_subject_text(subject)
+            hits = 0
+            # Check recent messages only for performance; backup verification only needs near-term dedupe.
+            for msg_id in ids[-120:]:
+                f_status, f_data = conn.fetch(msg_id, "(BODY.PEEK[HEADER.FIELDS (SUBJECT)])")
+                if f_status != "OK":
+                    continue
+                got_subject = _extract_subject_from_imap_fetch(f_data)
+                if got_subject and got_subject == target:
+                    hits += 1
             return {
                 "ok": True,
                 "mailbox": mailbox,
-                "hits": len(hits),
-                "already_sent": len(hits) > 0,
+                "hits": hits,
+                "already_sent": hits > 0,
             }
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}

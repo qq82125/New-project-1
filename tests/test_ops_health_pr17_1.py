@@ -46,6 +46,8 @@ class OpsHealthPr171Tests(unittest.TestCase):
         h = evaluate_health(m)
         self.assertEqual(h["overall"], "red")
         self.assertTrue(any(x["metric"] == "analysis_cache_hit_ratio" and x["level"] == "red" for x in h["rules_triggered"]))
+        row = next(x for x in h["rules_triggered"] if x["metric"] == "analysis_cache_hit_ratio")
+        self.assertEqual(row["threshold"], "hit>0")
 
     def test_acceptance_false_is_red(self) -> None:
         m = self._base_metrics()
@@ -66,6 +68,13 @@ class OpsHealthPr171Tests(unittest.TestCase):
         h = evaluate_health(m)
         self.assertEqual(h["overall"], "green")
         self.assertEqual(h["rules_triggered"], [])
+
+    def test_cache_hit_ratio_skipped_when_no_cache_events(self) -> None:
+        m = self._base_metrics()
+        m["digest"]["analysis_cache_hit"] = 0
+        m["digest"]["analysis_cache_miss"] = 0
+        h = evaluate_health(m)
+        self.assertFalse(any(x["metric"] == "analysis_cache_hit_ratio" for x in h["rules_triggered"]))
 
 
 if __name__ == "__main__":

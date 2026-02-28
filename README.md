@@ -91,6 +91,17 @@ docker compose up -d --build
 - `admin-api`：`http://127.0.0.1:8090/admin`
 - `scheduler-worker`：常驻调度执行
 
+### 3.3 数据库说明（当前主库）
+
+- Docker 默认主库是 **PostgreSQL**（容器 `db`）  
+- 本机持久化目录：`/Users/GY/Documents/New project 1/pgdata`
+- 当前仓库中的 SQLite 文件已归档为历史备份：  
+  - `data/rules.db.legacy-20260223.bak`
+
+说明：
+- 若通过 `docker compose` 运行，系统读取 `DATABASE_URL=postgresql+psycopg://...@db:5432/ivd`。  
+- 只有非 Docker/显式 SQLite 配置时，才会使用 `data/rules.db` 口径。
+
 健康检查：
 ```bash
 curl -fsS http://127.0.0.1:8090/healthz
@@ -195,6 +206,14 @@ python3 -m app.workers.cli procurement-probe --force true --fetch-limit 5 --writ
   ```bash
   python3 -m app.workers.cli acceptance-run --mode full
   ```
+- 发布前强制闸门（建议固定执行，不跳过）：
+  ```bash
+  python3 scripts/prepublish_guard.py --full --strict
+  ```
+  说明：
+  - 会校验 `enhanced` 规则可用；
+  - 会运行 A-H 模板锁测试（防止输出段落形态被误改）；
+  - 会跑 acceptance full，失败则禁止发布。
 - 规则严格化务必保留开关，支持一键回滚。
 - 高风险改动优先落在 `enhanced`，`legacy` 保持兼容。
 

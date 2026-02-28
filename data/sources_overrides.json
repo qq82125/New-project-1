@@ -3,7 +3,10 @@
     "reuters-health-rss": false,
     "genomeweb-rss": false,
     "nmpa-home-web": false,
-    "abbott_newsroom": false
+    "abbott_newsroom": true,
+    "clarivate-press-web": true,
+    "siemens_healthineers_press": false,
+    "science-stm-etoc-rss": false
   },
-  "updated_at": "2026-02-23T18:13:54.089136+00:00"
+  "updated_at": "2026-02-28T15:29:01.062677+00:00"
 }

@@ -11,7 +11,6 @@ from app.rules.decision_boundary import enforce_decision_boundary
 from app.rules.engine import RuleEngine
 from app.rules.errors import RuleEngineError
 from app.core.track_relevance import validate_track_routing_rules
-from app.services.source_policy import normalize_source_policy
 
 
 def _warn(msg: str) -> None:
@@ -74,16 +73,6 @@ def _adapt_content(decision: dict[str, Any]) -> dict[str, Any]:
         if isinstance(alias, dict):
             track_routing = deepcopy(alias)
 
-    source_policy_raw = deepcopy(content.get("source_policy", {}))
-    if not isinstance(source_policy_raw, dict):
-        source_policy_raw = {}
-    content_sources = deepcopy(content.get("content_sources", {})) if isinstance(content.get("content_sources"), dict) else {}
-    if "min_trust_tier" not in source_policy_raw and isinstance(content_sources, dict):
-        source_policy_raw["min_trust_tier"] = str(content_sources.get("min_trust_tier", "C"))
-    if "exclude_source_ids" not in source_policy_raw and isinstance(content_sources, dict):
-        source_policy_raw["exclude_source_ids"] = list(content_sources.get("exclude_source_ids", []))
-    source_policy = normalize_source_policy(source_policy_raw, profile=str(decision.get("profile", "legacy")))
-
     return {
         "sources": sources,
         "min_items": int(item_limit.get("min", 8)),
@@ -107,12 +96,8 @@ def _adapt_content(decision: dict[str, Any]) -> dict[str, Any]:
         "coverage_enforcement": deepcopy(content.get("coverage_enforcement", {})),
         "anchors_pack": deepcopy(content.get("anchors_pack", {})),
         "negatives_pack": deepcopy(content.get("negatives_pack", [])),
-        "frontier_policy": deepcopy(content.get("frontier_policy", {})),
-        "evidence_policy": deepcopy(content.get("evidence_policy", {})),
-        "opportunity_index": deepcopy(content.get("opportunity_index", {})),
         "dedupe_cluster": deepcopy(content.get("dedupe_cluster", {})),
-        "content_sources": content_sources,
-        "source_policy": source_policy,
+        "content_sources": deepcopy(content.get("content_sources", {})),
         "track_routing": track_routing,
     }
 
@@ -131,6 +116,8 @@ def _adapt_email(decision: dict[str, Any], date_str: str) -> dict[str, Any]:
             "timezone": str(schedule.get("timezone", "Asia/Shanghai")),
             "hour": int(schedule.get("hour", 8)),
             "minute": int(schedule.get("minute", 30)),
+            "send_times": [str(x) for x in (schedule.get("send_times", []) if isinstance(schedule.get("send_times"), list) else []) if str(x).strip()],
+            "window_mode": str(schedule.get("window_mode", "rolling") or "rolling"),
         },
         "thresholds": deepcopy(email.get("thresholds", {})),
     }

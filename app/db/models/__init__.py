@@ -11,6 +11,9 @@ from app.db.models.rules import (
     RulesDraft,
     SchedulerRulesVersion,
     SourceFetchEvent,
+    Story,
+    StoryItem,
+    RawItem,
     SendAttempt,
     Source,
 )
@@ -30,4 +33,7 @@ __all__ = [
     "SourceFetchEvent",
     "ReportArtifact",
     "SendAttempt",
+    "RawItem",
+    "Story",
+    "StoryItem",
 ]

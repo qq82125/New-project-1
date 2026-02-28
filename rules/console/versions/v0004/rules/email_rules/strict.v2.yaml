@@ -1,0 +1,55 @@
+ruleset: email_rules
+version: "2.0.0"
+profile: strict.v2
+
+defaults:
+  timezone: Asia/Shanghai
+  subject_template: "全球IVD晨报 - {{date}}"
+  recipient: "${TO_EMAIL:-qq82125@gmail.com}"
+  sender_env: SMTP_FROM
+  send_window:
+    hour: 8
+    minute: 30
+  retry:
+    max_retries: 6
+    connect_timeout_sec: 12
+    max_time_sec: 90
+
+overrides:
+  enabled: true
+  on_weekend: same
+  subject_prefix: "[Strict] "
+  dedupe_window_hours: 36
+
+rules:
+  - id: strict-subject
+    enabled: true
+    priority: 100
+    type: subject_template
+    description: 严格模式主题模板
+    params:
+      template: "[Strict] 全球IVD晨报 - {{date}}"
+
+  - id: strict-dedupe
+    enabled: true
+    priority: 90
+    type: dedupe
+    description: 严格去重窗口
+    params:
+      window_hours: 36
+
+output:
+  format: plain_text
+  sections:
+    - A
+    - B
+    - C
+    - D
+    - E
+    - F
+    - G
+  summary_max_chars: 180
+  charts_enabled: true
+  chart_types:
+    - region_heatmap
+    - platform_radar

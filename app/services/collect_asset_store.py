@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import html
 import json
 import re
 from pathlib import Path
@@ -59,6 +60,19 @@ def _to_iso_utc(d: dt.datetime) -> str:
 
 
 def _extract_evidence_snippet(item: dict[str, Any], *, max_chars: int = 240) -> tuple[str, str]:
+    def _clean_evidence_text(raw: str) -> str:
+        s = str(raw or "")
+        if not s:
+            return ""
+        s = html.unescape(s)
+        s = re.sub(r"(?is)<(script|style)\b.*?>.*?</\1>", " ", s)
+        s = re.sub(r"(?is)<br\s*/?>", " ", s)
+        s = re.sub(r"(?is)</?(p|div|li|ul|ol|span|strong|em|h[1-6])\b[^>]*>", " ", s)
+        s = re.sub(r"(?is)<[^>]+>", " ", s)
+        s = re.sub(r"https?://\S+", " ", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
     # Prefer RSS summary/description, then body-like fields.
     candidates = [
         ("summary", str(item.get("summary", "")).strip()),
@@ -68,10 +82,31 @@ def _extract_evidence_snippet(item: dict[str, Any], *, max_chars: int = 240) -> 
         ("raw_text", str(item.get("raw_text", "")).strip()),
     ]
     for src, txt in candidates:
-        if txt:
-            snippet = re.sub(r"\s+", " ", txt).strip()
+        snippet = _clean_evidence_text(txt)
+        if snippet:
             return snippet[: max(1, int(max_chars))], src
     return "", ""
+
+
+def _contains_cjk(text: str) -> bool:
+    s = str(text or "")
+    for ch in s:
+        if "\u4e00" <= ch <= "\u9fff":
+            return True
+    return False
+
+
+def _zh_summary_for_email(raw_summary: str, *, title: str, source: str) -> str:
+    raw = re.sub(r"\s+", " ", str(raw_summary or "")).strip()
+    if _contains_cjk(raw):
+        return raw
+    t = re.sub(r"\s+", " ", str(title or "")).strip()
+    s = re.sub(r"\s+", " ", str(source or "")).strip()
+    if t and s:
+        return f"该条目来自{s}，主题为“{t}”。建议结合原文核查细节并提炼可执行结论。"
+    if t:
+        return f"该条目主题为“{t}”。建议结合原文核查细节并提炼可执行结论。"
+    return "该条目原始摘要为英文，建议结合原文核查细节并提炼可执行结论。"
 
 
 def _event_weight_key(event_type: str) -> str:
@@ -183,6 +218,8 @@ class CollectAssetStore:
                 text,
                 {
                     "source_group": source_group,
+                    "source": source_name,
+                    "source_id": source_id,
                     "event_type": str(it.get("event_type", "")),
                     "url": url,
                     "title": title,
@@ -291,11 +328,16 @@ class CollectAssetStore:
         self,
         *,
         window_hours: int,
+        window_start_utc: dt.datetime | None = None,
+        window_end_utc: dt.datetime | None = None,
         now_utc: dt.datetime | None = None,
     ) -> list[dict[str, Any]]:
         now_utc = now_utc or dt.datetime.now(dt.timezone.utc)
-        window_hours = max(1, int(window_hours or 24))
-        oldest = now_utc - dt.timedelta(hours=window_hours)
+        if window_end_utc is None:
+            window_end_utc = now_utc
+        if window_start_utc is None:
+            window_hours = max(1, int(window_hours or 24))
+            window_start_utc = window_end_utc - dt.timedelta(hours=window_hours)
 
         rows: list[dict[str, Any]] = []
         for p in sorted(self.base_dir.glob("items-*.jsonl")):
@@ -312,7 +354,9 @@ class CollectAssetStore:
                         ca = _safe_dt(str(r.get("collected_at", "")))
                         if ca is None:
                             continue
-                        if ca < oldest:
+                        if ca < window_start_utc:
+                            continue
+                        if ca > window_end_utc:
                             continue
                         rows.append(r)
             except Exception:
@@ -403,6 +447,7 @@ def render_digest_from_assets(
     opportunity_store = OpportunityStore(Path("."), asset_dir=opportunity_asset_dir) if opportunity_enabled else None
     relevance_runtime = {
         "profile": profile,
+        "investment_scope_enabled": bool(profile == "enhanced"),
         "anchors_pack": analysis_cfg.get("anchors_pack", {}) if isinstance(analysis_cfg.get("anchors_pack"), dict) else {},
         "negatives_pack": analysis_cfg.get("negatives_pack", []) if isinstance(analysis_cfg.get("negatives_pack"), list) else [],
         "frontier_policy": analysis_cfg.get("frontier_policy", {}) if isinstance(analysis_cfg.get("frontier_policy"), dict) else {},
@@ -458,6 +503,38 @@ def render_digest_from_assets(
     opportunity_index_kpis: dict[str, Any] = {}
     region_maps = load_region_map(Path("."))
     lane_maps = load_lane_map(Path("."))
+    style_cfg = analysis_cfg.get("style", {}) if isinstance(analysis_cfg.get("style"), dict) else {}
+    style_lang = "en" if str(style_cfg.get("language", "zh")).strip().lower() == "en" else "zh"
+    style_tone = str(style_cfg.get("tone", "concise_decision")).strip().lower()
+    style_no_fluff = bool(style_cfg.get("no_fluff", True))
+
+    def _sty(decision_zh: str, neutral_zh: str, decision_en: str, neutral_en: str) -> str:
+        if style_lang == "en":
+            s = neutral_en if style_tone == "neutral" else decision_en
+            return s if style_no_fluff else f"Note: {s}"
+        s = neutral_zh if style_tone == "neutral" else decision_zh
+        return s if style_no_fluff else f"背景：{s}"
+
+    def _sty_trend(decision_zh: str, neutral_zh: str, decision_en: str, neutral_en: str) -> str:
+        # E 段固定输出结论句，不添加“背景：/Note:”前缀。
+        if style_lang == "en":
+            return neutral_en if style_tone == "neutral" else decision_en
+        return neutral_zh if style_tone == "neutral" else decision_zh
+    sec_a = "A. Key Highlights (8-15 items, ranked by importance)" if style_lang == "en" else "A. 今日要点（8-15条，按重要性排序）"
+    sec_b = "B. Lane Snapshot (Oncology/Infectious/Repro-Genetics/Other)" if style_lang == "en" else "B. 分赛道速览（肿瘤/感染/生殖遗传/其他）"
+    sec_c = "C. Platform Radar (daily updates by platform)" if style_lang == "en" else "C. 技术平台雷达（按平台汇总当日进展）"
+    sec_d = "D. Regional Heatmap (NA/EU/APAC/CN)" if style_lang == "en" else "D. 区域热力图（北美/欧洲/亚太/中国）"
+    sec_e = "E. Key Trend Judgments (industry and technology)" if style_lang == "en" else "E. 三条关键趋势判断（产业与技术各至少1条）"
+    sec_f = "F. Gaps & Next-day Tracking List (3-5 items)" if style_lang == "en" else "F. 信息缺口与次日跟踪清单（3-5条）"
+    sec_g = "G. Quality Metrics (Quality Audit)" if style_lang == "en" else "G. 质量指标 (Quality Audit)"
+    lbl_summary = "Summary" if style_lang == "en" else "摘要"
+    lbl_evidence = "Evidence Snippet" if style_lang == "en" else "证据摘录"
+    lbl_published = "Published" if style_lang == "en" else "发布日期"
+    lbl_source = "Source" if style_lang == "en" else "来源"
+    lbl_region = "Region" if style_lang == "en" else "地区"
+    lbl_lane = "Lane" if style_lang == "en" else "赛道"
+    lbl_event = "Event Type" if style_lang == "en" else "事件类型"
+    lbl_platform = "Platform" if style_lang == "en" else "技术平台"
 
     lines: list[str] = [subject, ""]
 
@@ -488,6 +565,8 @@ def render_digest_from_assets(
             text,
             {
                 "source_group": str(r.get("source_group", "")).strip(),
+                "source": str(r.get("source", "")).strip(),
+                "source_id": str(r.get("source_id", "")).strip(),
                 "event_type": str(r.get("event_type", "")).strip(),
                 "url": str(r.get("url", "")).strip(),
                 "title": title,
@@ -566,17 +645,25 @@ def render_digest_from_assets(
     core_items = [r for r in items if str(r.get("track", "")) == "core" and int(r.get("relevance_level", 0) or 0) >= int(core_min_level_for_A)]
     frontier_items = [r for r in items if str(r.get("track", "")) == "frontier" and int(r.get("relevance_level", 0) or 0) >= int(frontier_min_level_for_F)]
 
-    lines.append("A. 今日要点（8-15条，按重要性排序）")
+    lines.append(sec_a)
     top = core_items[:15]
     if not top:
         lines.append("1) [7天补充] collect资产窗口内无可用 core 条目。")
-        lines.append("摘要：请检查 collect 是否正常写入，或放宽窗口/阈值。")
-        lines.append(f"发布日期：{date_str}（北京时间）")
-        lines.append("来源：collect-assets")
-        lines.append("地区：全球")
-        lines.append("赛道：其他")
-        lines.append("事件类型：政策与市场动态")
-        lines.append("技术平台：跨平台/未标注")
+        lines.append(
+            "摘要："
+            + _sty(
+                "请检查 collect 是否正常写入，或放宽窗口/阈值。",
+                "建议先核对 collect 写入，再视情况放宽窗口或阈值。",
+                "Check whether collect assets are being written correctly, or relax window/threshold settings.",
+                "Review collect writes first, then adjust window/threshold if needed.",
+            )
+        )
+        lines.append(f"{lbl_published}：{date_str}（北京时间）")
+        lines.append(f"{lbl_source}：collect-assets")
+        lines.append(f"{lbl_region}：全球")
+        lines.append(f"{lbl_lane}：其他")
+        lines.append(f"{lbl_event}：政策与市场动态")
+        lines.append(f"{lbl_platform}：跨平台/未标注")
         lines.append("")
     else:
         for idx, r in enumerate(top, 1):
@@ -678,21 +765,23 @@ def render_digest_from_assets(
 
             lines.append(f"{idx}) [24小时内] {str(r.get('title',''))}")
             sm = str((analysis or {}).get("summary", "")).strip() or str(r.get("summary", "")).strip() or "摘要：由 collect 资产生成。"
-            lines.append(sm if sm.startswith("摘要") else f"摘要：{sm}")
-            lines.append(f"证据摘录：{evidence_snippet if evidence_ok else '[缺失]'}")
-            lines.append(f"发布日期：{str(r.get('published_at',''))}")
-            lines.append(f"来源：{str(r.get('source',''))} | {str(r.get('url',''))}")
+            if style_lang == "zh":
+                sm = _zh_summary_for_email(sm, title=str(r.get("title", "")), source=str(r.get("source", "")))
+            lines.append(sm if sm.startswith("摘要") else f"{lbl_summary}：{sm}")
+            lines.append(f"{lbl_evidence}：{evidence_snippet if evidence_ok else '[缺失]'}")
+            lines.append(f"{lbl_published}：{str(r.get('published_at',''))}")
+            lines.append(f"{lbl_source}：{str(r.get('source',''))} | {str(r.get('url',''))}")
             if str(r.get("region", "")).strip():
-                lines.append(f"地区：{str(r.get('region',''))}")
+                lines.append(f"{lbl_region}：{str(r.get('region',''))}")
             if str(r.get("lane", "")).strip():
-                lines.append(f"赛道：{str(r.get('lane',''))}")
+                lines.append(f"{lbl_lane}：{str(r.get('lane',''))}")
             if str(r.get("event_type", "")).strip():
-                lines.append(f"事件类型：{str(r.get('event_type',''))}")
+                lines.append(f"{lbl_event}：{str(r.get('event_type',''))}")
             if str(r.get("platform", "")).strip():
-                lines.append(f"技术平台：{str(r.get('platform',''))}")
+                lines.append(f"{lbl_platform}：{str(r.get('platform',''))}")
             lines.append("")
 
-    lines.append("B. 分赛道速览（肿瘤/感染/生殖遗传/其他）")
+    lines.append(sec_b)
     lanes = {"肿瘤检测": 0, "感染检测": 0, "生殖与遗传检测": 0, "其他": 0}
     for r in top:
         lane = str(r.get("lane", "其他"))
@@ -701,7 +790,7 @@ def render_digest_from_assets(
         lines.append(f"- {k}：{lanes.get(k, 0)} 条（以当日抓取为准）")
     lines.append("")
 
-    lines.append("C. 技术平台雷达（按平台汇总当日进展）")
+    lines.append(sec_c)
     plats: dict[str, int] = {}
     for r in top:
         p = str(r.get("platform", "未标注"))
@@ -713,7 +802,7 @@ def render_digest_from_assets(
         lines.append("- 今日无有效平台统计。")
     lines.append("")
 
-    lines.append("D. 区域热力图（北美/欧洲/亚太/中国）")
+    lines.append(sec_d)
     regs = {"北美": 0, "欧洲": 0, "亚太": 0, "中国": 0}
     for r in top:
         rg = str(r.get("region", ""))
@@ -722,19 +811,51 @@ def render_digest_from_assets(
         lines.append(f"- {k}：{regs.get(k, 0)}")
     lines.append("")
 
-    lines.append("E. 三条关键趋势判断（产业与技术各至少1条）")
-    lines.append("1) 产业：collect/digest 解耦后可提高抓取频率并稳定出报。")
-    lines.append("2) 技术：前沿条目与核心条目分轨，降低噪音对主结论的干扰。")
-    lines.append("3) 运营：资产化可回放可审计，便于定位信源与规则问题。")
+    lines.append(sec_e)
+    lines.append(
+        "1) "
+        + _sty_trend(
+            "产业：并购合作与产品注册更聚焦可快速放量场景，商业化节奏正由渠道与准入共同决定。",
+            "产业：并购合作与注册节奏仍由渠道和准入共同驱动。",
+            "Industry: M&A/cooperation and product registration are concentrating on faster scale-up scenarios.",
+            "Industry: M&A/cooperation and registration pace continue to be shaped by channel access and market entry.",
+        )
+    )
+    lines.append(
+        "2) "
+        + _sty_trend(
+            "技术：PCR/NGS/免疫平台继续并行，组合菜单与自动化能力是实验室端的核心竞争变量。",
+            "技术：PCR/NGS/免疫平台并行，菜单完整度与自动化能力仍是关键。",
+            "Technology: PCR/NGS/immuno platforms continue in parallel; menu breadth and automation remain key moats.",
+            "Technology: PCR/NGS/immuno platforms remain parallel, with menu breadth and automation as key factors.",
+        )
+    )
+    lines.append(
+        "3) "
+        + _sty_trend(
+            "监管：亚太监管与中国追溯体系持续强化，跨区域上市正从“单点获批”转向“体系化合规”。",
+            "监管：亚太与中国追溯体系持续加强，跨区域上市更依赖体系化合规。",
+            "Regulatory: APAC and China traceability systems keep tightening, shifting cross-region launches to system-level compliance.",
+            "Regulatory: APAC/China traceability remains stricter, and cross-region launch paths rely more on system-level compliance.",
+        )
+    )
     lines.append("")
 
-    lines.append("F. 信息缺口与次日跟踪清单（3-5条）")
+    lines.append(sec_f)
     f_rows = frontier_items[: max(0, int(frontier_quota or 0))]
     if f_rows:
         for idx, r in enumerate(f_rows, 1):
             lines.append(f"{idx}) frontier雷达：L{int(r.get('relevance_level', 0) or 0)} | {str(r.get('title',''))[:90]}")
     else:
-        lines.append("1) frontier雷达：当前窗口无满足阈值的 frontier 条目，建议扩充前沿关键词或延长窗口。")
+        lines.append(
+            "1) "
+            + _sty(
+                "frontier雷达：当前窗口无满足阈值的 frontier 条目，建议扩充前沿关键词或延长窗口。",
+                "frontier雷达：当前窗口 frontier 命中不足，可考虑扩充关键词或延长窗口。",
+                "Frontier radar: no frontier item met the threshold in the current window; expand frontier keywords or extend the window.",
+                "Frontier radar: frontier hits are limited in the current window; consider keyword/window tuning.",
+            )
+        )
     lines.append("")
 
     core_count = len([r for r in items if str(r.get("track", "")) == "core"])
@@ -766,7 +887,7 @@ def render_digest_from_assets(
     source_top = sorted(primary_source_dist.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
     source_top_s = "; ".join([f"{k}:{v}" for k, v in source_top]) or "无"
 
-    lines.append("G. 质量指标 (Quality Audit)")
+    lines.append(sec_g)
     lines.append(
         f"24H条目数 / 7D补充数：{len(top)} / 0 | 亚太占比：{(regs.get('亚太',0)+regs.get('中国',0))/max(1,len(top)):.0%} | "
         f"商业与监管事件比：待细分 | 必查信源命中清单：待接入 | core/frontier覆盖：{core_count}/{frontier_count}"
@@ -810,7 +931,11 @@ def render_digest_from_assets(
         )
     if opportunity_enabled:
         lines.append("")
-        lines.append(f"H. 机会强度指数（近{opportunity_window_days}天）")
+        lines.append(
+            f"H. Opportunity Intensity Index (last {opportunity_window_days} days)"
+            if style_lang == "en"
+            else f"H. 机会强度指数（近{opportunity_window_days}天）"
+        )
         try:
             idx = compute_opportunity_index(
                 Path("."),

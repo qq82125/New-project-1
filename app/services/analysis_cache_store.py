@@ -5,13 +5,28 @@ import json
 import re
 from pathlib import Path
 from typing import Any
-
-from app.utils.url_norm import url_norm
+from urllib.parse import urlparse
 
 
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def url_norm(url: str) -> str:
+    try:
+        p = urlparse(str(url or ""))
+        host = (p.netloc or "").lower()
+        path = (p.path or "").rstrip("/")
+        query = p.query.strip()
+        kept_query = ""
+        if query:
+            low = query.lower()
+            if any(k in low for k in ("id=", "article=", "story=", "p=", "item=")):
+                kept_query = "?" + query
+        return f"{host}{path}{kept_query}"
+    except Exception:
+        return str(url or "").strip().lower()
 
 
 def _safe_dt(value: str | None) -> dt.datetime | None:
@@ -41,43 +56,14 @@ class AnalysisCacheStore:
 
     @staticmethod
     def item_key(item: dict[str, Any]) -> str:
-        u = url_norm(str(item.get("url", item.get("link", ""))).strip())
-        if u:
-            return u
         story_id = str(item.get("story_id", "")).strip()
-        if story_id:
-            return story_id
-        return str(item.get("title", "")).strip().lower()
+        u = url_norm(str(item.get("url", item.get("link", ""))).strip())
+        if story_id and u:
+            return f"{story_id}|{u}"
+        return story_id or u or str(item.get("title", "")).strip().lower()
 
     def _day_file(self, day: dt.date) -> Path:
         return self.base_dir / f"items-{day.strftime('%Y%m%d')}.jsonl"
-
-    @staticmethod
-    def _row_alias_keys(row: dict[str, Any]) -> set[str]:
-        keys: set[str] = set()
-
-        cache_key = str(row.get("cache_key", "")).strip()
-        if cache_key:
-            keys.add(cache_key)
-
-        item_key = str(row.get("item_key", "")).strip()
-        if item_key:
-            keys.add(item_key)
-
-        item_id = str(row.get("item_id", "")).strip()
-        if item_id:
-            keys.add(item_id)
-
-        un = str(row.get("url_norm", "")).strip() or url_norm(str(row.get("url", "")).strip())
-        if un:
-            keys.add(un)
-
-        story_id = str(row.get("story_id", "")).strip()
-        if story_id and un:
-            keys.add(f"{story_id}|{un}")
-        if story_id:
-            keys.add(story_id)
-        return {k for k in keys if k}
 
     def _load_day_map(self, day: dt.date) -> dict[str, dict[str, Any]]:
         out: dict[str, dict[str, Any]] = {}
@@ -94,8 +80,10 @@ class AnalysisCacheStore:
                         row = json.loads(ln)
                     except Exception:
                         continue
-                    for k in self._row_alias_keys(row):
-                        out[k] = row
+                    k = str(row.get("item_key", "")).strip()
+                    if not k:
+                        continue
+                    out[k] = row
         except Exception:
             return out
         return out
@@ -110,18 +98,7 @@ class AnalysisCacheStore:
         p = self._day_file(day)
         ensure_dir(p.parent)
         row = dict(payload or {})
-        key = str(item_key).strip() or str(row.get("cache_key", "")).strip()
-        if not key:
-            key = url_norm(str(row.get("url", "")).strip())
-        url_raw = str(row.get("url", "")).strip()
-        un = str(row.get("url_norm", "")).strip() or url_norm(url_raw)
-        row["cache_key"] = key
-        row["item_key"] = key  # backward compatibility for old readers
-        row["url"] = url_raw
-        row["url_norm"] = un
-        row.setdefault("model", str(row.get("used_model", row.get("model", ""))).strip())
-        row.setdefault("prompt_version", "v1")
-        row.setdefault("token_usage", {})
+        row["item_key"] = str(item_key).strip()
         row.setdefault("generated_at", _to_iso_utc())
         with p.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")

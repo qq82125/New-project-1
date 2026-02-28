@@ -47,6 +47,56 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _parse_send_times(schedule: dict[str, Any]) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    raw = schedule.get("send_times")
+    if isinstance(raw, list):
+        for it in raw:
+            s = str(it or "").strip()
+            if not s:
+                continue
+            try:
+                h, m = s.split(":", 1)
+                hh = int(h)
+                mm = int(m)
+                if 0 <= hh <= 23 and 0 <= mm <= 59:
+                    out.append((hh, mm))
+            except Exception:
+                continue
+    if not out:
+        hh_raw = schedule.get("hour", 8)
+        mm_raw = schedule.get("minute", 30)
+        hh = int(8 if hh_raw is None else hh_raw)
+        mm = int(30 if mm_raw is None else mm_raw)
+        out = [(hh, mm)]
+    out = sorted(list(dict.fromkeys(out)))
+    return out
+
+
+def _compute_segment_window(
+    *,
+    now_local: datetime,
+    send_times: list[tuple[int, int]],
+) -> tuple[datetime, datetime]:
+    # Build boundaries across previous day / today / next day then pick latest <= now.
+    candidates: list[datetime] = []
+    for d_shift in (-1, 0, 1):
+        d = now_local.date().fromordinal(now_local.date().toordinal() + d_shift)
+        for hh, mm in send_times:
+            candidates.append(now_local.replace(year=d.year, month=d.month, day=d.day, hour=hh, minute=mm, second=0, microsecond=0))
+    candidates.sort()
+    latest_idx = 0
+    for i, t in enumerate(candidates):
+        if t <= now_local:
+            latest_idx = i
+    end_local = candidates[latest_idx]
+    start_local = candidates[max(0, latest_idx - 1)]
+    if start_local >= end_local:
+        # Defensive fallback to 12h split.
+        start_local = end_local.replace(hour=max(0, end_local.hour - 12))
+    return start_local, end_local
+
+
 def run_digest(
     *,
     profile: str,
@@ -76,12 +126,14 @@ def run_digest(
     status = "success"
     error_summary = ""
     analysis_meta: dict[str, Any] = {}
+    send_error_summary = ""
 
     # Build decision once for version recording & timezone.
     decision = engine.build_decision(profile=profile, run_id=run_id)
     rules_version = decision.get("rules_version", {})
     email_decision = decision.get("email_decision", {}) if isinstance(decision.get("email_decision"), dict) else {}
-    tz_name = str((email_decision.get("schedule", {}) or {}).get("timezone", "Asia/Shanghai"))
+    schedule_cfg = (email_decision.get("schedule", {}) or {}) if isinstance(email_decision, dict) else {}
+    tz_name = str(schedule_cfg.get("timezone", "Asia/Shanghai"))
 
     env = os.environ.copy()
     env["REPORT_TZ"] = tz_name
@@ -115,19 +167,37 @@ def run_digest(
         )
         rt = load_runtime_rules(date_str=date_str, env=env, run_id=run_id)
         subject = str(rt.get("email", {}).get("subject") or f"全球IVD晨报 - {date_str}")
+        rt_schedule = (rt.get("email", {}).get("schedule", {}) or {}) if isinstance(rt.get("email", {}), dict) else {}
+        send_times = _parse_send_times(rt_schedule if isinstance(rt_schedule, dict) else {})
+        window_mode = str((rt_schedule.get("window_mode", "rolling") if isinstance(rt_schedule, dict) else "rolling") or "rolling").strip().lower()
+        window_start_utc = None
+        window_end_utc = None
+        resolved_collect_window_hours = int(collect_window_hours or 24)
+        edition = "default"
+        now_local = datetime.now(ZoneInfo(tz_name))
+        if window_mode == "segmented" and send_times:
+            start_local, end_local = _compute_segment_window(now_local=now_local, send_times=send_times)
+            window_start_utc = start_local.astimezone(ZoneInfo("UTC"))
+            window_end_utc = end_local.astimezone(ZoneInfo("UTC"))
+            span_h = max(1, int((window_end_utc - window_start_utc).total_seconds() // 3600))
+            resolved_collect_window_hours = span_h
+            if send_times:
+                first_slot = send_times[0]
+                edition = "morning" if (end_local.hour, end_local.minute) == first_slot else "evening"
+        else:
+            window_mode = "rolling"
         if use_collect_assets:
             content_cfg = rt.get("content", {}) if isinstance(rt.get("content"), dict) else {}
             output_cfg = rt.get("output", {}) if isinstance(rt.get("output"), dict) else {}
             thresh = content_cfg.get("relevance_thresholds", {}) if isinstance(content_cfg.get("relevance_thresholds"), dict) else {}
             quota_cfg = content_cfg.get("frontier_quota", {}) if isinstance(content_cfg.get("frontier_quota"), dict) else {}
             analysis_cfg = content_cfg.get("analysis_cache", {}) if isinstance(content_cfg.get("analysis_cache"), dict) else {}
-            source_policy = content_cfg.get("source_policy", {}) if isinstance(content_cfg.get("source_policy"), dict) else {}
-            source_guard = content_cfg.get("source_guard", {}) if isinstance(content_cfg.get("source_guard"), dict) else {}
-            frontier_policy = content_cfg.get("frontier_policy", {}) if isinstance(content_cfg.get("frontier_policy"), dict) else {}
-            evidence_policy = content_cfg.get("evidence_policy", {}) if isinstance(content_cfg.get("evidence_policy"), dict) else {}
-            opportunity_index = content_cfg.get("opportunity_index", {}) if isinstance(content_cfg.get("opportunity_index"), dict) else {}
             collector = CollectAssetStore(root, asset_dir=collect_asset_dir)
-            rows = collector.load_window_items(window_hours=int(collect_window_hours or 24))
+            rows = collector.load_window_items(
+                window_hours=resolved_collect_window_hours,
+                window_start_utc=window_start_utc,
+                window_end_utc=window_end_utc,
+            )
             rendered = render_digest_from_assets(
                 date_str=date_str,
                 items=rows,
@@ -136,6 +206,7 @@ def run_digest(
                 frontier_min_level_for_F=int(thresh.get("frontier_min_level_for_F") or 2),
                 frontier_quota=int(quota_cfg.get("max_items_per_day") or (output_cfg.get("E", {}) or {}).get("trends_count", 3)),
                 analysis_cfg={
+                    "profile": str(profile or "legacy"),
                     "enable_analysis_cache": bool(analysis_cfg.get("enable_analysis_cache", True)),
                     "always_generate": bool(analysis_cfg.get("always_generate", False)),
                     "prompt_version": str(analysis_cfg.get("prompt_version", "v2")),
@@ -150,14 +221,14 @@ def run_digest(
                     "timeout_seconds": int(analysis_cfg.get("timeout_seconds", 20) or 20),
                     "backoff_seconds": float(analysis_cfg.get("backoff_seconds", 0.5) or 0.5),
                     "asset_dir": str(analysis_cfg.get("asset_dir", "artifacts/analysis")),
-                    "source_policy": source_policy,
-                    "source_guard": source_guard,
-                    "profile": str(rt.get("active_profile", profile)),
-                    "anchors_pack": content_cfg.get("anchors_pack", {}) if isinstance(content_cfg.get("anchors_pack"), dict) else {},
-                    "negatives_pack": content_cfg.get("negatives_pack", []) if isinstance(content_cfg.get("negatives_pack"), list) else [],
-                    "frontier_policy": frontier_policy,
-                    "evidence_policy": evidence_policy,
-                    "opportunity_index": opportunity_index,
+                    "source_policy": content_cfg.get("source_policy", {}),
+                    "source_guard": content_cfg.get("source_guard", {}),
+                    "frontier_policy": content_cfg.get("frontier_policy", {}),
+                    "evidence_policy": content_cfg.get("evidence_policy", {}),
+                    "opportunity_index": content_cfg.get("opportunity_index", {}),
+                    "anchors_pack": content_cfg.get("anchors_pack", {}),
+                    "negatives_pack": content_cfg.get("negatives_pack", []),
+                    "style": output_cfg.get("style", {}) if isinstance(output_cfg.get("style"), dict) else {},
                 },
                 return_meta=True,
             )
@@ -184,6 +255,8 @@ def run_digest(
         fallback_triggered = False
         fallback_ok = False
         fallback_error = ""
+        send_failure_nonfatal = False
+        send_failure_fatal = str(env.get("MAIL_SEND_STRICT", "0")).strip().lower() in {"1", "true", "yes", "on"}
         send_cmd: list[str] | None = None
         if send:
             to_email = env.get("TO_EMAIL", "")
@@ -196,6 +269,13 @@ def run_digest(
                 raise RuntimeError("missing TO_EMAIL (and no recipients available)")
             send_cmd = ["./send_mail_icloud.sh", to_email, subject, str(out_file)]
             try:
+                # Drill switch: simulate primary send failure while keeping fallback path intact.
+                if str(env.get("MAIL_SEND_FORCE_FAIL", "0")).strip().lower() in {"1", "true", "yes", "on"}:
+                    raise CalledProcessError(
+                        returncode=99,
+                        cmd=send_cmd,
+                        output="MAIL_SEND_FORCE_FAIL enabled",
+                    )
                 subprocess.run(send_cmd, cwd=root, env=env, check=True)
                 sent = True
             except CalledProcessError as se:
@@ -230,11 +310,14 @@ def run_digest(
                 except Exception as fe:
                     fallback_ok = False
                     fallback_error = str(fe)
-                # Keep original failure visible to scheduler/run status.
-                raise RuntimeError(
+                send_error_summary = (
                     f"primary_send_failed={se}; fallback_triggered={fallback_triggered}; "
                     f"fallback_ok={fallback_ok}; fallback_error={fallback_error}"
-                ) from se
+                )
+                if send_failure_fatal:
+                    # Strict mode: preserve original fatal behavior.
+                    raise RuntimeError(send_error_summary) from se
+                send_failure_nonfatal = True
 
         return_payload = {
             "ok": True,
@@ -248,7 +331,11 @@ def run_digest(
             "artifacts_dir": str(artifacts_dir),
             "output_file": str(out_file),
             "use_collect_assets": bool(use_collect_assets),
-            "collect_window_hours": int(collect_window_hours or 24),
+            "collect_window_hours": int(resolved_collect_window_hours),
+            "window_mode": window_mode,
+            "window_start_utc": window_start_utc.isoformat().replace("+00:00", "Z") if window_start_utc else "",
+            "window_end_utc": window_end_utc.isoformat().replace("+00:00", "Z") if window_end_utc else "",
+            "edition": edition,
             "collect_asset_dir": str(collect_asset_dir),
             "analysis_meta": analysis_meta,
             "sent": sent,
@@ -256,6 +343,9 @@ def run_digest(
             "fallback_triggered": fallback_triggered,
             "fallback_ok": fallback_ok,
             "fallback_error": fallback_error,
+            "send_error_summary": send_error_summary,
+            "send_failure_nonfatal": send_failure_nonfatal,
+            "mail_send_strict": send_failure_fatal,
         }
         try:
             store.record_report_artifact(
@@ -296,6 +386,7 @@ def run_digest(
             "started_at": _utc_iso(),
             "duration_ms": int((finished_at - started_at) * 1000),
             "analysis": analysis_meta,
+            "send_error_summary": send_error_summary,
         }
         (artifacts_dir / "run_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         try:

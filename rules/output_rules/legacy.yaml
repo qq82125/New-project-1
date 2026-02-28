@@ -4,7 +4,7 @@ profile: legacy
 
 defaults:
   format: plain_text
-  # Legacy output keeps A-G in order, with G at end.
+  # Legacy output keeps A-H in order, with H at end.
   sections:
     - id: A
       enabled: true
@@ -19,6 +19,8 @@ defaults:
     - id: F
       enabled: true
     - id: G
+      enabled: true
+    - id: H
       enabled: true
 
 overrides:
@@ -36,3 +38,4 @@ output:
     - E
     - F
     - G
+    - H

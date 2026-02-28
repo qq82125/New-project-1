@@ -1,0 +1,83 @@
+ruleset: email_rules
+version: "1.0.0"
+profile: legacy
+
+defaults:
+  timezone: Asia/Shanghai
+  subject_template: "全球IVD晨报 - {{date}}"
+  recipient: "${TO_EMAIL:-qq82125@gmail.com}"
+  sender_env: SMTP_FROM
+  send_window:
+    hour: 8
+    minute: 30
+  retry:
+    max_retries: 5
+    connect_timeout_sec: 10
+    max_time_sec: 60
+
+overrides:
+  enabled: false
+  on_weekend: same
+  subject_prefix: ""
+  dedupe_window_hours: 24
+
+rules:
+  - id: subject-legacy
+    enabled: true
+    priority: 100
+    type: subject_template
+    description: 沿用现有主题模板
+    params:
+      template: "全球IVD晨报 - {{date}}"
+
+  - id: recipient-legacy
+    enabled: true
+    priority: 100
+    type: recipient_policy
+    description: 沿用现有收件人环境变量与默认值
+    params:
+      to_env: TO_EMAIL
+      default_to: qq82125@gmail.com
+
+  - id: dedupe-legacy
+    enabled: true
+    priority: 90
+    type: dedupe
+    description: 沿用日志+IMAP去重策略
+    params:
+      local_log_guard: true
+      imap_sent_guard: true
+      window_hours: 24
+
+  - id: retry-legacy
+    enabled: true
+    priority: 80
+    type: retry_policy
+    description: 沿用现有重试参数
+    params:
+      connect_timeout_sec: 10
+      max_time_sec: 60
+      max_retries: 5
+
+  - id: backup-legacy
+    enabled: true
+    priority: 70
+    type: backup_policy
+    description: 启用云端兜底补发
+    params:
+      cloud_backup_enabled: true
+      check_sent_mailbox: true
+
+output:
+  format: plain_text
+  sections:
+    - A
+    - B
+    - C
+    - D
+    - E
+    - F
+    - G
+  summary_max_chars: 220
+  charts_enabled: false
+  chart_types: []

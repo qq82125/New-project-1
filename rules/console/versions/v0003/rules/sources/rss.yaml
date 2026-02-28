@@ -1,0 +1,301 @@
+version: "1.0.0"
+sources:
+  - id: fierce-biotech-rss
+    enabled: true
+    connector: rss
+    url: https://www.fiercebiotech.com/rss/xml
+    name: Fierce Biotech
+    region: 北美
+    trust_tier: B
+    priority: 75
+    tags:
+      - media
+      - global
+      - en
+      - ivd
+
+  - id: medtech-dive-rss
+    enabled: true
+    connector: rss
+    url: https://www.medtechdive.com/feeds/news/
+    name: MedTech Dive
+    region: 北美
+    trust_tier: B
+    priority: 70
+    tags:
+      - media
+      - global
+      - en
+
+  - id: biopharma-dive-rss
+    enabled: true
+    connector: rss
+    url: https://www.biopharmadive.com/feeds/news/
+    name: BioPharma Dive
+    region: 北美
+    trust_tier: B
+    priority: 68
+    tags:
+      - media
+      - global
+      - en
+
+  - id: genomeweb-rss
+    enabled: true
+    connector: rss
+    url: https://www.genomeweb.com/rss.xml
+    name: GenomeWeb
+    region: 北美
+    trust_tier: A
+    priority: 82
+    tags:
+      - media
+      - global
+      - en
+      - ivd
+
+  - id: 360dx-rss
+    enabled: true
+    connector: rss
+    url: https://www.360dx.com/rss.xml
+    name: 360Dx
+    region: 北美
+    trust_tier: A
+    priority: 80
+    tags:
+      - media
+      - global
+      - en
+      - diagnostics
+
+  - id: statnews-rss
+    enabled: true
+    connector: rss
+    url: https://www.statnews.com/feed/
+    name: STAT
+    region: 北美
+    trust_tier: B
+    priority: 85
+    tags:
+      - media
+      - global
+      - en
+
+  - id: reuters-health-rss
+    enabled: true
+    connector: rss
+    url: https://www.reutersagency.com/feed/?best-topics=healthcare-pharmaceuticals
+    name: Reuters Healthcare
+    region: 北美
+    trust_tier: A
+    priority: 100
+    tags:
+      - media
+      - global
+      - en
+
+  - id: tga-safety-rss
+    enabled: true
+    connector: rss
+    url: https://www.tga.gov.au/feeds/alert/safety-alerts.xml
+    name: TGA Safety Alerts
+    region: 亚太
+    trust_tier: A
+    priority: 90
+    tags:
+      - regulatory
+      - apac
+      - en
+
+  - id: tga-recall-rss
+    enabled: true
+    connector: rss
+    url: https://www.tga.gov.au/feeds/alert/product-recalls.xml
+    name: TGA Product Recalls
+    region: 亚太
+    trust_tier: A
+    priority: 90
+    tags:
+      - regulatory
+      - apac
+      - en
+
+  - id: fda-medwatch-rss
+    enabled: true
+    connector: rss
+    url: https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/medwatch/rss.xml
+    name: FDA MedWatch
+    region: 北美
+    trust_tier: A
+    priority: 88
+    tags:
+      - regulatory
+      - us
+      - en
+
+  - id: fda-device-recalls-rss
+    enabled: true
+    connector: rss
+    url: https://www.fda.gov/medical-devices/medical-device-recalls/rss.xml
+    name: FDA Medical Device Recalls
+    region: 北美
+    trust_tier: A
+    priority: 89
+    tags:
+      - regulatory
+      - us
+      - en
+
+  - id: mhra-alerts-atom
+    enabled: true
+    connector: rss
+    url: https://www.gov.uk/drug-device-alerts.atom
+    name: MHRA Alerts
+    region: 欧洲
+    trust_tier: A
+    priority: 88
+    tags:
+      - regulatory
+      - eu
+      - en
+
+  - id: nature-rss
+    enabled: true
+    connector: rss
+    url: https://www.nature.com/nature.rss
+    name: Nature
+    region: 全球
+    trust_tier: A
+    priority: 92
+    tags:
+      - media
+      - journal
+      - global
+      - en
+
+  - id: medrxiv-all-rss
+    enabled: true
+    connector: rss
+    url: https://connect.medrxiv.org/medrxiv_xml.php?subject=all
+    name: medRxiv (All)
+    region: 全球
+    trust_tier: B
+    priority: 73
+    tags:
+      - media
+      - preprint
+      - global
+      - en
+
+  - id: biorxiv-all-rss
+    enabled: true
+    connector: rss
+    url: https://connect.biorxiv.org/biorxiv_xml.php?subject=all
+    name: bioRxiv (All)
+    region: 全球
+    trust_tier: B
+    priority: 73
+    tags:
+      - media
+      - preprint
+      - global
+      - en
+
+  - id: prnewswire-press-rss
+    enabled: true
+    connector: rss
+    url: https://www.prnewswire.com/rss/news-releases-list.rss
+    name: PR Newswire Press Releases
+    region: 全球
+    trust_tier: B
+    priority: 78
+    tags:
+      - media
+      - pressrelease
+      - global
+      - en
+
+  - id: globenewswire-press-rss
+    enabled: true
+    connector: rss
+    url: https://www.globenewswire.com/RssFeed/subjectcode/72-Press%20Releases/feedTitle/GlobeNewswire%20-%20Press%20Releases
+    name: GlobeNewswire Press Releases
+    region: 全球
+    trust_tier: B
+    priority: 77
+    tags:
+      - media
+      - pressrelease
+      - global
+      - en
+
+  - id: science-stm-etoc-rss
+    enabled: true
+    connector: rss
+    url: https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=stm
+    name: Science Translational Medicine (eTOC)
+    region: 全球
+    trust_tier: A
+    priority: 90
+    tags:
+      - media
+      - journal
+      - global
+      - en
+      - translational
+
+  - id: nejm-etoc-rss
+    enabled: true
+    connector: rss
+    url: https://www.nejm.org/action/showFeed?jc=nejm&type=etoc&feed=rss
+    name: NEJM (eTOC)
+    region: 全球
+    trust_tier: A
+    priority: 92
+    tags:
+      - media
+      - journal
+      - global
+      - en
+
+  - id: lancet-current-rss
+    enabled: true
+    connector: rss
+    url: https://www.thelancet.com/rssfeed/lancet_current.xml
+    name: The Lancet (Current Issue)
+    region: 全球
+    trust_tier: A
+    priority: 91
+    tags:
+      - media
+      - journal
+      - global
+      - en
+
+  - id: biorxiv-genomics-atom
+    enabled: true
+    connector: rss
+    url: https://connect.biorxiv.org/biorxiv_xml.php?subject=genomics+bioinformatics
+    name: bioRxiv (Genomics/Bioinformatics)
+    region: 全球
+    trust_tier: B
+    priority: 72
+    tags:
+      - media
+      - preprint
+      - global
+      - en
+
+  - id: medrxiv-infectious-atom
+    enabled: true
+    connector: rss
+    url: https://connect.medrxiv.org/medrxiv_xml.php?subject=infectious+diseases
+    name: medRxiv (Infectious Diseases)
+    region: 全球
+    trust_tier: B
+    priority: 72
+    tags:
+      - media
+      - preprint
+      - global
+      - en

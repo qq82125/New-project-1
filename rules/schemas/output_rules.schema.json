@@ -56,21 +56,21 @@
         "additionalProperties": true
       }
     },
-    "output": {
+        "output": {
       "type": "object",
       "required": ["sections_order"],
       "properties": {
         "sections_order": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "enum": ["A", "B", "C", "D", "E", "F", "G"] }
+          "items": { "type": "string", "enum": ["A", "B", "C", "D", "E", "F", "G", "H"] }
         }
       },
       "additionalProperties": true
     }
   },
   "$defs": {
-    "sectionId": { "type": "string", "enum": ["A", "B", "C", "D", "E", "F", "G"] },
+    "sectionId": { "type": "string", "enum": ["A", "B", "C", "D", "E", "F", "G", "H"] },
     "sectionToggle": {
       "type": "object",
       "required": ["id", "enabled"],
@@ -153,6 +153,7 @@
       "required": ["g_must_be_last", "a_to_f_must_not_include_quality_metrics"],
       "properties": {
         "g_must_be_last": { "type": "boolean", "const": true },
+        "h_must_be_last": { "type": "boolean" },
         "a_to_f_must_not_include_quality_metrics": { "type": "boolean", "const": true }
       },
       "additionalProperties": true

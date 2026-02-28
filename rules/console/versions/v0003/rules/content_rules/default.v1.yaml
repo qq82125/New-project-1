@@ -1,0 +1,91 @@
+ruleset: content_rules
+version: "1.0.0"
+profile: default.v1
+
+defaults:
+  timezone: Asia/Shanghai
+  time_window:
+    primary_hours: 24
+    fallback_days: 7
+  item_limit:
+    min: 8
+    max: 15
+    topup_if_24h_lt: 10
+  sources:
+    media_global:
+      - name: Fierce Biotech
+        url: https://www.fiercebiotech.com/rss/xml
+        region: 北美
+        trust_tier: B
+    regulatory_cn:
+      - name: NMPA
+        url: https://www.nmpa.gov.cn/
+        region: 中国
+        trust_tier: A
+    regulatory_apac:
+      - name: TGA
+        url: https://www.tga.gov.au/feeds/alert/safety-alerts.xml
+        region: 亚太
+        trust_tier: A
+  coverage_tracks:
+    - 肿瘤检测
+    - 感染检测
+    - 生殖与遗传检测
+    - 其他
+  region_filter:
+    apac_min_share: 0.40
+    china_min_share: 0.00
+    allowed_regions:
+      - 北美
+      - 欧洲
+      - 亚太
+      - 中国
+
+overrides:
+  enabled: false
+  keywords_pack:
+    - ivd_core
+    - oncology
+    - infection
+    - repro_genetics
+    - policy_market
+  exclude_terms: []
+  min_confidence: 0.00
+
+rules:
+  - id: default-include
+    enabled: true
+    priority: 90
+    type: include_filter
+    description: 默认IVD相关性过滤
+    params:
+      include_keywords:
+        - diagnostic
+        - assay
+        - ivd
+        - test
+        - pcr
+        - ngs
+
+  - id: default-dedupe
+    enabled: true
+    priority: 80
+    type: dedupe
+    description: 默认去重阈值
+    params:
+      daily_max_repeat_rate: 0.25
+      recent_7d_max_repeat_rate: 0.40
+
+output:
+  format: plain_text
+  sections:
+    - A
+    - B
+    - C
+    - D
+    - E
+    - F
+    - G
+  quality_audit_at_end: true
+  per_item_summary_sentences: 2
+  max_items: 15

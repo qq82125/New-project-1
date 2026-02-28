@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -17,8 +17,6 @@ import feedparser
 import yaml
 
 from app.services.html_article_extractor import extract_article
-from app.services.page_classifier import is_static_or_listing_url
-from app.services.source_policy import normalize_source_policy, source_passes_min_trust_tier
 from app.services.rules_store import RulesStore
 
 
@@ -29,13 +27,7 @@ class SourceRegistryError(RuntimeError):
 REGISTRY_FILE_NAME = "sources_registry.v1.yaml"
 OVERRIDES_FILE_NAME = "sources_overrides.json"
 ALLOWED_FETCHERS = {"rss", "html", "rsshub", "google_news", "web", "api"}
-GROUP_DEFAULT_INTERVAL = {
-    "regulatory": 20,
-    "media": 60,
-    "evidence": 720,
-    "company": 240,
-    "procurement": 60,
-}
+CANONICAL_SOURCE_GROUPS = {"regulatory", "media", "evidence", "company", "procurement"}
 
 
 def _canonical_fetcher(value: str) -> str:
@@ -94,66 +86,31 @@ def _normalize_source(raw: dict[str, Any], file_path: Path) -> dict[str, Any]:
     src["enabled"] = bool(src.get("enabled", True))
     src["source_file"] = str(file_path)
     src["tags"] = src.get("tags", []) if isinstance(src.get("tags", []), list) else []
-    if not str(src.get("source_group", "")).strip():
-        tags = {str(x).strip().lower() for x in src["tags"]}
-        if "regulatory" in tags:
-            src["source_group"] = "regulatory"
-        elif tags & {"journal", "preprint", "literature", "translational"}:
-            src["source_group"] = "evidence"
-        elif tags & {"procurement", "bid", "tender"}:
-            src["source_group"] = "procurement"
-        elif tags & {"company", "pressrelease", "investor"}:
-            src["source_group"] = "company"
-        else:
-            src["source_group"] = "media"
     src["priority"] = int(src.get("priority", 0))
+    src["source_group"] = _resolve_source_group(src)
     return src
 
 
-def _infer_source_group(source: dict[str, Any]) -> str:
-    sg = str(source.get("source_group", "")).strip().lower()
-    if sg:
-        return sg
-    tags = {str(x).strip().lower() for x in (source.get("tags", []) if isinstance(source.get("tags", []), list) else [])}
+def _resolve_source_group(src: dict[str, Any]) -> str:
+    explicit = str(src.get("source_group", "")).strip().lower()
+    if explicit in CANONICAL_SOURCE_GROUPS:
+        return explicit
+
+    groups = [str(x).strip().lower() for x in src.get("registry_groups", []) if str(x).strip()]
+    for g in groups:
+        if g in CANONICAL_SOURCE_GROUPS:
+            return g
+
+    tags = {str(x).strip().lower() for x in src.get("tags", []) if str(x).strip()}
+    if "procurement" in tags:
+        return "procurement"
     if "regulatory" in tags:
         return "regulatory"
-    if tags & {"journal", "preprint", "literature", "translational"}:
-        return "evidence"
-    if tags & {"procurement", "bid", "tender"}:
-        return "procurement"
-    if tags & {"company", "pressrelease", "investor"}:
+    if "company" in tags:
         return "company"
+    if "evidence" in tags or "journal" in tags or "preprint" in tags:
+        return "evidence"
     return "media"
-
-
-def _resolve_interval_minutes(
-    source: dict[str, Any],
-    *,
-    group_defaults: dict[str, dict[str, Any]],
-    default_minutes: int = 60,
-) -> tuple[int, str]:
-    source_override = source.get("fetch_interval_minutes")
-    if source_override is not None and str(source_override).strip() != "":
-        try:
-            return max(1, int(source_override)), "source"
-        except Exception:
-            pass
-    sg = _infer_source_group(source)
-    g = group_defaults.get(sg, {})
-    g_interval = g.get("default_interval_minutes")
-    if g_interval is not None and str(g_interval).strip() != "":
-        try:
-            return max(1, int(g_interval)), "group"
-        except Exception:
-            pass
-    fetch = source.get("fetch", {}) if isinstance(source.get("fetch"), dict) else {}
-    y_interval = fetch.get("interval_minutes")
-    if y_interval is not None and str(y_interval).strip() != "":
-        try:
-            return max(1, int(y_interval)), "yaml"
-        except Exception:
-            pass
-    return max(1, int(default_minutes)), "default"
 
 
 def _extract_web_sample_entries(html: str, base_url: str, limit: int = 3) -> list[dict[str, str]]:
@@ -367,107 +324,10 @@ def _generic_html_list_entries(
     return samples, "generic_html_empty"
 
 
-def _extract_links_for_html_list(
-    html: str,
-    page_url: str,
-    *,
-    limit: int = 5,
-    link_regex: str = "",
-) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    seen: set[str] = set()
-    pattern = None
-    if str(link_regex or "").strip():
-        try:
-            pattern = re.compile(str(link_regex), flags=re.I)
-        except Exception:
-            pattern = None
-
-    for m in re.finditer(r"<a[^>]+href=['\"]([^'\"]+)['\"][^>]*>(.*?)</a>", html, flags=re.I | re.S):
-        href = str(m.group(1) or "").strip()
-        title = _clean_title(str(m.group(2) or ""))
-        if not href:
-            continue
-        if href.startswith("//"):
-            u = f"https:{href}"
-        elif href.startswith("http://") or href.startswith("https://"):
-            u = href
-        else:
-            u = urljoin(page_url, href)
-        if not _is_valid_url(u):
-            continue
-        if not _same_host(page_url, u):
-            continue
-        low = href.lower()
-        if any(x in low for x in ("javascript:", "mailto:", "#", "/login", "signin", "register")):
-            continue
-        if pattern is not None and not (pattern.search(href) or pattern.search(u)):
-            continue
-        if pattern is None:
-            # conservative fallback when regex is missing
-            if not re.search(r"(notice|bulletin|announcement|tender|bid|award|procurement|/detail|id=\d+|\.html?$)", low):
-                continue
-        if u in seen:
-            continue
-        seen.add(u)
-        rows.append({"title": title or u, "url": u})
-        if len(rows) >= max(1, int(limit or 5)):
-            break
-    return rows
-
-
 def _fetch_url_with_retry(url: str, headers: dict[str, str], timeout: int, retries: int) -> dict[str, Any]:
-    parsed = urlparse(str(url or "").strip())
-    if parsed.scheme == "file":
-        try:
-            host = str(parsed.netloc or "").strip()
-            raw_path = unquote(str(parsed.path or "").strip())
-            if host:
-                raw_path = f"{host}{raw_path}"
-            if not raw_path:
-                return {
-                    "ok": False,
-                    "data": b"",
-                    "http_status": None,
-                    "content_type": "",
-                    "error_type": "missing_config",
-                    "error_message": "file url missing path",
-                }
-            p = Path(raw_path)
-            if not p.is_absolute():
-                p = Path.cwd() / raw_path
-            if not p.exists():
-                return {
-                    "ok": False,
-                    "data": b"",
-                    "http_status": 404,
-                    "content_type": "",
-                    "error_type": "http_error",
-                    "error_message": f"file not found: {p}",
-                }
-            data = p.read_bytes()
-            return {
-                "ok": True,
-                "data": data,
-                "http_status": 200,
-                "content_type": "application/rss+xml" if p.suffix.lower() in {".xml", ".rss"} else "text/plain",
-                "error_type": "",
-                "error_message": "",
-            }
-        except Exception as e:
-            return {
-                "ok": False,
-                "data": b"",
-                "http_status": None,
-                "content_type": "",
-                "error_type": "network_error",
-                "error_message": f"{type(e).__name__}: {e}",
-            }
-
     attempt = 0
     last_err = ""
     last_type = "network_error"
-    last_status: int | None = None
     while attempt <= max(0, retries):
         attempt += 1
         req = Request(url, headers=headers)
@@ -487,18 +347,8 @@ def _fetch_url_with_retry(url: str, headers: dict[str, str], timeout: int, retri
         except HTTPError as e:
             last_type = "http_error"
             last_err = f"HTTPError: {getattr(e, 'code', '')} {e}"
-            code = int(getattr(e, "code", 0) or 0)
-            last_status = code or None
-            if code in (403, 404):
+            if int(getattr(e, "code", 0) or 0) in (403, 404):
                 break
-            return {
-                "ok": False,
-                "data": b"",
-                "http_status": code,
-                "content_type": "",
-                "error_type": last_type,
-                "error_message": last_err,
-            }
         except TimeoutError as e:
             last_type = "timeout"
             last_err = f"TimeoutError: {e}"
@@ -519,7 +369,7 @@ def _fetch_url_with_retry(url: str, headers: dict[str, str], timeout: int, retri
     return {
         "ok": False,
         "data": b"",
-        "http_status": last_status,
+        "http_status": None,
         "content_type": "",
         "error_type": last_type,
         "error_message": last_err,
@@ -648,7 +498,6 @@ def _infer_groups_from_tags(sources: list[dict[str, Any]]) -> dict[str, list[str
 def load_sources_registry_bundle(
     project_root: Path,
     rules_root: Path | None = None,
-    *,
     include_deleted: bool = False,
 ) -> dict[str, Any]:
     """
@@ -662,11 +511,6 @@ def load_sources_registry_bundle(
     }
     """
     reg_path = _first_existing(_candidate_registry_paths(project_root, rules_root=rules_root))
-    base_sources: list[dict[str, Any]] = []
-    base_groups: dict[str, list[str]] = {}
-    source_file = ""
-    version = "split.v1"
-
     if reg_path is not None:
         doc = _load_yaml(reg_path)
         version = str(doc.get("version", "1.0.0"))
@@ -676,6 +520,8 @@ def load_sources_registry_bundle(
         groups = doc.get("groups", {})
         if not isinstance(groups, dict):
             raise SourceRegistryError(f"{reg_path}: groups must be object")
+
+        sources: list[dict[str, Any]] = []
         id_set: set[str] = set()
         for s in raw_sources:
             if not isinstance(s, dict):
@@ -687,7 +533,8 @@ def load_sources_registry_bundle(
             if sid in id_set:
                 raise SourceRegistryError(f"{reg_path}: duplicate source id={sid}")
             id_set.add(sid)
-            base_sources.append(row)
+            sources.append(row)
+
         gid_to_ids: dict[str, list[str]] = {}
         sid_to_groups: dict[str, list[str]] = {}
         for g, raw_ids in groups.items():
@@ -704,133 +551,88 @@ def load_sources_registry_bundle(
                 ids.append(sid)
                 sid_to_groups.setdefault(sid, []).append(gid)
             gid_to_ids[gid] = ids
-        for row in base_sources:
+
+        for row in sources:
             sid = str(row.get("id", "")).strip()
             row["registry_groups"] = sid_to_groups.get(sid, [])
-        base_groups = gid_to_ids
-        source_file = str(reg_path)
-    else:
-        root = _resolve_rules_root(project_root, rules_root)
-        split_sources = _load_split_sources(root)
-        base_sources = split_sources
-        base_groups = _infer_groups_from_tags(split_sources)
-        source_file = str(root / "sources")
+            row["source_group"] = _resolve_source_group(row)
 
-    overrides = _load_overrides(project_root)
-    merged_base = _apply_overrides(base_sources, overrides)
-
-    # DB-first overrides layer (non-breaking fallback when DB unavailable).
-    group_defaults: dict[str, dict[str, Any]] = {}
-    for k, v in GROUP_DEFAULT_INTERVAL.items():
-        group_defaults[k] = {
-            "group_key": k,
-            "display_name": k.capitalize(),
-            "default_interval_minutes": int(v),
-            "enabled": True,
+        overrides = _load_overrides(project_root)
+        merged = _apply_overrides(sources, overrides)
+        # Merge runtime fetch/test status from DB so /admin/sources can show "最近抓取" and status pills.
+        try:
+            store = RulesStore(project_root)
+            db_rows = store.list_sources()
+            by_id = {str(x.get("id", "")).strip(): x for x in db_rows if str(x.get("id", "")).strip()}
+            sync_fields = (
+                "last_fetched_at",
+                "last_fetch_status",
+                "last_fetch_http_status",
+                "last_fetch_error",
+                "last_success_at",
+                "last_http_status",
+                "last_error",
+                "updated_at",
+            )
+            for row in merged:
+                sid = str(row.get("id", "")).strip()
+                db = by_id.get(sid)
+                if not isinstance(db, dict):
+                    continue
+                for f in sync_fields:
+                    if f in db:
+                        row[f] = db.get(f)
+            for row in merged:
+                row["source_group"] = _resolve_source_group(row)
+        except Exception:
+            # Keep registry loading resilient; UI can still operate without runtime stats.
+            pass
+        if not include_deleted:
+            merged = [row for row in merged if not row.get("deleted_at")]
+        return {
+            "version": version,
+            "sources": merged,
+            "groups": gid_to_ids,
+            "source_file": str(reg_path),
+            "overrides_file": str(_overrides_path(project_root)),
         }
-    db_rows: list[dict[str, Any]] = []
-    try:
+
+    # Legacy fallback path: existing DB-first behavior, then split yaml.
+    if rules_root is None and not os.environ.get("RULES_WORKSPACE_DIR", "").strip():
         store = RulesStore(project_root)
-        db_rows = store.list_sources(enabled_only=False, include_deleted=True)
-        for g in store.list_source_groups():
-            if not isinstance(g, dict):
-                continue
-            key = str(g.get("group_key", "")).strip().lower()
-            if not key:
-                continue
-            group_defaults[key] = dict(g)
-    except Exception:
-        db_rows = []
+        db_sources = store.list_sources()
+        if db_sources:
+            out: list[dict[str, Any]] = []
+            for s in db_sources:
+                ss = dict(s)
+                ss["source_file"] = "db://sources"
+                ss["source_group"] = _resolve_source_group(ss)
+                out.append(ss)
+            if not include_deleted:
+                out = [row for row in out if not row.get("deleted_at")]
+            return {
+                "version": "db",
+                "sources": out,
+                "groups": _infer_groups_from_tags(out),
+                "source_file": "db://sources",
+                "overrides_file": str(_overrides_path(project_root)),
+            }
 
-    by_id: dict[str, dict[str, Any]] = {
-        str(s.get("id", "")).strip(): dict(s)
-        for s in merged_base
-        if str(s.get("id", "")).strip()
-    }
-    for db in db_rows:
-        sid = str(db.get("id", "")).strip()
-        if not sid:
-            continue
-        cur = dict(by_id.get(sid, {}))
-        # DB > rules > yaml for mutable source fields.
-        for k in (
-            "id",
-            "name",
-            "connector",
-            "fetcher",
-            "url",
-            "enabled",
-            "source_group",
-            "trust_tier",
-            "tags",
-            "fetch",
-            "rate_limit",
-            "parsing",
-            "region",
-            "priority",
-            "fetch_interval_minutes",
-            "deleted_at",
-            "last_fetched_at",
-            "last_fetch_status",
-            "last_fetch_http_status",
-            "last_fetch_error",
-            "last_success_at",
-            "last_http_status",
-            "last_error",
-            "updated_at",
-        ):
-            if k in db and db.get(k) is not None:
-                cur[k] = db.get(k)
-        if not isinstance(cur.get("fetch"), dict):
-            cur["fetch"] = {}
-        if cur.get("fetcher") in {"", None}:
-            cur["fetcher"] = cur.get("connector", "")
-        if cur.get("connector") in {"", None}:
-            cur["connector"] = cur.get("fetcher", "")
-        cur["source_file"] = cur.get("source_file", "db://sources")
-        by_id[sid] = cur
-
-    out_sources: list[dict[str, Any]] = []
-    for sid in sorted(by_id.keys()):
-        row = dict(by_id[sid])
-        row["source_group"] = _infer_source_group(row)
-        fetch = row.get("fetch", {}) if isinstance(row.get("fetch"), dict) else {}
-        row["fetch"] = dict(fetch)
-        if "fetch_interval_minutes" in row and row.get("fetch_interval_minutes") is not None:
-            row["fetch"]["interval_minutes"] = int(row.get("fetch_interval_minutes"))
-        eff, src = _resolve_interval_minutes(row, group_defaults=group_defaults, default_minutes=60)
-        row["effective_interval_minutes"] = int(eff)
-        row["interval_source"] = str(src)
-        row["effective"] = {"fetch": {"interval_minutes": int(eff)}}
-        row["source_overrides"] = {"interval_from": str(src)}
-        deleted_at = str(row.get("deleted_at", "") or "").strip()
-        if deleted_at and not include_deleted:
-            continue
-        out_sources.append(row)
-
+    root = _resolve_rules_root(project_root, rules_root)
+    split_sources = _load_split_sources(root)
+    if not include_deleted:
+        split_sources = [row for row in split_sources if not row.get("deleted_at")]
     return {
-        "version": version,
-        "sources": out_sources,
-        "groups": base_groups,
-        "source_groups": sorted(group_defaults.values(), key=lambda x: str(x.get("group_key", ""))),
-        "source_file": source_file,
+        "version": "split.v1",
+        "sources": split_sources,
+        "groups": _infer_groups_from_tags(split_sources),
+        "source_file": str(root / "sources"),
         "overrides_file": str(_overrides_path(project_root)),
     }
 
 
-def load_sources_registry(
-    project_root: Path,
-    rules_root: Path | None = None,
-    *,
-    include_deleted: bool = False,
-) -> list[dict[str, Any]]:
-    return list(
-        load_sources_registry_bundle(
-            project_root,
-            rules_root=rules_root,
-            include_deleted=include_deleted,
-        ).get("sources", [])
-    )
+def load_sources_registry(project_root: Path, rules_root: Path | None = None) -> list[dict[str, Any]]:
+    return list(load_sources_registry_bundle(project_root, rules_root=rules_root).get("sources", []))
 
 
 def _validate_bundle_v1(bundle: dict[str, Any], schema_path: Path) -> dict[str, Any]:
@@ -962,7 +764,9 @@ def select_sources(
     selector: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     selector = selector or {}
+    trust_rank = {"A": 3, "B": 2, "C": 1}
     min_tt = str(selector.get("min_trust_tier", "C")).strip().upper() or "C"
+    min_rank = trust_rank.get(min_tt, 1)
     include_tags = set(str(x) for x in selector.get("include_tags", []))
     exclude_tags = set(str(x) for x in selector.get("exclude_tags", []))
     include_ids = set(str(x) for x in selector.get("include_source_ids", []))
@@ -974,7 +778,7 @@ def select_sources(
     out = []
     for s in sources:
         tt = str(s.get("trust_tier", "C")).strip().upper() or "C"
-        if not source_passes_min_trust_tier(tt, {"min_trust_tier": min_tt, "enabled": True}):
+        if trust_rank.get(tt, 0) < min_rank:
             continue
         sid = str(s.get("id", ""))
         if enabled_only and not bool(s.get("enabled", True)):
@@ -985,18 +789,6 @@ def select_sources(
             continue
 
         src_groups = {str(x) for x in s.get("registry_groups", [])}
-        sg = _infer_source_group(s)
-        src_groups.add(sg)
-        if sg == "media":
-            src_groups.add("media_global")
-        elif sg == "regulatory":
-            src_groups.update({"regulatory", "regulatory_cn", "regulatory_apac", "regulatory_us_eu"})
-        elif sg == "evidence":
-            src_groups.update({"evidence", "journals_preprints", "journals", "preprints"})
-        elif sg == "company":
-            src_groups.update({"company", "company_major"})
-        elif sg == "procurement":
-            src_groups.update({"procurement", "procurement_global"})
         if include_groups and not (include_groups & src_groups):
             continue
         if exclude_groups and (exclude_groups & src_groups):
@@ -1022,23 +814,15 @@ def _read_profile_selector(
     doc = _load_yaml(path)
     defaults = doc.get("defaults", {}) if isinstance(doc.get("defaults"), dict) else {}
     sel = defaults.get("content_sources", {})
-    out = dict(sel) if isinstance(sel, dict) else {}
-    src_policy = normalize_source_policy(defaults.get("source_policy", {}), profile=profile)
-    out.setdefault("min_trust_tier", src_policy.get("min_trust_tier", "C"))
-    ex_ids = set(str(x) for x in out.get("exclude_source_ids", []) if str(x).strip())
-    ex_ids.update(str(x) for x in src_policy.get("exclude_source_ids", []) if str(x).strip())
-    out["exclude_source_ids"] = sorted(ex_ids)
-    return out
+    return sel if isinstance(sel, dict) else {}
 
 
 def list_sources_for_profile(
     project_root: Path,
     profile: str,
     rules_root: Path | None = None,
-    *,
-    include_deleted: bool = False,
 ) -> list[dict[str, Any]]:
-    bundle = load_sources_registry_bundle(project_root, rules_root=rules_root, include_deleted=include_deleted)
+    bundle = load_sources_registry_bundle(project_root, rules_root=rules_root)
     sources = bundle.get("sources", []) if isinstance(bundle, dict) else []
     groups = bundle.get("groups", {}) if isinstance(bundle, dict) else {}
     # Ensure each source carries reverse group membership.
@@ -1158,8 +942,7 @@ def _normalize_sample_rows(rows: list[dict[str, Any]], limit: int) -> list[dict[
         t = str(x.get("title") or "").strip()
         u = str(x.get("url") or x.get("link") or "").strip()
         d = str(x.get("published_at") or x.get("date") or "").strip()
-        s = str(x.get("summary") or x.get("description") or "").strip()
-        es = str(x.get("evidence_snippet") or "").strip()
+        s = str(x.get("summary") or x.get("description") or x.get("snippet") or "").strip()
         if not t and not u:
             continue
         row = {"title": t, "url": u}
@@ -1167,12 +950,6 @@ def _normalize_sample_rows(rows: list[dict[str, Any]], limit: int) -> list[dict[
             row["published_at"] = d
         if s:
             row["summary"] = s
-        if es:
-            row["evidence_snippet"] = es
-        if isinstance(x.get("article_meta"), dict):
-            row["article_meta"] = x.get("article_meta")  # type: ignore[assignment]
-        if str(x.get("item_type", "")).strip():
-            row["item_type"] = str(x.get("item_type", "")).strip()
         out.append(row)
     return out
 
@@ -1181,13 +958,130 @@ def _rss_entries_from_bytes(data: bytes, limit: int) -> list[dict[str, str]]:
     feed = feedparser.parse(data)
     rows: list[dict[str, str]] = []
     for e in getattr(feed, "entries", [])[: max(1, limit)]:
-        summary = str(getattr(e, "summary", "") or getattr(e, "description", "") or "").strip()
         rows.append(
             {
                 "title": str(getattr(e, "title", "") or "").strip(),
                 "url": str(getattr(e, "link", "") or "").strip(),
                 "published_at": str(getattr(e, "published", "") or getattr(e, "updated", "") or "").strip(),
-                "summary": summary,
+                "summary": str(getattr(e, "summary", "") or getattr(e, "description", "") or "").strip(),
+            }
+        )
+    return _normalize_sample_rows(rows, limit)
+
+
+def _enrich_rss_rows_with_body(
+    rows: list[dict[str, str]],
+    *,
+    headers: dict[str, str],
+    timeout: int,
+    retry_n: int,
+    limit: int,
+    source_group: str,
+    fetch_cfg: dict[str, Any],
+) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    max_n = max(1, min(len(rows), limit))
+    for row in rows[:max_n]:
+        cur = dict(row)
+        if str(cur.get("summary", "")).strip():
+            out.append(cur)
+            continue
+        link = str(cur.get("url", "")).strip()
+        if not link:
+            out.append(cur)
+            continue
+        r = _fetch_url_with_retry(link, headers, timeout, retry_n)
+        if not r.get("ok"):
+            out.append(cur)
+            continue
+        html = bytes(r.get("data") or b"").decode("utf-8", errors="ignore")
+        article = extract_article(
+            link,
+            html,
+            {
+                "source_group": source_group,
+                "article_min_paragraphs": int(fetch_cfg.get("article_min_paragraphs", 1) or 1),
+                "article_min_text_chars": int(fetch_cfg.get("article_min_text_chars", 120) or 120),
+                "snippet_max_chars": 420,
+            },
+        )
+        if bool(article.get("ok")) and not bool(article.get("dropped")):
+            sn = str(article.get("evidence_snippet", "")).strip()
+            if sn:
+                cur["summary"] = sn
+        out.append(cur)
+    return _normalize_sample_rows(out, limit)
+
+
+def _build_api_url(base_url: str, endpoint: str) -> str:
+    base = str(base_url or "").strip()
+    ep = str(endpoint or "").strip()
+    if not ep:
+        return base
+    if ep.startswith("http://") or ep.startswith("https://"):
+        return ep
+    if ep.startswith("?"):
+        return base + ep
+    return base.rstrip("/") + "/" + ep.lstrip("/")
+
+
+def _api_entries_from_json_object(obj: Any, limit: int) -> list[dict[str, str]]:
+    candidates: list[dict[str, Any]] = []
+    if isinstance(obj, dict):
+        for k in (
+            "opportunitiesData",
+            "opportunities",
+            "results",
+            "data",
+            "items",
+            "records",
+            "list",
+        ):
+            v = obj.get(k)
+            if isinstance(v, list):
+                candidates = [x for x in v if isinstance(x, dict)]
+                break
+        if not candidates:
+            for v in obj.values():
+                if isinstance(v, list) and v and isinstance(v[0], dict):
+                    candidates = [x for x in v if isinstance(x, dict)]
+                    break
+    elif isinstance(obj, list):
+        candidates = [x for x in obj if isinstance(x, dict)]
+
+    rows: list[dict[str, str]] = []
+    for item in candidates[: max(1, limit)]:
+        title = (
+            str(
+                item.get("title")
+                or item.get("solicitationTitle")
+                or item.get("notice_title")
+                or item.get("name")
+                or item.get("description")
+                or ""
+            ).strip()
+        )
+        url = str(
+            item.get("url")
+            or item.get("link")
+            or item.get("notice_url")
+            or item.get("solicitationUrl")
+            or item.get("uiLink")
+            or ""
+        ).strip()
+        if not title and not url:
+            continue
+        rows.append(
+            {
+                "title": title,
+                "url": url,
+                "published_at": str(
+                    item.get("postedDate")
+                    or item.get("publishDate")
+                    or item.get("updated_at")
+                    or item.get("date")
+                    or ""
+                ).strip(),
             }
         )
     return _normalize_sample_rows(rows, limit)
@@ -1199,7 +1093,6 @@ def fetch_source_entries(
     limit: int = 50,
     timeout_seconds: int | None = None,
     retries: int | None = None,
-    source_guard: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Unified source fetch logic used by both test endpoint and runtime collectors.
@@ -1209,17 +1102,9 @@ def fetch_source_entries(
     url = str(source.get("url", "")).strip()
     sid = str(source.get("id", "")).strip()
     fetch = source.get("fetch", {}) if isinstance(source.get("fetch"), dict) else {}
-    sg = source_guard if isinstance(source_guard, dict) else {}
-    guard_enabled = bool(sg.get("enabled", False))
-    enforce_article_only = bool(sg.get("enforce_article_only", guard_enabled))
-    guard_min_paragraphs = int(sg.get("article_min_paragraphs", 2) or 2)
-    guard_min_chars = int(sg.get("article_min_text_chars", 200) or 200)
-    guard_allow_body_fetch_rss = bool(sg.get("allow_body_fetch_for_rss", False))
-    fetch_mode = str(fetch.get("mode", "")).strip().lower()
     timeout = _safe_int(timeout_seconds if timeout_seconds is not None else fetch.get("timeout_seconds"), 20)
     retry_n = _safe_int(retries if retries is not None else fetch.get("retry"), 2)
     headers = fetch.get("headers_json", {}) if isinstance(fetch.get("headers_json"), dict) else {}
-    user_agent = str(fetch.get("user_agent", "")).strip()
     auth_ref = str(fetch.get("auth_ref") or "").strip()
     if auth_ref:
         token = os.environ.get(auth_ref, "").strip()
@@ -1227,7 +1112,7 @@ def fetch_source_entries(
             headers = dict(headers)
             if "Authorization" not in headers:
                 headers["Authorization"] = token if (" " in token) else f"Bearer {token}"
-    h = {"User-Agent": user_agent or "Mozilla/5.0 CodexIVD/1.0"}
+    h = {"User-Agent": "Mozilla/5.0 CodexIVD/1.0"}
     h.update({str(k): str(v) for k, v in headers.items()})
 
     out: dict[str, Any] = {
@@ -1252,42 +1137,14 @@ def fetch_source_entries(
         "duration_ms": 0,
         "discovered_feed_url": "",
         "discovered_child_feeds": [],
-        "warnings": [],
-        "dropped_static_or_listing_count": 0,
-        "dropped_too_short_count": 0,
-        "dropped_by_domain_topN": [],
-        "drop_reasons": {},
     }
-
-    if fetch_mode not in {"rss", "html_article", "html_list", "api_json"}:
-        if connector == "rss":
-            fetch_mode = "rss"
-        elif connector == "api":
-            fetch_mode = "api_json"
-        else:
-            fetch_mode = "rss"
-            out["warnings"].append("fetch.mode_missing_defaulted_to_rss")
-
-    drop_domains: dict[str, int] = {}
-    drop_reasons: dict[str, int] = {}
-
-    def _mark_drop(reason: str, target_url: str) -> None:
-        rs = str(reason or "dropped")
-        drop_reasons[rs] = drop_reasons.get(rs, 0) + 1
-        host = str(urlparse(str(target_url or "")).hostname or "").strip().lower()
-        if host:
-            drop_domains[host] = drop_domains.get(host, 0) + 1
-        if rs == "static_or_listing_page":
-            out["dropped_static_or_listing_count"] = int(out.get("dropped_static_or_listing_count", 0) or 0) + 1
-        if rs in {"too_short", "too_few_paragraphs"}:
-            out["dropped_too_short_count"] = int(out.get("dropped_too_short_count", 0) or 0) + 1
 
     rss_discovery_enabled = _env_bool("SOURCES_RSS_DISCOVERY_ENABLED", True)
     index_discovery_enabled = _env_bool("SOURCES_INDEX_DISCOVERY_ENABLED", True)
     html_fallback_enabled = _env_bool("SOURCES_HTML_FALLBACK_ENABLED", True)
 
     try:
-        if fetch_mode == "rss":
+        if connector == "rss":
             res = _fetch_url_with_retry(url, h, timeout, retry_n)
             out["http_status"] = res.get("http_status")
             if not res.get("ok"):
@@ -1339,134 +1196,26 @@ def fetch_source_entries(
                     out["errors"] = [out["error_message"]]
                     out["error"] = out["error_message"]
                     return out
-            final_samples: list[dict[str, Any]] = []
-            for row in samples:
-                row_url = str((row or {}).get("url", "")).strip()
-                if guard_enabled and is_static_or_listing_url(
-                    row_url,
-                    source_group=str(source.get("source_group", "")).strip() or None,
-                ):
-                    _mark_drop("static_or_listing_page", row_url)
-                    continue
-                summary = str((row or {}).get("summary", "")).strip()
-                if not summary and (bool(fetch.get("allow_body_fetch_for_rss", guard_allow_body_fetch_rss))):
-                    r_html = _fetch_url_with_retry(row_url, h, timeout, retry_n)
-                    if r_html.get("ok"):
-                        html = bytes(r_html.get("data") or b"").decode("utf-8", errors="ignore")
-                        ex = extract_article(
-                            row_url,
-                            html,
-                            {
-                                "source_group": str(source.get("source_group", "")).strip(),
-                                "article_min_paragraphs": int(fetch.get("article_min_paragraphs", guard_min_paragraphs) or guard_min_paragraphs),
-                                "article_min_text_chars": int(fetch.get("article_min_text_chars", guard_min_chars) or guard_min_chars),
-                            },
-                        )
-                        if bool(ex.get("ok")):
-                            summary = str(ex.get("evidence_snippet", "")).strip()
-                            if summary:
-                                row["evidence_snippet"] = summary
-                            if ex.get("published_at"):
-                                row["published_at"] = str(ex.get("published_at"))
-                            row["article_meta"] = ex.get("article_meta", {})
-                            row["item_type"] = "rss"
-                        else:
-                            rs = str(ex.get("reason", "static_or_listing_page")).strip() or "static_or_listing_page"
-                            _mark_drop(rs, row_url)
-                            continue
-                if summary:
-                    row["summary"] = summary
-                final_samples.append(row)
-
-            out["samples"] = _normalize_sample_rows(final_samples, limit)
-            out["entries"] = out["samples"]
-            out["sample"] = out["samples"]
-            out["items_count"] = len(out["samples"])
-            out["ok"] = bool(out["samples"])
+            if samples and bool(fetch.get("allow_body_fetch_for_rss", False)):
+                src_group = str(source.get("source_group") or "").strip().lower()
+                samples = _enrich_rss_rows_with_body(
+                    samples,
+                    headers=h,
+                    timeout=timeout,
+                    retry_n=retry_n,
+                    limit=limit,
+                    source_group=src_group,
+                    fetch_cfg=fetch,
+                )
+            out["samples"] = samples
+            out["entries"] = samples
+            out["sample"] = samples
+            out["items_count"] = len(samples)
+            out["ok"] = bool(samples)
             out["status"] = "ok" if out["ok"] else "fail"
-            out["drop_reasons"] = drop_reasons
-            out["dropped_by_domain_topN"] = [
-                {"domain": k, "count": v}
-                for k, v in sorted(drop_domains.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
-            ]
             return out
 
-        if fetch_mode == "api_json":
-            if ("YOUR_KEY" in url.upper()) or ("YOUR_TOKEN" in url.upper()):
-                out["error_type"] = "needs_api_key"
-                out["error_message"] = "api key placeholder detected in URL"
-                out["errors"] = [out["error_message"]]
-                out["error"] = out["error_message"]
-                return out
-            if str(fetch.get("auth_ref") or "").strip() and not any(str(k).lower() == "authorization" for k in h.keys()):
-                out["error_type"] = "needs_api_key"
-                out["error_message"] = "auth_ref configured but no token resolved"
-                out["errors"] = [out["error_message"]]
-                out["error"] = out["error_message"]
-                return out
-            res = _fetch_url_with_retry(url, h, timeout, retry_n)
-            out["http_status"] = res.get("http_status")
-            if not res.get("ok"):
-                out["error_type"] = str(res.get("error_type") or "network_error")
-                out["error_message"] = str(res.get("error_message") or "request failed")
-                out["errors"] = [out["error_message"]]
-                out["error"] = out["error_message"]
-                return out
-            raw = bytes(res.get("data") or b"").decode("utf-8", errors="ignore")
-            try:
-                obj = json.loads(raw or "{}")
-            except Exception:
-                out["error_type"] = "parse_error"
-                out["error_message"] = "api_json response is not valid JSON"
-                out["errors"] = [out["error_message"]]
-                out["error"] = out["error_message"]
-                return out
-
-            candidates: list[Any] = []
-            if isinstance(obj, list):
-                candidates = obj
-            elif isinstance(obj, dict):
-                for k in ("results", "items", "list", "data", "notices"):
-                    v = obj.get(k)
-                    if isinstance(v, list):
-                        candidates = v
-                        break
-
-            samples: list[dict[str, str]] = []
-            for it in candidates[: max(1, int(limit or 50))]:
-                if not isinstance(it, dict):
-                    continue
-                title = str(
-                    it.get("title")
-                    or it.get("name")
-                    or it.get("noticeTitle")
-                    or it.get("description")
-                    or ""
-                ).strip()
-                u = str(
-                    it.get("url")
-                    or it.get("link")
-                    or it.get("noticeUrl")
-                    or url
-                ).strip()
-                if not title and not u:
-                    continue
-                samples.append({"title": title or str(source.get("name", sid)), "url": u})
-
-            out["samples"] = _normalize_sample_rows(samples, limit)
-            out["entries"] = out["samples"]
-            out["sample"] = out["samples"]
-            out["items_count"] = len(out["samples"])
-            out["ok"] = bool(out["samples"])
-            out["status"] = "ok" if out["ok"] else "fail"
-            if not out["ok"]:
-                out["error_type"] = "parse_empty"
-                out["error_message"] = "api_json returned no list-like entries"
-                out["errors"] = [out["error_message"]]
-                out["error"] = out["error_message"]
-            return out
-
-        if fetch_mode in {"html_article", "html_list"}:
+        if connector == "html":
             res = _fetch_url_with_retry(url, h, timeout, retry_n)
             out["http_status"] = res.get("http_status")
             if not res.get("ok"):
@@ -1477,149 +1226,60 @@ def fetch_source_entries(
                 return out
             html = bytes(res.get("data") or b"").decode("utf-8", errors="ignore")
 
-            if fetch_mode == "html_article":
-                if guard_enabled and is_static_or_listing_url(
-                    url,
-                    source_group=str(source.get("source_group", "")).strip() or None,
-                ):
-                    _mark_drop("static_or_listing_page", url)
-                    out["error_type"] = "static_or_listing_page"
-                    out["error_message"] = "source url matched static/listing guard"
-                    out["drop_reasons"] = drop_reasons
-                    out["dropped_by_domain_topN"] = [
-                        {"domain": k, "count": v}
-                        for k, v in sorted(drop_domains.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
-                    ]
-                    return out
-                ex = extract_article(
-                    url,
-                    html,
-                    {
-                        "source_group": str(source.get("source_group", "")).strip(),
-                        "article_min_paragraphs": int(fetch.get("article_min_paragraphs", guard_min_paragraphs) or guard_min_paragraphs),
-                        "article_min_text_chars": int(fetch.get("article_min_text_chars", guard_min_chars) or guard_min_chars),
-                    },
-                )
-                if not bool(ex.get("ok")):
-                    rs = str(ex.get("reason", "static_or_listing_page")).strip() or "static_or_listing_page"
-                    _mark_drop(rs, url)
-                    out["error_type"] = rs
-                    out["error_message"] = "html_article source is not a valid article page"
-                    out["drop_reasons"] = drop_reasons
-                    out["dropped_by_domain_topN"] = [
-                        {"domain": k, "count": v}
-                        for k, v in sorted(drop_domains.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
-                    ]
-                    return out
-                sample = {
-                    "title": str(ex.get("title", "")).strip() or str(source.get("name", sid)),
-                    "url": url,
-                    "published_at": str(ex.get("published_at", "")).strip(),
-                    "summary": str(ex.get("evidence_snippet", "")).strip(),
-                    "evidence_snippet": str(ex.get("evidence_snippet", "")).strip(),
-                    "article_meta": ex.get("article_meta", {}),
-                    "item_type": "html_article",
-                }
-                out["samples"] = _normalize_sample_rows([sample], limit)
-                out["entries"] = out["samples"]
-                out["sample"] = out["samples"]
-                out["items_count"] = len(out["samples"])
-                out["ok"] = bool(out["samples"])
-                out["status"] = "ok" if out["ok"] else "fail"
-                out["drop_reasons"] = drop_reasons
-                out["dropped_by_domain_topN"] = [
-                    {"domain": k, "count": v}
-                    for k, v in sorted(drop_domains.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
-                ]
-                return out
+            tags = [str(x).strip().lower() for x in source.get("tags", [])] if isinstance(source.get("tags"), list) else []
+            if index_discovery_enabled and "regulatory" in tags:
+                child = _extract_child_feeds(html, url, same_host_only=True)
+                out["discovered_child_feeds"] = child
+                if child:
+                    default_kws = ["medical devices", "devices", "cdrh", "ivd", "guidance", "alert", "news", "update"]
+                    policy = source.get("discovery_policy", "pick_by_keywords")
+                    chosen = _pick_child_feed(child, policy, keywords=default_kws)
+                    out["discovered_feed_url"] = chosen
+                    if chosen:
+                        r2 = _fetch_url_with_retry(chosen, h, timeout, retry_n)
+                        out["http_status"] = r2.get("http_status") or out["http_status"]
+                        if r2.get("ok"):
+                            samples = _rss_entries_from_bytes(bytes(r2.get("data") or b""), limit)
+                            if samples:
+                                out["samples"] = samples
+                                out["entries"] = samples
+                                out["sample"] = samples
+                                out["items_count"] = len(samples)
+                                out["ok"] = True
+                                out["status"] = "ok"
+                                return out
 
-            source_group = str(source.get("source_group", "")).strip().lower()
-            if source_group != "procurement":
-                out["error_type"] = "unsupported_mode"
-                out["error_message"] = "html_list is only supported for procurement sources"
+            if not html_fallback_enabled:
+                out["status"] = "skip"
+                out["error_type"] = "html_fallback_disabled"
+                out["error_message"] = "html fallback parser disabled"
                 out["errors"] = [out["error_message"]]
                 out["error"] = out["error_message"]
                 return out
 
-            link_regex = str(fetch.get("list_link_regex", "")).strip()
-            detail_links = _extract_links_for_html_list(
-                html,
-                url,
-                limit=int(fetch.get("fetch_limit_default", limit) or limit),
-                link_regex=link_regex,
+            rows, parse_mode = _generic_html_list_entries(
+                html, url, limit=limit, selectors=source.get("selectors", {})
             )
-            if not detail_links and _is_probable_js_page(html):
+            samples = _normalize_sample_rows(rows, limit)
+            if not samples and _is_probable_js_page(html):
                 out["status"] = "skip"
                 out["error_type"] = "js_required"
                 out["error_message"] = "page likely requires JS rendering"
                 out["errors"] = [out["error_message"]]
                 out["error"] = out["error_message"]
                 return out
-            if not detail_links:
-                out["error_type"] = "parse_empty"
-                out["error_message"] = "no detail links extracted from html_list page"
+            if not samples:
+                out["error_type"] = "parse_empty" if parse_mode != "selector_regex" else "selector_miss"
+                out["error_message"] = "no items parsed from html page"
                 out["errors"] = [out["error_message"]]
                 out["error"] = out["error_message"]
                 return out
-
-            samples: list[dict[str, Any]] = []
-            for row in detail_links[: max(1, int(limit or 50))]:
-                detail_url = str(row.get("url", "")).strip()
-                if not detail_url:
-                    continue
-                if guard_enabled and is_static_or_listing_url(detail_url, source_group="procurement"):
-                    _mark_drop("static_or_listing_page", detail_url)
-                    continue
-                rd = _fetch_url_with_retry(detail_url, h, timeout, retry_n)
-                if not rd.get("ok"):
-                    _mark_drop("not_article", detail_url)
-                    continue
-                detail_html = bytes(rd.get("data") or b"").decode("utf-8", errors="ignore")
-                ex = extract_article(
-                    detail_url,
-                    detail_html,
-                    {
-                        "source_group": "procurement",
-                        "article_min_paragraphs": int(fetch.get("article_min_paragraphs", 1) or 1),
-                        "article_min_text_chars": int(fetch.get("article_min_text_chars", 120) or 120),
-                    },
-                )
-                if not bool(ex.get("ok")):
-                    _mark_drop(str(ex.get("reason", "not_article")) or "not_article", detail_url)
-                    continue
-                snippet = str(ex.get("evidence_snippet", "")).strip()
-                samples.append(
-                    {
-                        "title": str(ex.get("title", "")).strip() or str(row.get("title", "")) or str(source.get("name", sid)),
-                        "url": detail_url,
-                        "published_at": str(ex.get("published_at", "")).strip(),
-                        "summary": snippet,
-                        "evidence_snippet": snippet,
-                        "article_meta": ex.get("article_meta", {}),
-                        "item_type": "html_article",
-                    }
-                )
-
-            out["samples"] = _normalize_sample_rows(samples, limit)
-            out["entries"] = out["samples"]
-            out["sample"] = out["samples"]
-            out["items_count"] = len(out["samples"])
-            out["ok"] = bool(out["samples"])
-            out["status"] = "ok" if out["ok"] else "fail"
-            if not out["ok"]:
-                if int(out.get("dropped_static_or_listing_count", 0) or 0) > 0:
-                    out["error_type"] = "static_or_listing_page"
-                    out["error_message"] = "detail links were dropped by static/listing guard"
-                else:
-                    out["error_type"] = "not_article"
-                    out["error_message"] = "no detail page passed article extraction"
-                out["errors"] = [out["error_message"]]
-                out["error"] = out["error_message"]
-            out["drop_reasons"] = drop_reasons
-            out["dropped_by_domain_topN"] = [
-                {"domain": k, "count": v}
-                for k, v in sorted(drop_domains.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
-            ]
+            out["samples"] = samples
+            out["entries"] = samples
+            out["sample"] = samples
+            out["items_count"] = len(samples)
+            out["ok"] = True
+            out["status"] = "ok"
             return out
 
         if connector == "rsshub":
@@ -1693,6 +1353,60 @@ def fetch_source_entries(
             if not out["ok"]:
                 out["error_type"] = "parse_empty"
                 out["error_message"] = "google_news feed parsed but empty"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+            return out
+
+        if connector == "api":
+            endpoint = str(fetch.get("endpoint") or "").strip()
+            full_url = _build_api_url(url, endpoint)
+            out["url"] = full_url
+            if not _is_valid_url(full_url):
+                out["error_type"] = "invalid_url"
+                out["error_message"] = "invalid api url (base_url + endpoint)"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+                return out
+
+            res = _fetch_url_with_retry(full_url, h, timeout, retry_n)
+            out["http_status"] = res.get("http_status")
+            if not res.get("ok"):
+                out["error_type"] = str(res.get("error_type") or "network_error")
+                out["error_message"] = str(res.get("error_message") or "request failed")
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+                return out
+
+            data = bytes(res.get("data") or b"")
+            try:
+                payload = json.loads(data.decode("utf-8", errors="ignore"))
+            except Exception:
+                out["error_type"] = "parse_error"
+                out["error_message"] = "api response is not valid json"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+                return out
+
+            msg = ""
+            if isinstance(payload, dict):
+                msg = str(payload.get("message") or payload.get("error") or "").strip()
+            if ("api key" in msg.lower()) or ("invalid key" in msg.lower()):
+                out["error_type"] = "needs_api_key"
+                out["error_message"] = msg or "api key required"
+                out["errors"] = [out["error_message"]]
+                out["error"] = out["error_message"]
+                return out
+
+            samples = _api_entries_from_json_object(payload, limit)
+            out["samples"] = samples
+            out["entries"] = samples
+            out["sample"] = samples
+            out["items_count"] = len(samples)
+            out["ok"] = bool(samples)
+            out["status"] = "ok" if out["ok"] else "fail"
+            if not out["ok"]:
+                out["error_type"] = "empty_feed"
+                out["error_message"] = "api json parsed but no entries extracted"
                 out["errors"] = [out["error_message"]]
                 out["error"] = out["error_message"]
             return out

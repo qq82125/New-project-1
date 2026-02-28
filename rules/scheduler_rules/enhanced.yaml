@@ -4,14 +4,20 @@ profile: enhanced
 
 defaults:
   enabled: true
-  timezone: "Asia/Singapore"
+  timezone: "Asia/Shanghai"
   collect_window_hours: 24
   collect_asset_dir: "artifacts/collect"
   schedules:
-    # digest：按固定时间生成日报（示例：每天 08:30，北京时间）
-    - id: "digest_daily_0830"
+    # digest：每天早晚各一次（北京时间 09:00 / 21:00）
+    - id: "digest_daily_0900"
       type: "cron"
-      cron: "30 8 * * *"
+      cron: "0 9 * * *"
+      purpose: "digest"
+      profile: "enhanced"
+      jitter_seconds: 30
+    - id: "digest_daily_2100"
+      type: "cron"
+      cron: "0 21 * * *"
       purpose: "digest"
       profile: "enhanced"
       jitter_seconds: 30
@@ -25,7 +31,7 @@ defaults:
   concurrency:
     max_instances: 1
     coalesce: true
-    misfire_grace_seconds: 600
+    misfire_grace_seconds: 1800
   run_policies:
     allow_manual_trigger: true
     pause_switch: false

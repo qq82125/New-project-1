@@ -29,6 +29,10 @@ def _should_skip_unknown_both(region: str, lane: str, display_cfg: dict[str, Any
     return False
 
 
+def _is_unknown_side(region: str, lane: str) -> bool:
+    return region == "__unknown__" or lane == "__unknown__"
+
+
 def _format_contrib_top2(breakdown: dict[str, dict[str, int]]) -> list[dict[str, int | str]]:
     rows: list[dict[str, int | str]] = []
     for event_type, item in breakdown.items():
@@ -203,33 +207,53 @@ def compute_opportunity_index(
 
     top_rows: list[dict[str, Any]] = []
     suppressed: list[dict[str, Any]] = []
+    unknown_qualified: list[dict[str, Any]] = []
+    top_fill_note = ""
+    filled_from_suppressed = 0
+
+    def _with_contrib(row: dict[str, Any], *, low_conf: bool) -> dict[str, Any]:
+        region = _normalize_unknown(row.get("region", ""))
+        lane = _normalize_unknown(row.get("lane", ""))
+        row_key = f"{region}|{lane}"
+        out = dict(row)
+        out["contrib_top2"] = _format_contrib_top2(breakdown.get(row_key, {}))
+        out["low_confidence"] = bool(low_conf)
+        return out
+
     for row in scored_rows:
-        if len(top_rows) >= top_n:
-            break
         region = _normalize_unknown(row.get("region", ""))
         lane = _normalize_unknown(row.get("lane", ""))
         score = int(row.get("score", 0) or 0)
         if _should_skip_unknown_both(region, lane, display_cfg):
             suppressed.append(row)
             continue
-        if (region == "__unknown__" or lane == "__unknown__") and score < unknown_min_score:
+        if not _is_unknown_side(region, lane):
+            top_rows.append(_with_contrib(row, low_conf=False))
+            continue
+        if region == "__unknown__" and lane != "__unknown__" and score < unknown_min_score:
             suppressed.append(row)
             continue
-        row_key = f"{region}|{lane}"
-        row["contrib_top2"] = _format_contrib_top2(breakdown.get(row_key, {}))
-        row["low_confidence"] = False
-        top_rows.append(row)
+        if lane == "__unknown__" and score < unknown_min_score:
+            suppressed.append(row)
+            continue
+        unknown_qualified.append(row)
+
+    top_rows = top_rows[:top_n]
+    if len(top_rows) < top_n and unknown_qualified:
+        top_fill_note = "数据不足/分类缺口：已补齐低置信度 unknown 项。"
+        for row in unknown_qualified:
+            if len(top_rows) >= top_n:
+                break
+            top_rows.append(_with_contrib(row, low_conf=bool(mark_low_conf)))
+            filled_from_suppressed += 1
 
     if len(top_rows) < top_n and suppressed:
+        top_fill_note = "数据不足/分类缺口：已补齐低置信度 unknown 项。"
         for row in suppressed:
             if len(top_rows) >= top_n:
                 break
-            region = _normalize_unknown(row.get("region", ""))
-            lane = _normalize_unknown(row.get("lane", ""))
-            row_key = f"{region}|{lane}"
-            row["contrib_top2"] = _format_contrib_top2(breakdown.get(row_key, {}))
-            row["low_confidence"] = bool(mark_low_conf)
-            top_rows.append(row)
+            top_rows.append(_with_contrib(row, low_conf=bool(mark_low_conf)))
+            filled_from_suppressed += 1
 
     signals_total = max(0, int(cur_total))
     unknown_region_rate = (float(unknown_region) / float(signals_total)) if signals_total > 0 else 0.0
@@ -261,6 +285,8 @@ def compute_opportunity_index(
                     key=lambda kv: (-int(kv[1].get("count", 0) or 0), -int(kv[1].get("weight_sum", 0) or 0), kv[0]),
                 )[:5]
             ],
+            "top_fill_low_conf_count": int(filled_from_suppressed),
+            "top_fill_note": str(top_fill_note or ""),
         },
         "top": top_rows,
     }

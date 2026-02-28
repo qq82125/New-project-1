@@ -93,15 +93,15 @@ curl -u admin:your_pass \
   - `collect_asset_dir` 目录是否正确（默认 `artifacts/collect`）
   - `artifacts/collect/items-YYYYMMDD.jsonl` 是否有最近窗口内条目
 
-## 6. collect / digest CLI 快速自检
+## 6. collect / digest CLI 快速自检（推荐容器内执行）
 
 ```bash
-python -m app.workers.cli collect-now --profile enhanced --limit-sources 20
-python -m app.workers.cli collect-now --profile enhanced --force true --fetch-limit 50
-python -m app.workers.cli collect-clean --keep-days 30
-python -m app.workers.cli digest-now --profile enhanced --send false --use-collect-assets true
-python -m app.workers.cli analysis-clean --keep-days 30
-python -m app.workers.cli analysis-recompute --model primary --prompt-version v2 --sample 20
+docker compose exec -T scheduler-worker sh -lc 'python -m app.workers.cli collect-now --profile enhanced --limit-sources 20'
+docker compose exec -T scheduler-worker sh -lc 'python -m app.workers.cli collect-now --profile enhanced --force true --fetch-limit 50'
+docker compose exec -T scheduler-worker sh -lc 'python -m app.workers.cli collect-clean --keep-days 30'
+docker compose exec -T scheduler-worker sh -lc 'python -m app.workers.cli digest-now --profile enhanced --send false --use-collect-assets true'
+docker compose exec -T scheduler-worker sh -lc 'python -m app.workers.cli analysis-clean --keep-days 30'
+docker compose exec -T scheduler-worker sh -lc 'python -m app.workers.cli analysis-recompute --model primary --prompt-version v2 --sample 20'
 ```
 
 说明：
@@ -114,6 +114,47 @@ python -m app.workers.cli analysis-recompute --model primary --prompt-version v2
 - `analysis-recompute`：对缓存样本按新模型/新 prompt_version 重算并输出对比报告
 - `digest-now`：从 collect 资产读窗口（默认 24h）生成日报；`--send false` 不发信，仅验证渲染链路
 - 可选参数：`--collect-window-hours 48 --collect-asset-dir artifacts/collect`
+- 若必须在宿主机本地执行 `digest-now --send true`，先运行 `python -m app.workers.cli env-check`。当检查不通过时，CLI 会默认阻断本地发信并提示改用容器命令（可用 `--allow-local-send true` 强制绕过）。
+
+### 6.0 一键命令（Makefile）
+
+```bash
+make collect-container
+make digest-container
+make digest-send-container
+make fallback-drill-container
+```
+
+- `fallback-drill-container`：演练主发送失败后的兜底通道（`MAIL_SEND_FORCE_FAIL=1`），用于验证 failover 流程。
+
+## 6.1 云端兜底联调（Failover Drill）
+
+目标：确认 `fallback_triggered=true` 且 `fallback_ok=true`。
+
+```bash
+docker compose up -d --build
+docker compose exec -T scheduler-worker sh -lc 'MAIL_SEND_FORCE_FAIL=1 python -m app.workers.cli digest-now --profile enhanced --send true'
+```
+
+验收字段（命令输出 JSON）：
+- `fallback_triggered: true`
+- `fallback_ok: true`
+- `send_failure_nonfatal: true`
+
+## 6.1 发布前闸门（防止模板被误改）
+
+每次发布规则前，固定执行：
+
+```bash
+python3 scripts/prepublish_guard.py --full --strict
+```
+
+闸门包含：
+- `rules:validate --profile enhanced`
+- `tests/test_h_template_lock_pr23_2.py`（A-H 模板锁）
+- `acceptance-run --mode full`
+
+任一失败都不要发布，先修复再重新跑。
 
 Analysis cache 说明（digest）：
 - 默认启用：`content_rules.defaults.analysis_cache.enable_analysis_cache=true`

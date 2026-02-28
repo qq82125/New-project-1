@@ -14,6 +14,13 @@ NOISE_WORDS = {
     "analysis",
 }
 
+TITLE_PREFIXES = [
+    "stat+:",
+    "comment:",
+    "[comment]",
+    "[shinsa]",
+]
+
 
 def _to_dt(value):
     if isinstance(value, datetime):
@@ -61,6 +68,48 @@ def title_fingerprint_key(item):
     return "title_fingerprint_v1", hashlib.sha1(fp.encode("utf-8")).hexdigest()
 
 
+def normalize_title(title: str) -> str:
+    t = str(title or "").strip().lower()
+    if not t:
+        return ""
+    changed = True
+    while changed:
+        changed = False
+        for p in TITLE_PREFIXES:
+            if t.startswith(p):
+                t = t[len(p) :].strip()
+                changed = True
+    t = re.sub(r"[^\w\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    if len(t) < 12:
+        return ""
+    return t
+
+
+def normalized_title_key(item):
+    title = str(item.get("title") or "").strip()
+    nt = normalize_title(title)
+    if not nt:
+        return None
+    return "normalized_title_v1", hashlib.sha1(nt.encode("utf-8")).hexdigest()
+
+
+def host_published_day_key(item):
+    url = str(item.get("url") or "").strip()
+    if not url:
+        return None
+    p = urlparse(url)
+    host = (p.netloc or "").strip().lower()
+    if not host:
+        return None
+    pub = _to_dt(item.get("published_at")) or _to_dt(item.get("first_seen_at"))
+    if pub is None:
+        return None
+    day = pub.astimezone(timezone.utc).date().isoformat()
+    material = f"{host}|{day}"
+    return "host_published_day_v1", hashlib.sha1(material.encode("utf-8")).hexdigest()
+
+
 def _source_priority(item, source_priority):
     raw = item.get("source_priority")
     if raw is not None:
@@ -87,6 +136,10 @@ class StoryClusterer:
         self.source_priority = source_priority or {}
 
     def _key_by_strategy(self, item, strategy):
+        if strategy == "normalized_title_v1":
+            return normalized_title_key(item)
+        if strategy == "host_published_day_v1":
+            return host_published_day_key(item)
         if strategy == "canonical_url":
             return canonical_url_key(item)
         if strategy == "normalized_url_host_path":

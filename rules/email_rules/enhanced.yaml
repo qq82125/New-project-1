@@ -7,9 +7,13 @@ defaults:
   subject_template: "全球IVD晨报 - {{date}}"
   recipient: "${TO_EMAIL:-qq82125@gmail.com}"
   sender_env: SMTP_FROM
+  send_times:
+    - "09:00"
+    - "21:00"
+  window_mode: segmented
   send_window:
-    hour: 8
-    minute: 30
+    hour: 9
+    minute: 0
   retry:
     max_retries: 6
     connect_timeout_sec: 12

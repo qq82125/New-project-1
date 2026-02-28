@@ -48,42 +48,6 @@ defaults:
     prompt_version: v1
     model: legacy-inline
     asset_dir: artifacts/analysis
-  source_policy:
-    enabled: true
-    min_trust_tier:
-      legacy: C
-      enhanced: B
-    exclude_domains: []
-    exclude_source_ids: []
-    drop_if_url_matches: []
-  source_guard:
-    enabled: false
-    enforce_article_only: false
-    article_min_paragraphs: 2
-    article_min_text_chars: 200
-    allow_body_fetch_for_rss: false
-  evidence_policy:
-    require_evidence_for_core: false
-    min_snippet_chars: 80
-    degrade_if_missing: true
-  opportunity_index:
-    enabled: false
-    window_days: 7
-    dedupe:
-      enabled: false
-      tail_lines_scan: 2000
-    display:
-      top_n: 5
-      suppress_unknown_both: true
-      unknown_min_score: 5
-      mark_low_conf: true
-  frontier_policy:
-    require_diagnostic_anchor: false
-    drop_bio_general_without_diagnostic: false
-  evidence_policy:
-    require_evidence_for_core: false
-    min_snippet_chars: 80
-    degrade_if_missing: true
   region_filter:
     apac_min_share: 0.40
     china_min_share: 0.00

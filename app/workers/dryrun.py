@@ -27,7 +27,7 @@ def _parse_items_from_report(text: str) -> list[dict]:
         if not line:
             continue
 
-        if line.startswith("A. 今日要点"):
+        if line.startswith("A. "):
             in_a = True
             continue
         if in_a and re.match(r"^[B-G]\.\s", line):
@@ -60,26 +60,26 @@ def _parse_items_from_report(text: str) -> list[dict]:
         if not current:
             continue
 
-        if line.startswith("摘要："):
-            current["summary"] = line.replace("摘要：", "", 1).strip()
-        elif line.startswith("发布日期："):
-            current["published"] = line.replace("发布日期：", "", 1).strip()
-        elif line.startswith("来源："):
-            src = line.replace("来源：", "", 1).strip()
+        if line.startswith("摘要：") or line.lower().startswith("summary:"):
+            current["summary"] = re.sub(r"^(摘要：|[Ss]ummary:\s*)", "", line, count=1).strip()
+        elif line.startswith("发布日期：") or line.lower().startswith("published:"):
+            current["published"] = re.sub(r"^(发布日期：|[Pp]ublished:\s*)", "", line, count=1).strip()
+        elif line.startswith("来源：") or line.lower().startswith("source:"):
+            src = re.sub(r"^(来源：|[Ss]ource:\s*)", "", line, count=1).strip()
             if "|" in src:
                 left, right = src.split("|", 1)
                 current["source"] = left.strip()
                 current["link"] = right.strip()
             else:
                 current["source"] = src
-        elif line.startswith("地区："):
-            current["region"] = line.replace("地区：", "", 1).strip()
-        elif line.startswith("赛道："):
-            current["lane"] = line.replace("赛道：", "", 1).strip()
-        elif line.startswith("事件类型："):
-            current["event_type"] = line.replace("事件类型：", "", 1).strip()
-        elif line.startswith("技术平台："):
-            current["platform"] = line.replace("技术平台：", "", 1).strip()
+        elif line.startswith("地区：") or line.lower().startswith("region:"):
+            current["region"] = re.sub(r"^(地区：|[Rr]egion:\s*)", "", line, count=1).strip()
+        elif line.startswith("赛道：") or line.lower().startswith("lane:"):
+            current["lane"] = re.sub(r"^(赛道：|[Ll]ane:\s*)", "", line, count=1).strip()
+        elif line.startswith("事件类型：") or line.lower().startswith("event type:"):
+            current["event_type"] = re.sub(r"^(事件类型：|[Ee]vent [Tt]ype:\s*)", "", line, count=1).strip()
+        elif line.startswith("技术平台：") or line.lower().startswith("platform:"):
+            current["platform"] = re.sub(r"^(技术平台：|[Pp]latform:\s*)", "", line, count=1).strip()
         elif not current.get("summary"):
             # 兼容历史格式（摘要行可能不以“摘要：”开头）
             current["summary"] = line

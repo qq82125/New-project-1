@@ -1,0 +1,99 @@
+ruleset: email_rules
+version: "2.0.0"
+profile: enhanced
+
+defaults:
+  timezone: Asia/Shanghai
+  subject_template: "全球IVD晨报 - {{date}}"
+  recipient: "${TO_EMAIL:-qq82125@gmail.com}"
+  sender_env: SMTP_FROM
+  send_window:
+    hour: 8
+    minute: 30
+  retry:
+    max_retries: 6
+    connect_timeout_sec: 12
+    max_time_sec: 90
+
+overrides:
+  enabled: true
+  on_weekend: same
+  subject_prefix: "[Enhanced] "
+  dedupe_window_hours: 36
+
+rules:
+  - id: section-priority
+    enabled: true
+    priority: 95
+    type: content_format
+    description: 栏目优先级调整（A>D>C>B>E>F>G）
+    params:
+      section_priority:
+        - A
+        - D
+        - C
+        - B
+        - E
+        - F
+        - G
+
+  - id: dedupe-window-enhanced
+    enabled: true
+    priority: 92
+    type: dedupe
+    description: 增大去重窗口，降低重复触达
+    params:
+      window_hours: 36
+      prefer_snapshot_replay: true
+
+  - id: threshold-policy
+    enabled: true
+    priority: 88
+    type: content_format
+    description: 强化阈值门槛与摘要限制
+    params:
+      min_items: 10
+      max_items: 15
+      topup_if_24h_lt: 10
+      summary_max_chars: 180
+
+  - id: retry-enhanced
+    enabled: true
+    priority: 84
+    type: retry_policy
+    description: 发信重试增强
+    params:
+      connect_timeout_sec: 12
+      max_time_sec: 90
+      max_retries: 6
+      backoff_initial_sec: 2
+      backoff_max_sec: 60
+
+  - id: chart-toggle
+    enabled: true
+    priority: 75
+    type: charts_toggle
+    description: 打开图表开关（仅声明，不改变现有输出）
+    params:
+      charts_enabled: true
+      chart_types:
+        - region_heatmap
+        - platform_radar
+        - event_mix
+
+output:
+  format: plain_text
+  sections:
+    - A
+    - B
+    - C
+    - D
+    - E
+    - F
+    - G
+  summary_max_chars: 180
+  charts_enabled: true
+  chart_types:
+    - region_heatmap
+    - platform_radar
+    - event_mix

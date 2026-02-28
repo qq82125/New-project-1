@@ -99,12 +99,20 @@ SMTP_MAX_TIME="${SMTP_MAX_TIME:-60}"
 SMTP_RETRIES="${SMTP_RETRIES:-5}"
 SMTP_BACKOFF_INITIAL="${SMTP_BACKOFF_INITIAL:-2}"
 SMTP_BACKOFF_MAX="${SMTP_BACKOFF_MAX:-60}"
+# Optional DNS workaround:
+# If local DNS cannot resolve SMTP_HOST, set SMTP_RESOLVE_IP to force host->IP mapping for curl.
+# Example: SMTP_RESOLVE_IP=17.57.154.37
+SMTP_RESOLVE_IP="${SMTP_RESOLVE_IP:-}"
 
 ts() { date '+%Y-%m-%d %H:%M:%S %z'; }
 
 attempt=1
 backoff="$SMTP_BACKOFF_INITIAL"
 while :; do
+  resolve_args=()
+  if [ -n "$SMTP_RESOLVE_IP" ]; then
+    resolve_args+=(--resolve "${SMTP_HOST}:${SMTP_PORT}:${SMTP_RESOLVE_IP}")
+  fi
   set +e
   out="$(
     curl --silent --show-error --fail \
@@ -115,6 +123,7 @@ while :; do
       --mail-rcpt "$TO_EMAIL" \
       --upload-file "$TMP_EML" \
       --user "${SMTP_USER}:${SMTP_PASS}" \
+      "${resolve_args[@]}" \
       --ssl-reqd 2>&1
   )"
   code=$?

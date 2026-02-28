@@ -16,6 +16,11 @@
         "subject_template": { "type": "string", "minLength": 5 },
         "recipient": { "type": "string", "minLength": 5 },
         "sender_env": { "type": "string", "minLength": 3 },
+        "send_times": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$" }
+        },
+        "window_mode": { "type": "string", "enum": ["rolling", "segmented"] },
         "send_window": {
           "type": "object",
           "required": ["hour", "minute"],

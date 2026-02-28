@@ -180,12 +180,13 @@ def evaluate_health(metrics: dict[str, Any]) -> dict[str, Any]:
     hit = digest.get("analysis_cache_hit")
     miss = digest.get("analysis_cache_miss")
     if isinstance(hit, (int, float)) and isinstance(miss, (int, float)):
-        denom = max(int(hit) + int(miss), 1)
-        ratio = float(hit) / float(denom)
-        if float(hit) == 0:
-            push("analysis_cache_hit_ratio", ratio, 0.0, "red")
-        elif ratio < 0.2:
-            push("analysis_cache_hit_ratio", ratio, 0.2, "yellow")
+        denom = int(hit) + int(miss)
+        if denom > 0:
+            ratio = float(hit) / float(denom)
+            if float(hit) == 0:
+                push("analysis_cache_hit_ratio", ratio, "hit>0", "red")
+            elif ratio < 0.2:
+                push("analysis_cache_hit_ratio", ratio, 0.2, "yellow")
 
     # 4) procurement probe
     totals = probe.get("totals", {}) if isinstance(probe.get("totals"), dict) else {}

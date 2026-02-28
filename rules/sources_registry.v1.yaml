@@ -9,6 +9,7 @@ sources:
   url: https://www.360dx.com/rss-feeds
   name: 360Dx
   id: 360dx-rss
+  source_group: media
   fetcher: html
   enabled: true
   notes: RSS索引页，优先发现子feed；失败时回退HTML列表抓取
@@ -55,6 +56,7 @@ sources:
   url: https://www.biopharmadive.com/feeds/news/
   name: BioPharma Dive
   id: biopharma-dive-rss
+  source_group: media
   fetcher: rss
   enabled: true
   notes: Biopharma and diagnostics adjacent news
@@ -212,6 +214,7 @@ sources:
   url: https://www.fiercebiotech.com/rss/xml
   name: Fierce Biotech
   id: fierce-biotech-rss
+  source_group: media
   fetcher: rss
   enabled: true
   notes: IVD/biotech industry media
@@ -226,6 +229,7 @@ sources:
   url: https://www.genomeweb.com/rss.xml
   name: GenomeWeb
   id: genomeweb-rss
+  source_group: media
   fetcher: rss
   enabled: true
   notes: Genomics and diagnostics media
@@ -240,6 +244,7 @@ sources:
   url: https://www.globenewswire.com/RssFeed/subjectcode/72-Press%20Releases/feedTitle/GlobeNewswire%20-%20Press%20Releases
   name: GlobeNewswire Press Releases
   id: globenewswire-press-rss
+  source_group: media
   fetcher: rss
   enabled: true
   notes: Company press releases
@@ -280,6 +285,7 @@ sources:
   url: https://www.iivd.net/portal.php?mod=list&catid=17
   name: iivd.net 资讯
   id: iivd.rss
+  source_group: media
   fetcher: html
   enabled: true
   notes: User-owned site source
@@ -304,6 +310,7 @@ sources:
   url: https://kaloramainformation.com/blog/
   name: Kalorama Information Blog
   id: kalorama_blog
+  source_group: evidence
   fetcher: rss
   enabled: true
   notes: 优先RSS auto-discovery；无则HTML抓取
@@ -356,6 +363,7 @@ sources:
   url: https://www.medtechdive.com/feeds/news/
   name: MedTech Dive
   id: medtech-dive-rss
+  source_group: media
   fetcher: rss
   enabled: true
   notes: MedTech business news
@@ -369,6 +377,7 @@ sources:
   url: https://www.medtecheurope.org/medtech-views/newsletters/
   name: MedTech Europe Newsletters
   id: medtech_europe_newsletters
+  source_group: regulatory
   fetcher: html
   enabled: true
   notes: html 抓取标题/链接/发布日期
@@ -448,6 +457,7 @@ sources:
   url: https://www.prnewswire.com/rss/news-releases-list.rss
   name: PR Newswire Press Releases
   id: prnewswire-press-rss
+  source_group: media
   fetcher: rss
   enabled: true
   notes: Company press releases
@@ -524,27 +534,33 @@ sources:
   - global
   - en
   - translational
+  source_group: evidence
   region: 全球
   url: https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=stm
   name: Science Translational Medicine (eTOC)
   id: science-stm-etoc-rss
   fetcher: rss
   enabled: true
-  notes: Translational journal feed
+  notes: Translational journal feed（RSS缺摘要时抓正文前段）
   trust_tier: A
   priority: 90
+  fetch:
+    allow_body_fetch_for_rss: true
+    article_min_paragraphs: 1
+    article_min_text_chars: 120
 - tags:
   - company
   - siemens
   - press
   - diagnostics
+  source_group: company
   region: EU
   url: https://www.siemens-healthineers.com/press
   name: Siemens Healthineers Press
   id: siemens_healthineers_press
   fetcher: html
-  enabled: true
-  notes: 抓取press列表
+  enabled: false
+  notes: 暂停（当前仅抓到导航/栏目词，待替换为可稳定提取的新闻源）
   trust_tier: A
   priority: 84
 - tags:
@@ -555,6 +571,7 @@ sources:
   url: https://www.statnews.com/feed/
   name: STAT
   id: statnews-rss
+  source_group: media
   fetcher: rss
   enabled: true
   notes: Healthcare media
@@ -594,6 +611,7 @@ sources:
   url: https://www.clinicallab.com/tag/ivd
   name: Today's Clinical Lab (IVD Tag)
   id: todays_clinical_lab_ivd
+  source_group: media
   fetcher: rss
   enabled: true
   notes: 优先走 RSS auto-discovery；若无 RSS 则 html 抓取列表

@@ -37,53 +37,6 @@
           },
           "additionalProperties": true
         },
-        "source_policy": {
-          "type": "object",
-          "properties": {
-            "enabled": { "type": "boolean", "default": true },
-            "min_trust_tier": {
-              "oneOf": [
-                { "type": "string", "enum": ["A", "B", "C"] },
-                {
-                  "type": "object",
-                  "properties": {
-                    "legacy": { "type": "string", "enum": ["A", "B", "C"], "default": "C" },
-                    "enhanced": { "type": "string", "enum": ["A", "B", "C"], "default": "B" }
-                  },
-                  "additionalProperties": false
-                }
-              ],
-              "default": { "legacy": "C", "enhanced": "B" }
-            },
-            "exclude_domains": {
-              "type": "array",
-              "items": { "type": "string", "minLength": 1 },
-              "default": []
-            },
-            "exclude_source_ids": {
-              "type": "array",
-              "items": { "type": "string", "minLength": 1 },
-              "default": []
-            },
-            "drop_if_url_matches": {
-              "type": "array",
-              "items": { "type": "string", "minLength": 1 },
-              "default": []
-            }
-          },
-          "additionalProperties": true
-        },
-        "source_guard": {
-          "type": "object",
-          "properties": {
-            "enabled": { "type": "boolean", "default": true },
-            "enforce_article_only": { "type": "boolean", "default": true },
-            "article_min_paragraphs": { "type": "integer", "minimum": 1, "maximum": 20, "default": 2 },
-            "article_min_text_chars": { "type": "integer", "minimum": 50, "maximum": 5000, "default": 200 },
-            "allow_body_fetch_for_rss": { "type": "boolean", "default": false }
-          },
-          "additionalProperties": true
-        },
         "time_window": {
           "type": "object",
           "required": ["primary_hours", "fallback_days"],
@@ -204,49 +157,6 @@
         "negatives_pack": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 }
-        },
-        "frontier_policy": {
-          "type": "object",
-          "properties": {
-            "require_diagnostic_anchor": { "type": "boolean", "default": true },
-            "drop_bio_general_without_diagnostic": { "type": "boolean", "default": true }
-          },
-          "additionalProperties": true
-        },
-        "evidence_policy": {
-          "type": "object",
-          "properties": {
-            "require_evidence_for_core": { "type": "boolean", "default": true },
-            "min_snippet_chars": { "type": "integer", "minimum": 1, "maximum": 500, "default": 80 },
-            "degrade_if_missing": { "type": "boolean", "default": true }
-          },
-          "additionalProperties": true
-        },
-        "opportunity_index": {
-          "type": "object",
-          "properties": {
-            "enabled": { "type": "boolean", "default": true },
-            "window_days": { "type": "integer", "minimum": 1, "maximum": 30, "default": 7 },
-            "dedupe": {
-              "type": "object",
-              "properties": {
-                "enabled": { "type": "boolean", "default": true },
-                "tail_lines_scan": { "type": "integer", "minimum": 1, "maximum": 20000, "default": 2000 }
-              },
-              "additionalProperties": true
-            },
-            "display": {
-              "type": "object",
-              "properties": {
-                "top_n": { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 },
-                "suppress_unknown_both": { "type": "boolean", "default": true },
-                "unknown_min_score": { "type": "integer", "minimum": 0, "maximum": 1000, "default": 5 },
-                "mark_low_conf": { "type": "boolean", "default": true }
-              },
-              "additionalProperties": true
-            }
-          },
-          "additionalProperties": true
         },
         "platform_url_hints": {
           "type": "object",
@@ -380,12 +290,7 @@
               "analysis_cache",
               "anchors_pack",
               "negatives_pack",
-              "frontier_policy",
-              "evidence_policy",
-              "opportunity_index",
-              "track_routing",
-              "source_policy",
-              "source_guard"
+              "track_routing"
             ]
           },
           "description": { "type": "string", "minLength": 0 },

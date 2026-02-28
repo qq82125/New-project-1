@@ -6,7 +6,7 @@ import random
 import sys
 import time
 import hashlib
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,11 +14,9 @@ from urllib.parse import urlparse
 
 import yaml
 
-from app.adapters.rule_bridge import load_runtime_rules
 from app.services.run_lock import RunLockError, acquire_run_lock
 from app.services.rules_store import RulesStore
-from app.services.source_policy import exclusion_reason, filter_entries_for_collect, normalize_source_policy, source_passes_min_trust_tier
-from app.services.source_registry import fetch_source_entries, list_sources_for_profile
+from app.services.source_registry import fetch_source_entries
 from app.workers.live_run import run_digest
 from app.services.collect_asset_store import CollectAssetStore
 
@@ -55,20 +53,6 @@ def _load_schema(project_root: Path) -> dict[str, Any]:
     # For now, repo schema is sufficient for sanity checks.
     schema_path = project_root / "rules" / "schemas" / "scheduler_rules.schema.json"
     return json.loads(schema_path.read_text(encoding="utf-8"))
-
-
-def _is_due(*, last_fetched_at: str, interval_min: int, now_ts: float) -> bool:
-    if int(interval_min or 0) <= 0:
-        return True
-    lf = str(last_fetched_at or "").strip()
-    if not lf:
-        return True
-    try:
-        dt_last = datetime.fromisoformat(lf.replace("Z", "+00:00"))
-        age = now_ts - dt_last.timestamp()
-        return age >= int(interval_min) * 60
-    except Exception:
-        return True
 
 
 def _extract_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -129,7 +113,8 @@ class SchedulerWorker:
         self.refresh_seconds = int(os.environ.get("SCHEDULER_REFRESH_SECONDS", "60") or "60")
         # Poll cadence to support "immediate" admin actions without running APScheduler in FastAPI.
         self.tick_seconds = int(os.environ.get("SCHEDULER_TICK_SECONDS", "5") or "5")
-        self.lock_path = self.project_root / "data" / "ivd_digest.lock"
+        # Use purpose-scoped locks so a stuck collect run cannot block digest delivery.
+        self.lock_path = self.project_root / "data" / "ivd_scheduler.lock"
         self.heartbeat_path = self.project_root / "logs" / "scheduler_worker_heartbeat.json"
         self.status_path = self.project_root / "logs" / "scheduler_worker_status.json"
         self.reload_signal_path = self.project_root / "data" / "scheduler_reload.signal"
@@ -147,7 +132,7 @@ class SchedulerWorker:
             from apscheduler.triggers.interval import IntervalTrigger  # type: ignore
         except Exception as e:
             raise SystemExit(
-                "APScheduler is required but not installed. Install with: pip install -r requirements.txt\n"
+                "APScheduler is required but not installed. Install with: pip install apscheduler\n"
                 f"import_error={e}"
             )
 
@@ -217,7 +202,7 @@ class SchedulerWorker:
         Commands are small JSON files written by admin-api under data/scheduler_commands/.
 
         Supported:
-        - {"cmd":"trigger","purpose":"collect"|"digest","profile":"enhanced"}
+        - {"cmd":"trigger","purpose":"collect"|"digest","profile":"enhanced","force":false}
         """
         self.commands_dir.mkdir(parents=True, exist_ok=True)
         files = sorted([p for p in self.commands_dir.glob("*.json") if p.is_file()], key=lambda p: p.name)
@@ -233,8 +218,18 @@ class SchedulerWorker:
                     purpose = str(raw.get("purpose", "collect")).strip() or "collect"
                     prof = str(raw.get("profile", self.profile)).strip() or self.profile
                     schedule_id = str(raw.get("schedule_id", "manual")).strip() or "manual"
-                    _log(f"manual_trigger cmd_file={p.name} purpose={purpose} profile={prof}")
-                    self._run_job(schedule_id=schedule_id, purpose=purpose, profile=prof, jitter=0, misfire_grace=600, trigger="manual")
+                    force_raw = raw.get("force", False)
+                    force = bool(force_raw) if isinstance(force_raw, bool) else str(force_raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+                    _log(f"manual_trigger cmd_file={p.name} purpose={purpose} profile={prof} force={int(force)}")
+                    self._run_job(
+                        schedule_id=schedule_id,
+                        purpose=purpose,
+                        profile=prof,
+                        jitter=0,
+                        misfire_grace=600,
+                        trigger="manual",
+                        force=force,
+                    )
             except Exception as e:
                 _log(f"command_failed file={p.name} error={e}")
             finally:
@@ -255,6 +250,7 @@ class SchedulerWorker:
         jitter: int,
         misfire_grace: int,
         trigger: str = "schedule",
+        force: bool = False,
     ) -> None:
         if self._paused:
             _log(f"job_skipped_paused schedule_id={schedule_id} purpose={purpose} profile={profile}")
@@ -264,10 +260,12 @@ class SchedulerWorker:
 
         # Secondary guard: prevent duplicate digest runs across triggers/processes.
         run_id = f"{purpose}-{int(time.time())}"
+        lock_path = self.lock_path.with_name(f"ivd_{purpose}.lock")
+        _log(f"job_start schedule_id={schedule_id} purpose={purpose} trigger={trigger} run_id={run_id}")
         try:
-            with acquire_run_lock(self.lock_path, run_id=run_id, purpose=purpose):
+            with acquire_run_lock(lock_path, run_id=run_id, purpose=purpose):
                 if purpose == "collect":
-                    out = self._run_collect(schedule_id=schedule_id, profile=profile, trigger=trigger)
+                    out = self._run_collect(schedule_id=schedule_id, profile=profile, trigger=trigger, force=force)
                 else:
                     out = run_digest(
                         profile=profile,
@@ -331,90 +329,39 @@ class SchedulerWorker:
         sources_fetched_count = 0
         sources_failed_count = 0
         collector = CollectAssetStore(self.project_root, asset_dir=self._collect_asset_dir)
-        env_for_rules = os.environ.copy()
-        if str(profile).strip().lower() == "enhanced":
-            env_for_rules["ENHANCED_RULES_PROFILE"] = "enhanced"
-        else:
-            env_for_rules.pop("ENHANCED_RULES_PROFILE", None)
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        rt = load_runtime_rules(date_str=date_str, env=env_for_rules, run_id=run_id)
-        content_cfg = rt.get("content", {}) if isinstance(rt.get("content"), dict) else {}
-        source_policy = normalize_source_policy(
-            content_cfg.get("source_policy", {}) if isinstance(content_cfg.get("source_policy"), dict) else {},
-            profile=str(rt.get("active_profile", profile)),
-        )
-        source_guard_cfg_raw = content_cfg.get("source_guard", {}) if isinstance(content_cfg.get("source_guard"), dict) else {}
-        source_guard = {
-            "enabled": bool(source_guard_cfg_raw.get("enabled", str(rt.get("active_profile", profile)).strip().lower() == "enhanced")),
-            "enforce_article_only": bool(source_guard_cfg_raw.get("enforce_article_only", True)),
-            "article_min_paragraphs": int(source_guard_cfg_raw.get("article_min_paragraphs", 2) or 2),
-            "article_min_text_chars": int(source_guard_cfg_raw.get("article_min_text_chars", 200) or 200),
-            "allow_body_fetch_for_rss": bool(source_guard_cfg_raw.get("allow_body_fetch_for_rss", False)),
-        }
-        dropped_by_source_policy_count = 0
-        dropped_by_source_policy_reasons: dict[str, int] = {}
-        dropped_static_or_listing_count = 0
-        dropped_too_short_count = 0
-        dropped_static_or_listing_domains: dict[str, int] = {}
-        interval_defaulted_count = 0
-        sources_attempted: list[str] = []
-        sources_written_counts: dict[str, int] = {}
-        sources_dropped_counts: dict[str, dict[str, int]] = {}
-        sources_fetch_errors: dict[str, str] = {}
 
-        rows = list_sources_for_profile(self.project_root, profile)
-        rows = [r for r in rows if bool(r.get("enabled", True))]
+        rows = self.store.list_sources(enabled_only=True)
         if isinstance(max_sources, int) and max_sources > 0:
             rows = rows[: int(max_sources)]
         for s in rows:
             sid = str(s.get("id", "")).strip()
             if not sid:
                 continue
-            sources_attempted.append(sid)
-            source_url = str(s.get("url", "")).strip()
-            source_tt = str(s.get("trust_tier", "C")).strip().upper() or "C"
-            if not source_passes_min_trust_tier(source_tt, source_policy):
-                skipped += 1
-                dropped_by_source_policy_count += 1
-                dropped_by_source_policy_reasons["below_min_trust_tier"] = (
-                    dropped_by_source_policy_reasons.get("below_min_trust_tier", 0) + 1
-                )
-                dropped = sources_dropped_counts.setdefault(sid, {})
-                dropped["below_min_trust_tier"] = dropped.get("below_min_trust_tier", 0) + 1
-                continue
-            rs = exclusion_reason(sid, source_url, source_policy)
-            if rs:
-                skipped += 1
-                dropped_by_source_policy_count += 1
-                dropped_by_source_policy_reasons[rs] = dropped_by_source_policy_reasons.get(rs, 0) + 1
-                dropped = sources_dropped_counts.setdefault(sid, {})
-                dropped[rs] = dropped.get(rs, 0) + 1
-                continue
             t0 = time.time()
             fetch_cfg = s.get("fetch", {}) if isinstance(s.get("fetch"), dict) else {}
-            interval_m = s.get("effective_interval_minutes", fetch_cfg.get("interval_minutes"))
+            interval_m = fetch_cfg.get("interval_minutes")
             try:
                 interval_min = int(interval_m) if interval_m is not None and str(interval_m).strip() != "" else 0
             except Exception:
                 interval_min = 0
-            if interval_min <= 0:
-                interval_min = 60
-                interval_defaulted_count += 1
-                errors.append(f"{sid}:interval_defaulted_to_60")
-                dropped = sources_dropped_counts.setdefault(sid, {})
-                dropped["interval_defaulted_to_60"] = dropped.get("interval_defaulted_to_60", 0) + 1
 
             last_fetched_at = str(s.get("last_fetched_at") or "").strip()
-            due = _is_due(last_fetched_at=last_fetched_at, interval_min=interval_min, now_ts=now)
+            due = True
+            if interval_min > 0 and last_fetched_at:
+                try:
+                    # stored as isoformat from _utc_now (timezone aware)
+                    dt_last = datetime.fromisoformat(last_fetched_at.replace("Z", "+00:00"))
+                    age = now - dt_last.timestamp()
+                    due = age >= interval_min * 60
+                except Exception:
+                    due = True
 
             if not force and not due:
                 skipped += 1
-                dropped = sources_dropped_counts.setdefault(sid, {})
-                dropped["not_due"] = dropped.get("not_due", 0) + 1
-                # not_due should not overwrite the last effective fetch status.
-                # We only record an event for auditing so UI can continue to show
-                # the most recent real fetch result (ok/fail) instead of "skipped".
+                # record as skipped (keep last_fetched_at unchanged)
+                # Keep last_fetched_at unchanged; only update status field.
                 try:
+                    self.store.record_source_fetch(sid, status="skipped", http_status=None, error=None)
                     self.store.record_source_fetch_event(
                         run_id=run_id,
                         source_id=sid,
@@ -477,25 +424,7 @@ class SchedulerWorker:
                 limit=max(5, int(fetch_limit or 50)),
                 timeout_seconds=max(3, timeout_s),
                 retries=max(0, retries),
-                source_guard=source_guard,
             )
-            dropped_static_or_listing_count += int(result.get("dropped_static_or_listing_count", 0) or 0)
-            dropped_too_short_count += int(result.get("dropped_too_short_count", 0) or 0)
-            result_drop_reasons = result.get("drop_reasons", {})
-            if isinstance(result_drop_reasons, dict):
-                dropped = sources_dropped_counts.setdefault(sid, {})
-                for rk, rv in result_drop_reasons.items():
-                    kk = str(rk).strip() or "dropped"
-                    dropped[kk] = dropped.get(kk, 0) + int(rv or 0)
-            dtop = result.get("dropped_by_domain_topN", [])
-            if isinstance(dtop, list):
-                for row in dtop:
-                    if not isinstance(row, dict):
-                        continue
-                    dm = str(row.get("domain", "")).strip()
-                    if not dm:
-                        continue
-                    dropped_static_or_listing_domains[dm] = dropped_static_or_listing_domains.get(dm, 0) + int(row.get("count", 0) or 0)
             ok = bool(result.get("ok"))
             status = "ok" if ok else "fail"
             if ok and fallback_used:
@@ -504,8 +433,6 @@ class SchedulerWorker:
             err = result.get("error")
             if fallback_used and not ok:
                 err = f"[fallback] {err}" if err else "[fallback] fetch_failed"
-            if not ok and str(err or "").strip():
-                sources_fetch_errors[sid] = str(err).strip()
             items_count = len(result.get("samples", []) if isinstance(result.get("samples"), list) else [])
             try:
                 self.store.record_source_fetch(
@@ -530,44 +457,19 @@ class SchedulerWorker:
                 fetched += 1
                 sources_fetched_count += 1
                 try:
-                    entries_raw = list(result.get("entries", [])) if isinstance(result.get("entries", []), list) else []
-                    entries_kept, pre_dropped, pre_reasons = filter_entries_for_collect(
-                        entries_raw,
-                        source_id=sid,
-                        policy=source_policy,
-                    )
-                    if pre_dropped > 0:
-                        dropped_by_source_policy_count += int(pre_dropped)
-                        for rk, rv in pre_reasons.items():
-                            dropped_by_source_policy_reasons[str(rk)] = dropped_by_source_policy_reasons.get(str(rk), 0) + int(rv or 0)
+                    source_group = str(s.get("source_group", "")).strip() or "media"
+                    source_trust_tier = str(s.get("trust_tier", "C")).strip().upper() or "C"
                     wr = collector.append_items(
                         run_id=run_id,
                         source_id=sid,
                         source_name=str(s.get("name", sid)),
-                        source_group=str(s.get("source_group", "")).strip()
-                        or ("regulatory" if "regulatory" in str(s.get("tags", "")) else "media"),
-                        items=entries_kept,
-                        rules_runtime={
-                            "source_policy": source_policy,
-                            "source_guard": source_guard,
-                            "profile": str(rt.get("active_profile", profile)),
-                            "anchors_pack": content_cfg.get("anchors_pack", {}) if isinstance(content_cfg.get("anchors_pack"), dict) else {},
-                            "negatives_pack": content_cfg.get("negatives_pack", []) if isinstance(content_cfg.get("negatives_pack"), list) else [],
-                            "frontier_policy": content_cfg.get("frontier_policy", {}) if isinstance(content_cfg.get("frontier_policy"), dict) else {},
-                        },
-                        source_trust_tier=source_tt,
+                        source_group=source_group,
+                        items=list(result.get("entries", [])) if isinstance(result.get("entries", []), list) else [],
+                        rules_runtime={},
+                        source_trust_tier=source_trust_tier,
                     )
                     assets_written += int(wr.get("written", 0))
                     deduped_count += int(wr.get("skipped", 0))
-                    sources_written_counts[sid] = sources_written_counts.get(sid, 0) + int(wr.get("written", 0) or 0)
-                    dropped_by_source_policy_count += int(wr.get("dropped_by_source_policy", 0) or 0)
-                    wr_reasons = wr.get("dropped_by_source_policy_reasons", {})
-                    if isinstance(wr_reasons, dict):
-                        dropped = sources_dropped_counts.setdefault(sid, {})
-                        for rk, rv in wr_reasons.items():
-                            dropped_by_source_policy_reasons[str(rk)] = dropped_by_source_policy_reasons.get(str(rk), 0) + int(rv or 0)
-                            kk = str(rk).strip() or "dropped"
-                            dropped[kk] = dropped.get(kk, 0) + int(rv or 0)
 
                     # For non-RSS sources, keep at least one observable stub if parser produced no rows.
                     connector = str(source_for_fetch.get("connector") or source_for_fetch.get("fetcher") or "").lower()
@@ -577,17 +479,15 @@ class SchedulerWorker:
                             run_id=run_id,
                             source_id=sid,
                             source_name=str(s.get("name", sid)),
-                            source_group="media",
+                            source_group=source_group,
                             url=str(source_for_fetch.get("url", "")),
                             error=str(result.get("error_message") or ""),
                         )
                         assets_written += int(sw.get("written", 0))
                         deduped_count += int(sw.get("skipped", 0))
-                        sources_written_counts[sid] = sources_written_counts.get(sid, 0) + int(sw.get("written", 0) or 0)
                 except Exception as e:
                     msg = f"{sid}:append_failed:{e}"
                     errors.append(msg)
-                    sources_fetch_errors[sid] = str(e)
             else:
                 failed += 1
                 sources_failed_count += 1
@@ -595,20 +495,19 @@ class SchedulerWorker:
                 connector = str(source_for_fetch.get("connector") or source_for_fetch.get("fetcher") or "").lower()
                 if connector in {"html", "web", "api"}:
                     try:
+                        source_group = str(s.get("source_group", "")).strip() or "media"
                         sw = collector.append_stub_item(
                             run_id=run_id,
                             source_id=sid,
                             source_name=str(s.get("name", sid)),
-                            source_group="media",
+                            source_group=source_group,
                             url=str(source_for_fetch.get("url", "")),
                             error=str(err or ""),
                         )
                         assets_written += int(sw.get("written", 0))
                         deduped_count += int(sw.get("skipped", 0))
-                        sources_written_counts[sid] = sources_written_counts.get(sid, 0) + int(sw.get("written", 0) or 0)
                     except Exception as e:
                         errors.append(f"{sid}:stub_failed:{e}")
-                        sources_fetch_errors[sid] = str(e)
 
         meta = {
             "run_id": run_id,
@@ -624,10 +523,6 @@ class SchedulerWorker:
                 "failed": failed,
                 "assets_written": assets_written,
                 "assets_skipped": deduped_count,
-                "dropped_by_source_policy": dropped_by_source_policy_count,
-                "dropped_static_or_listing": dropped_static_or_listing_count,
-                "dropped_too_short": dropped_too_short_count,
-                "interval_defaulted": interval_defaulted_count,
             },
             "collect_asset_dir": self._collect_asset_dir,
             "assets_path": str(collector.base_dir),
@@ -635,19 +530,6 @@ class SchedulerWorker:
             "deduped_count": deduped_count,
             "sources_fetched_count": sources_fetched_count,
             "sources_failed_count": sources_failed_count,
-            "dropped_by_source_policy_count": dropped_by_source_policy_count,
-            "dropped_by_source_policy_reasons": dropped_by_source_policy_reasons,
-            "dropped_static_or_listing_count": dropped_static_or_listing_count,
-            "dropped_too_short_count": dropped_too_short_count,
-            "dropped_static_or_listing_top_domains": [
-                {"domain": k, "count": v}
-                for k, v in sorted(dropped_static_or_listing_domains.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
-            ],
-            "interval_defaulted_count": interval_defaulted_count,
-            "sources_attempted": sources_attempted,
-            "sources_written_counts": sources_written_counts,
-            "sources_dropped_counts": sources_dropped_counts,
-            "sources_fetch_errors": sources_fetch_errors,
             "errors": errors,
         }
         meta_path = artifacts_dir / "run_meta.json"
@@ -677,10 +559,6 @@ class SchedulerWorker:
             "deduped_count": meta["deduped_count"],
             "sources_fetched_count": meta["sources_fetched_count"],
             "sources_failed_count": meta["sources_failed_count"],
-            "sources_attempted": meta.get("sources_attempted", []),
-            "sources_written_counts": meta.get("sources_written_counts", {}),
-            "sources_dropped_counts": meta.get("sources_dropped_counts", {}),
-            "sources_fetch_errors": meta.get("sources_fetch_errors", {}),
             "errors": meta["errors"],
             "artifacts_dir": str(artifacts_dir),
         }
@@ -712,16 +590,10 @@ class SchedulerWorker:
             return
 
         for s in specs:
-            next_run_time = None
             if s.type == "cron":
                 trig = self.CronTrigger.from_crontab(str(s.cron), timezone=tz)
             else:
                 trig = self.IntervalTrigger(minutes=int(s.interval_minutes or 60), timezone=tz)
-                # Run interval jobs once shortly after (re)start, then continue by interval.
-                try:
-                    next_run_time = datetime.now(ZoneInfo(tz)) + timedelta(seconds=5)
-                except Exception:
-                    next_run_time = datetime.now(timezone.utc) + timedelta(seconds=5)
 
             self.scheduler.add_job(
                 self._run_job,
@@ -738,7 +610,6 @@ class SchedulerWorker:
                 max_instances=max_instances,
                 coalesce=coalesce,
                 misfire_grace_time=misfire,
-                next_run_time=next_run_time,
                 replace_existing=True,
             )
         _log(f"scheduled_jobs={len(specs)} tz={tz} misfire_grace={misfire}s")

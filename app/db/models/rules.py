@@ -85,15 +85,12 @@ class Source(Base):
     enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     trust_tier: Mapped[str] = mapped_column(String, nullable=False)
-    source_group: Mapped[str] = mapped_column(String, nullable=False, default="media")
-    fetch_interval_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     tags_json: Mapped[list[Any]] = mapped_column(JSONText(), nullable=False, default=list)
     rate_limit_json: Mapped[dict[str, Any]] = mapped_column(JSONText(), nullable=False, default=dict)
     fetch_json: Mapped[dict[str, Any]] = mapped_column(JSONText(), nullable=False, default=dict)
     parsing_json: Mapped[dict[str, Any]] = mapped_column(JSONText(), nullable=False, default=dict)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
-    deleted_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     last_fetched_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     last_fetch_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -106,21 +103,6 @@ class Source(Base):
 
     __table_args__ = (
         Index("idx_sources_enabled_priority", "enabled", "priority"),
-        Index("idx_sources_deleted_enabled", "deleted_at", "enabled"),
-    )
-
-
-class SourceGroup(Base):
-    __tablename__ = "source_groups"
-
-    group_key: Mapped[str] = mapped_column(String, primary_key=True)
-    display_name: Mapped[str] = mapped_column(String, nullable=False)
-    default_interval_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    updated_at: Mapped[str] = mapped_column(String, nullable=False)
-
-    __table_args__ = (
-        Index("idx_source_groups_enabled", "enabled", "group_key"),
     )
 
 
@@ -235,4 +217,67 @@ class SendAttempt(Base):
         UniqueConstraint("send_key", name="uq_send_attempts_send_key"),
         Index("idx_send_attempts_lookup", "date", "subject", "to_email", "created_at"),
         Index("idx_send_attempts_created_at", "created_at"),
+    )
+
+
+class RawItem(Base):
+    __tablename__ = "raw_items"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_id: Mapped[str] = mapped_column(String, nullable=False)
+    fetched_at: Mapped[str] = mapped_column(String, nullable=False)
+    published_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    title_raw: Mapped[str] = mapped_column(Text, nullable=False)
+    title_norm: Mapped[str] = mapped_column(Text, nullable=False)
+    url_raw: Mapped[str] = mapped_column(Text, nullable=False)
+    canonical_url: Mapped[str] = mapped_column(Text, nullable=False)
+    content_snippet: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    raw_payload: Mapped[dict[str, Any]] = mapped_column(JSONText(), nullable=False, default=dict)
+    source_group: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    region: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    trust_tier: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    event_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        Index("idx_raw_items_published_id", "published_at", "id"),
+        Index("idx_raw_items_canonical_url", "canonical_url"),
+        Index("idx_raw_items_source_id", "source_id"),
+    )
+
+
+class Story(Base):
+    __tablename__ = "stories"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    story_key: Mapped[str] = mapped_column(Text, nullable=False)
+    title_best: Mapped[str] = mapped_column(Text, nullable=False)
+    published_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    source_group: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    region: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    trust_tier: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    event_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    primary_raw_item_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    sources_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    __table_args__ = (
+        UniqueConstraint("story_key", name="uq_stories_story_key"),
+        Index("idx_stories_published_id", "published_at", "id"),
+        Index("idx_stories_story_key", "story_key"),
+    )
+
+
+class StoryItem(Base):
+    __tablename__ = "story_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    story_id: Mapped[str] = mapped_column(String, nullable=False)
+    raw_item_id: Mapped[str] = mapped_column(String, nullable=False)
+    is_primary: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("story_id", "raw_item_id", name="uq_story_items_story_raw"),
+        Index("idx_story_items_story", "story_id", "rank"),
+        Index("idx_story_items_raw", "raw_item_id"),
     )

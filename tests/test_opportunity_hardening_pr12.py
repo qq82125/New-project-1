@@ -163,6 +163,5 @@ class OpportunityHardeningPR12Tests(unittest.TestCase):
         self.assertFalse(bool(l_opp.get("enabled", True)))
         self.assertEqual(int(((e_opp.get("dedupe", {}) or {}).get("tail_lines_scan", 0) or 0)), 2000)
 
-
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,7 @@ profile: enhanced
 defaults:
   format: plain_text
 
-  # Sections configuration: enabled + order. G must be last.
+  # Sections configuration: enabled + order. H must be last.
   sections:
     - id: A
       enabled: true
@@ -20,6 +20,8 @@ defaults:
     - id: F
       enabled: true
     - id: G
+      enabled: true
+    - id: H
       enabled: true
 
   # A section settings
@@ -62,6 +64,7 @@ defaults:
   # Hard constraints for compliance.
   constraints:
     g_must_be_last: true
+    h_must_be_last: true
     a_to_f_must_not_include_quality_metrics: true
 
 overrides:
@@ -72,9 +75,9 @@ rules:
     enabled: true
     priority: 90
     type: sections
-    description: A-G 开关与顺序（G 置尾）
+    description: A-H 开关与顺序（H 置尾）
     params:
-      order: [A, B, C, D, E, F, G]
+      order: [A, B, C, D, E, F, G, H]
       enabled:
         A: true
         B: true
@@ -83,6 +86,7 @@ rules:
         E: true
         F: true
         G: true
+        H: true
 
   - id: render-a-config
     enabled: true
@@ -122,11 +126,12 @@ rules:
     enabled: true
     priority: 50
     type: constraints
-    description: 强约束：G 置尾 + A-F 禁止质量指标字段
+    description: 强约束：H 置尾 + A-F 禁止质量指标字段（质量审计仅在 G）
     params:
       g_must_be_last: true
+      h_must_be_last: true
       a_to_f_must_not_include_quality_metrics: true
 
 output:
-  # Renderer should enforce this order and place QC panel only in G.
-  sections_order: [A, B, C, D, E, F, G]
+  # Renderer should enforce this order; QC panel in G and opportunity index in H.
+  sections_order: [A, B, C, D, E, F, G, H]

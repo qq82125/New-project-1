@@ -1,0 +1,1990 @@
+version: 1
+sources:
+- tags:
+  - media
+  - diagnostics
+  - global
+  - en
+  region: 北美
+  url: https://www.360dx.com/rss-feeds
+  name: 360Dx
+  id: 360dx-rss
+  fetcher: html
+  enabled: true
+  notes: RSS索引页，优先发现子feed；失败时回退HTML列表抓取
+  trust_tier: A
+  priority: 80
+  discovery_policy:
+    mode: pick_by_keywords
+    keywords:
+    - diagnostics
+    - dx
+    - molecular
+    - sequencing
+  fetch:
+    fallback_after_failures: 2
+    fallback_url: https://www.360dx.com
+    fallback_fetcher: html
+- tags:
+  - company
+  - abbott
+  - press
+  - diagnostics
+  region: US
+  url: https://www.abbott.com/corpnewsroom.html
+  name: Abbott Newsroom
+  id: abbott_newsroom
+  fetcher: html
+  enabled: false
+  notes: html抓取，配置regex选择器避免parse_empty
+  trust_tier: A
+  priority: 84
+  selectors:
+    item_regex: (?is)<a[^>]+href=['\"][^'\"]*(?:corpnewsroom|newsroom|press-release|news)[^'\"]*['\"][^>]*>.*?</a>
+    title_regex: (?is)>(.*?)</a>
+    link_regex: (?is)href=['\"]([^'\"]+)['\"]
+  fetch:
+    fallback_after_failures: 2
+    fallback_url: https://www.abbott.com/media-center/press-releases.html
+    fallback_fetcher: html
+  connector: web
+  source_file: /app/rules/console/versions/v0003/rules/sources_registry.v1.yaml
+  source_group: company
+  registry_groups:
+  - company_major
+  enabled_overridden: true
+  last_fetched_at: ''
+  last_fetch_status: ''
+  last_fetch_http_status: null
+  last_fetch_error: ''
+  last_success_at: ''
+  last_http_status: null
+  last_error: ''
+  updated_at: '2026-02-26T13:28:31.541318+00:00'
+  deleted_at: '2026-02-26T13:32:31.708676+00:00'
+- tags:
+  - media
+  - global
+  - en
+  region: 北美
+  url: https://www.biopharmadive.com/feeds/news/
+  name: BioPharma Dive
+  id: biopharma-dive-rss
+  fetcher: rss
+  enabled: true
+  notes: Biopharma and diagnostics adjacent news
+  trust_tier: B
+  priority: 68
+- tags:
+  - preprint
+  - global
+  - en
+  region: 全球
+  url: https://connect.biorxiv.org/biorxiv_xml.php?subject=all
+  name: bioRxiv (All)
+  id: biorxiv-all-rss
+  fetcher: rss
+  enabled: true
+  notes: Preprint all-subject feed, filtered by include keywords
+  trust_tier: B
+  priority: 73
+- tags:
+  - preprint
+  - global
+  - en
+  region: 全球
+  url: https://connect.biorxiv.org/biorxiv_xml.php?subject=genomics+bioinformatics
+  name: bioRxiv (Genomics/Bioinformatics)
+  id: biorxiv-genomics-atom
+  fetcher: rss
+  enabled: true
+  notes: Domain-focused preprint feed
+  trust_tier: B
+  priority: 72
+- tags:
+  - registry
+  - cn
+  - zh
+  region: 中国
+  url: https://www.chictr.org.cn/
+  name: ChiCTR (中国临床试验注册中心)
+  id: chict-home-web
+  fetcher: html
+  enabled: false
+  notes: Placeholder web source
+  trust_tier: A
+  priority: 70
+- tags:
+  - pressrelease
+  - global
+  - en
+  region: 全球
+  url: https://ir.clarivate.com/press-releases
+  name: Clarivate Press Releases
+  id: clarivate-press-web
+  fetcher: html
+  enabled: false
+  notes: Placeholder web source
+  trust_tier: B
+  priority: 60
+- tags:
+  - regulatory
+  - ema
+  - eu
+  region: EU
+  url: https://www.ema.europa.eu/en/news-events/rss-feeds
+  name: EMA RSS Feeds (Index)
+  id: ema_rss_index
+  fetcher: html
+  enabled: true
+  notes: RSS索引页，发现可用feed并用关键词过滤
+  trust_tier: A
+  priority: 92
+- tags:
+  - literature
+  - eu
+  - en
+  region: 欧洲
+  url: https://europepmc.org/
+  name: Europe PMC
+  id: europepmc-home-web
+  fetcher: html
+  enabled: false
+  notes: Placeholder web source
+  trust_tier: A
+  priority: 73
+  connector: web
+  source_file: /app/rules/console/versions/v0003/rules/sources_registry.v1.yaml
+  source_group: media
+  registry_groups: []
+  enabled_overridden: false
+  last_fetched_at: ''
+  last_fetch_status: ''
+  last_fetch_http_status: null
+  last_fetch_error: ''
+  last_success_at: ''
+  last_http_status: null
+  last_error: ''
+  updated_at: '2026-02-26T13:28:31.541318+00:00'
+  deleted_at: '2026-02-26T13:34:11.793966+00:00'
+- tags:
+  - regulatory
+  - us
+  - en
+  region: 北美
+  url: https://www.fda.gov/about-fda/contact-fda/get-email-updates
+  name: FDA Medical Device Recalls
+  id: fda-device-recalls-rss
+  fetcher: html
+  enabled: true
+  notes: RSS索引页，按关键词发现 Medical Devices/Recall 子feed
+  trust_tier: A
+  priority: 89
+  discovery_policy:
+    mode: pick_by_keywords
+    keywords:
+    - recall
+    - medical devices
+    - devices
+    - cdrh
+  fetch:
+    fallback_after_failures: 2
+    fallback_url: https://www.fda.gov/medical-devices/medical-device-recalls-and-safety-alerts
+    fallback_fetcher: html
+- tags:
+  - regulatory
+  - us
+  - en
+  region: 北美
+  url: https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/medwatch/rss.xml
+  name: FDA MedWatch
+  id: fda-medwatch-rss
+  fetcher: rss
+  enabled: true
+  notes: US regulatory alerts
+  trust_tier: A
+  priority: 88
+- tags:
+  - regulatory
+  - fda
+  - devices
+  - ivd
+  region: US
+  url: https://www.fda.gov/medical-devices/medical-devices-news-and-events/cdrh-new-news-and-updates
+  name: FDA CDRH News and Updates
+  id: fda_cdrh_news_updates
+  fetcher: html
+  enabled: true
+  notes: 官方页面，优先发现RSS，无则HTML抓取
+  trust_tier: A
+  priority: 94
+- tags:
+  - regulatory
+  - fda
+  - devices
+  - ivd
+  region: US
+  url: https://www.fda.gov/about-fda/contact-fda/get-email-updates
+  name: FDA RSS - Medical Devices
+  id: fda_rss_medical_devices
+  fetcher: rss
+  enabled: true
+  notes: 索引页，支持RSS auto-discovery
+  trust_tier: A
+  priority: 93
+- tags:
+  - media
+  - global
+  - en
+  - ivd
+  region: 北美
+  url: https://www.fiercebiotech.com/rss/xml
+  name: Fierce Biotech
+  id: fierce-biotech-rss
+  fetcher: rss
+  enabled: true
+  notes: IVD/biotech industry media
+  trust_tier: B
+  priority: 75
+- tags:
+  - media
+  - global
+  - en
+  - ivd
+  region: 北美
+  url: https://www.genomeweb.com/rss.xml
+  name: GenomeWeb
+  id: genomeweb-rss
+  fetcher: rss
+  enabled: true
+  notes: Genomics and diagnostics media
+  trust_tier: A
+  priority: 82
+- tags:
+  - media
+  - pressrelease
+  - global
+  - en
+  region: 全球
+  url: https://www.globenewswire.com/RssFeed/subjectcode/72-Press%20Releases/feedTitle/GlobeNewswire%20-%20Press%20Releases
+  name: GlobeNewswire Press Releases
+  id: globenewswire-press-rss
+  fetcher: rss
+  enabled: true
+  notes: Company press releases
+  trust_tier: B
+  priority: 77
+- tags:
+  - literature
+  - global
+  - en
+  region: 全球
+  url: https://scholar.google.com/
+  name: Google Scholar
+  id: google-scholar-home-web
+  fetcher: html
+  enabled: false
+  notes: Placeholder web source
+  trust_tier: B
+  priority: 50
+  connector: web
+  source_file: /app/rules/console/versions/v0003/rules/sources_registry.v1.yaml
+  source_group: media
+  registry_groups: []
+  enabled_overridden: false
+  last_fetched_at: ''
+  last_fetch_status: ''
+  last_fetch_http_status: null
+  last_fetch_error: ''
+  last_success_at: ''
+  last_http_status: null
+  last_error: ''
+  updated_at: '2026-02-26T13:28:31.541318+00:00'
+  deleted_at: '2026-02-26T13:34:25.010597+00:00'
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?q=IVD+molecular+diagnostics+when:24h
+  name: Google News RSS - IVD + molecular diagnostics (24h)
+  id: google_news_ivd_24h
+  fetcher: google_news
+  enabled: false
+  notes: 噪音高，默认关闭，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - media
+  - cn
+  - zh
+  - ivd
+  region: 中国
+  url: https://www.iivd.net/portal.php?mod=list&catid=17
+  name: iivd.net 资讯
+  id: iivd.rss
+  fetcher: html
+  enabled: true
+  notes: User-owned site source
+  trust_tier: B
+  priority: 74
+- tags:
+  - regulatory
+  - imdrf
+  region: Global
+  url: https://www.imdrf.org/news-events/news.xml
+  name: IMDRF News & Events
+  id: imdrf_news
+  fetcher: rss
+  enabled: true
+  notes: ''
+  trust_tier: A
+  priority: 95
+- tags:
+  - market_research
+  - ivd
+  region: US
+  url: https://kaloramainformation.com/blog/
+  name: Kalorama Information Blog
+  id: kalorama_blog
+  fetcher: rss
+  enabled: true
+  notes: 优先RSS auto-discovery；无则HTML抓取
+  trust_tier: B
+  priority: 70
+- tags:
+  - journal
+  - global
+  - en
+  region: 全球
+  url: https://www.thelancet.com/rssfeed/lancet_current.xml
+  name: The Lancet (Current Issue)
+  id: lancet-current-rss
+  fetcher: rss
+  enabled: true
+  notes: Clinical journal feed
+  trust_tier: A
+  priority: 91
+- tags:
+  - preprint
+  - global
+  - en
+  region: 全球
+  url: https://connect.medrxiv.org/medrxiv_xml.php?subject=all
+  name: medRxiv (All)
+  id: medrxiv-all-rss
+  fetcher: rss
+  enabled: true
+  notes: Preprint all-subject feed, filtered by include keywords
+  trust_tier: B
+  priority: 73
+- tags:
+  - preprint
+  - global
+  - en
+  region: 全球
+  url: https://connect.medrxiv.org/medrxiv_xml.php?subject=infectious+diseases
+  name: medRxiv (Infectious Diseases)
+  id: medrxiv-infectious-atom
+  fetcher: rss
+  enabled: true
+  notes: Domain-focused preprint feed
+  trust_tier: B
+  priority: 72
+- tags:
+  - media
+  - global
+  - en
+  region: 北美
+  url: https://www.medtechdive.com/feeds/news/
+  name: MedTech Dive
+  id: medtech-dive-rss
+  fetcher: rss
+  enabled: true
+  notes: MedTech business news
+  trust_tier: B
+  priority: 70
+- tags:
+  - thinktank
+  - europe
+  - industry
+  region: EU
+  url: https://www.medtecheurope.org/medtech-views/newsletters/
+  name: MedTech Europe Newsletters
+  id: medtech_europe_newsletters
+  fetcher: html
+  enabled: true
+  notes: html 抓取标题/链接/发布日期
+  trust_tier: B
+  priority: 72
+- tags:
+  - regulatory
+  - eu
+  - en
+  region: 欧洲
+  url: https://www.gov.uk/drug-device-alerts.atom
+  name: MHRA Alerts
+  id: mhra-alerts-atom
+  fetcher: rss
+  enabled: true
+  notes: UK safety alerts
+  trust_tier: A
+  priority: 88
+- tags:
+  - journal
+  - global
+  - en
+  region: 全球
+  url: https://www.nature.com/nature.rss
+  name: Nature
+  id: nature-rss
+  fetcher: rss
+  enabled: true
+  notes: Broad journal feed, filtered by include keywords
+  trust_tier: A
+  priority: 92
+- tags:
+  - journal
+  - global
+  - en
+  region: 全球
+  url: https://www.nejm.org/action/showFeed?jc=nejm&type=etoc&feed=rss
+  name: NEJM (eTOC)
+  id: nejm-etoc-rss
+  fetcher: rss
+  enabled: true
+  notes: Clinical journal feed
+  trust_tier: A
+  priority: 92
+- tags:
+  - regulatory
+  - cn
+  - zh
+  region: 中国
+  url: https://www.nmpa.gov.cn/
+  name: NMPA
+  id: nmpa-home-web
+  fetcher: html
+  enabled: true
+  notes: China national regulatory portal
+  trust_tier: A
+  priority: 95
+- tags:
+  - regulatory
+  - apac
+  - en
+  region: 亚太
+  url: https://www.pmda.go.jp/english/index.html
+  name: PMDA
+  id: pmda-home-web
+  fetcher: html
+  enabled: true
+  notes: Japan PMDA portal
+  trust_tier: A
+  priority: 92
+- tags:
+  - media
+  - pressrelease
+  - global
+  - en
+  region: 全球
+  url: https://www.prnewswire.com/rss/news-releases-list.rss
+  name: PR Newswire Press Releases
+  id: prnewswire-press-rss
+  fetcher: rss
+  enabled: true
+  notes: Company press releases
+  trust_tier: B
+  priority: 78
+- tags:
+  - literature
+  - global
+  - en
+  region: 全球
+  url: https://pubmed.ncbi.nlm.nih.gov/
+  name: PubMed
+  id: pubmed-home-web
+  fetcher: html
+  enabled: false
+  notes: Placeholder web source
+  trust_tier: A
+  priority: 75
+- tags:
+  - media
+  - global
+  - en
+  region: 北美
+  url: https://www.reutersagency.com/feed/?best-topics=healthcare-pharmaceuticals
+  name: Reuters Healthcare
+  id: reuters-health-rss
+  fetcher: rss
+  enabled: true
+  notes: High-priority global media
+  trust_tier: A
+  priority: 100
+- tags:
+  - company
+  - roche
+  - press
+  region: EU
+  url: https://www.roche.com/media/subscribe
+  name: Roche Media Subscribe
+  id: roche_media_subscribe
+  fetcher: html
+  enabled: false
+  notes: 订阅页，若已有可用Roche RSS则保持禁用
+  trust_tier: A
+  priority: 65
+- tags:
+  - company
+  - roche
+  - ir
+  region: EU
+  url: https://www.roche.com/investors/subscribe
+  name: Roche Investors Subscribe
+  id: roche_subscribe_investors
+  fetcher: html
+  enabled: false
+  notes: 订阅页，若已有可用Roche RSS则保持禁用
+  trust_tier: A
+  priority: 65
+- tags:
+  - aggregator
+  - rsshub
+  region: Global
+  url: rsshub://
+  name: RSSHub Template (Disabled)
+  id: rsshub_template
+  fetcher: rsshub
+  enabled: false
+  notes: 通过RSSHUB_BASE_URL + route 转换无RSS页面
+  trust_tier: C
+  priority: 20
+  fetch:
+    rsshub_route: /example/path
+- tags:
+  - journal
+  - global
+  - en
+  - translational
+  region: 全球
+  url: https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=stm
+  name: Science Translational Medicine (eTOC)
+  id: science-stm-etoc-rss
+  fetcher: rss
+  enabled: true
+  notes: Translational journal feed
+  trust_tier: A
+  priority: 90
+- tags:
+  - company
+  - siemens
+  - press
+  - diagnostics
+  region: EU
+  url: https://www.siemens-healthineers.com/press
+  name: Siemens Healthineers Press
+  id: siemens_healthineers_press
+  fetcher: html
+  enabled: true
+  notes: 抓取press列表
+  trust_tier: A
+  priority: 84
+- tags:
+  - media
+  - global
+  - en
+  region: 北美
+  url: https://www.statnews.com/feed/
+  name: STAT
+  id: statnews-rss
+  fetcher: rss
+  enabled: true
+  notes: Healthcare media
+  trust_tier: B
+  priority: 85
+- tags:
+  - regulatory
+  - apac
+  - en
+  region: 亚太
+  url: https://www.tga.gov.au/feeds/alert/product-recalls.xml
+  name: TGA Product Recalls
+  id: tga-recall-rss
+  fetcher: rss
+  enabled: true
+  notes: AU recalls
+  trust_tier: A
+  priority: 90
+- tags:
+  - regulatory
+  - apac
+  - en
+  region: 亚太
+  url: https://www.tga.gov.au/feeds/alert/safety-alerts.xml
+  name: TGA Safety Alerts
+  id: tga-safety-rss
+  fetcher: rss
+  enabled: true
+  notes: AU regulatory safety updates
+  trust_tier: A
+  priority: 90
+- tags:
+  - media
+  - clinical_lab
+  - ivd
+  region: Global
+  url: https://www.clinicallab.com/tag/ivd
+  name: Today's Clinical Lab (IVD Tag)
+  id: todays_clinical_lab_ivd
+  fetcher: rss
+  enabled: true
+  notes: 优先走 RSS auto-discovery；若无 RSS 则 html 抓取列表
+  trust_tier: B
+  priority: 72
+- tags:
+  - regulatory
+  - who
+  - prequalification
+  - ivd
+  region: Global
+  url: https://extranet.who.int/prequal/vitro-diagnostics
+  name: WHO Prequalification - In Vitro Diagnostics
+  id: who_prequal_ivd
+  fetcher: html
+  enabled: true
+  notes: 通常无标准RSS，可选rsshub_route转换
+  trust_tier: A
+  priority: 90
+- tags:
+  - regulatory
+  - eu
+  - en
+  region: 欧洲
+  url: https://www.ema.europa.eu/en/human-medicine-new.xml
+  name: EMA EPAR human medicines
+  id: regulatory-ema-europa-eu-ema-epar-human-medicines
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: A
+  priority: 85
+- tags:
+  - regulatory
+  - eu
+  - en
+  region: 欧洲
+  url: https://www.ema.europa.eu/en/new-human-medicine-new.xml
+  name: 'EMA New medicines: human'
+  id: regulatory-ema-europa-eu-ema-new-medicines-human
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: A
+  priority: 85
+- tags:
+  - regulatory
+  - eu
+  - en
+  region: 欧洲
+  url: https://www.ema.europa.eu/en/news.xml
+  name: EMA News and press releases
+  id: regulatory-ema-europa-eu-ema-news-and-press-releases
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: A
+  priority: 85
+- tags:
+  - regulatory
+  - eu
+  - en
+  region: 欧洲
+  url: https://www.ema.europa.eu/en/whats-new.xml
+  name: EMA What's new
+  id: regulatory-ema-europa-eu-ema-what-s-new
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: A
+  priority: 85
+- tags:
+  - evidence
+  - journal
+  - en
+  region: Global
+  url: https://www.nature.com/nbt.rss
+  name: Nature Biotechnology
+  id: evidence-nature-com-nature-biotechnology
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: B
+  priority: 40
+- tags:
+  - evidence
+  - journal
+  - en
+  region: Global
+  url: https://www.nature.com/ng.rss
+  name: Nature Genetics
+  id: evidence-nature-com-nature-genetics
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: B
+  priority: 40
+- tags:
+  - evidence
+  - journal
+  - en
+  region: Global
+  url: https://www.nature.com/nm.rss
+  name: Nature Medicine
+  id: evidence-nature-com-nature-medicine
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: B
+  priority: 40
+- tags:
+  - evidence
+  - journal
+  - en
+  region: Global
+  url: https://www.nature.com/nmeth.rss
+  name: Nature Methods
+  id: evidence-nature-com-nature-methods
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: B
+  priority: 40
+- tags:
+  - evidence
+  - journal
+  - en
+  region: Global
+  url: https://www.nature.com/nrc.rss
+  name: Nature Reviews Cancer
+  id: evidence-nature-com-nature-reviews-cancer
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: B
+  priority: 40
+- tags:
+  - evidence
+  - journal
+  - en
+  region: Global
+  url: https://www.nature.com/nrd.rss
+  name: Nature Reviews Drug Discovery
+  id: evidence-nature-com-nature-reviews-drug-discovery
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: B
+  priority: 40
+- tags:
+  - evidence
+  - journal
+  - en
+  region: Global
+  url: https://journals.plos.org/plosbiology/feed/atom
+  name: PLOS Biology
+  id: evidence-journals-plos-org-plos-biology
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: B
+  priority: 40
+- tags:
+  - evidence
+  - journal
+  - en
+  region: Global
+  url: https://journals.plos.org/plosmedicine/feed/atom
+  name: PLOS Medicine
+  id: evidence-journals-plos-org-plos-medicine
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: B
+  priority: 40
+- tags:
+  - evidence
+  - journal
+  - en
+  region: Global
+  url: https://journals.plos.org/plosone/feed/atom
+  name: PLOS ONE
+  id: evidence-journals-plos-org-plos-one
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: B
+  priority: 40
+- tags:
+  - evidence
+  - preprint
+  - en
+  region: Global
+  url: https://rss.arxiv.org/rss/q-bio
+  name: arXiv q-bio
+  id: evidence-rss-arxiv-org-arxiv-q-bio
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: C
+  priority: 30
+- tags:
+  - evidence
+  - preprint
+  - en
+  region: Global
+  url: https://rss.arxiv.org/rss/stat.AP
+  name: arXiv stat.AP
+  id: evidence-rss-arxiv-org-arxiv-stat-ap
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: C
+  priority: 30
+- tags:
+  - media
+  - us
+  - en
+  region: 北美
+  url: https://www.genengnews.com/feed
+  name: GEN
+  id: media-genengnews-com-gen
+  fetcher: rss
+  enabled: true
+  notes: 官方/机构RSS
+  trust_tier: B
+  priority: 60
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=ChiCTR+%E4%B8%B4%E5%BA%8A%E8%AF%95%E9%AA%8C
+  name: 'Google News: ChiCTR 临床试验'
+  id: aggregator-news-google-com-google-news-chictr
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=adrs.org.cn+%E4%B8%8D%E8%89%AF%E5%8F%8D%E5%BA%94
+  name: 'Google News: adrs.org.cn 不良反应'
+  id: aggregator-news-google-com-google-news-adrs-org-cn
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=cde.org.cn+%E5%8F%97%E7%90%86+%E5%85%AC%E7%A4%BA
+  name: 'Google News: cde.org.cn 受理 公示'
+  id: aggregator-news-google-com-google-news-cde-org-cn
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=chinacdc.cn+%E7%9B%91%E6%B5%8B
+  name: 'Google News: chinacdc.cn 监测'
+  id: aggregator-news-google-com-google-news-chinacdc-cn
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=cmde.org.cn+%E5%88%9B%E6%96%B0+%E5%8C%BB%E7%96%97%E5%99%A8%E6%A2%B0
+  name: 'Google News: cmde.org.cn 创新 医疗器械'
+  id: aggregator-news-google-com-google-news-cmde-org-cn
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=gov.cn+%E8%8D%AF%E5%93%81+%E7%AE%A1%E7%90%86
+  name: 'Google News: gov.cn 药品 管理'
+  id: aggregator-news-google-com-google-news-gov-cn
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=most.gov.cn+%E7%94%9F%E7%89%A9%E5%8C%BB%E8%8D%AF
+  name: 'Google News: most.gov.cn 生物医药'
+  id: aggregator-news-google-com-google-news-most-gov-cn
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=ndcpa.gov.cn+%E7%96%BE%E6%8E%A7
+  name: 'Google News: ndcpa.gov.cn 疾控'
+  id: aggregator-news-google-com-google-news-ndcpa-gov-cn
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=nhc.gov.cn+%E7%96%AB%E6%83%85+%E9%80%9A%E6%8A%A5
+  name: 'Google News: nhc.gov.cn 疫情 通报'
+  id: aggregator-news-google-com-google-news-nhc-gov-cn
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=nhsa.gov.cn+%E5%8C%BB%E4%BF%9D+%E7%9B%AE%E5%BD%95
+  name: 'Google News: nhsa.gov.cn 医保 目录'
+  id: aggregator-news-google-com-google-news-nhsa-gov-cn
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=nhsa.gov.cn+%E9%9B%86%E4%B8%AD%E9%87%87%E8%B4%AD
+  name: 'Google News: nhsa.gov.cn 集中采购'
+  id: aggregator-news-google-com-google-news-nhsa-gov-cn-175c
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=nmpa.gov.cn+%E5%8C%BB%E7%96%97%E5%99%A8%E6%A2%B0
+  name: 'Google News: nmpa.gov.cn 医疗器械'
+  id: aggregator-news-google-com-google-news-nmpa-gov-cn
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=nmpa.gov.cn+%E8%8D%AF%E5%93%81+%E5%AE%A1%E8%AF%84
+  name: 'Google News: nmpa.gov.cn 药品 审评'
+  id: aggregator-news-google-com-google-news-nmpa-gov-cn-5fac
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=nsfc.gov.cn+%E5%8C%BB%E5%AD%A6+%E7%94%9F%E7%89%A9
+  name: 'Google News: nsfc.gov.cn 医学 生物'
+  id: aggregator-news-google-com-google-news-nsfc-gov-cn
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=samr.gov.cn+%E5%8C%BB%E7%96%97%E5%99%A8%E6%A2%B0
+  name: 'Google News: samr.gov.cn 医疗器械'
+  id: aggregator-news-google-com-google-news-samr-gov-cn
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=udi.nmpa.gov.cn+UDI
+  name: 'Google News: udi.nmpa.gov.cn UDI'
+  id: aggregator-news-google-com-google-news-udi-nmpa-gov-cn-udi
+  fetcher: google_news
+  enabled: false
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+ADC+%E8%8D%AF%E7%89%A9
+  name: 'Google News: 中国 ADC 药物'
+  id: aggregator-news-google-com-google-news-adc
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+CAR-T+%E4%B8%B4%E5%BA%8A
+  name: 'Google News: 中国 CAR-T 临床'
+  id: aggregator-news-google-com-google-news-car-t
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+CRO+CDMO
+  name: 'Google News: 中国 CRO CDMO'
+  id: aggregator-news-google-com-google-news-cro-cdmo
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+IVD+%E6%B3%A8%E5%86%8C
+  name: 'Google News: 中国 IVD 注册'
+  id: aggregator-news-google-com-google-news-ivd
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+mRNA+%E7%96%AB%E8%8B%97
+  name: 'Google News: 中国 mRNA 疫苗'
+  id: aggregator-news-google-com-google-news-mrna
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E4%BD%93%E5%A4%96%E8%AF%8A%E6%96%AD+%E6%94%BF%E7%AD%96
+  name: 'Google News: 中国 体外诊断 政策'
+  id: aggregator-news-google-com-google-news
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%88%9B%E6%96%B0%E5%8C%BB%E7%96%97%E5%99%A8%E6%A2%B0+%E5%AE%A1%E6%89%B9
+  name: 'Google News: 中国 创新医疗器械 审批'
+  id: aggregator-news-google-com-google-news-5f8c
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%88%9B%E6%96%B0%E8%8D%AF+%E4%B8%B4%E5%BA%8A
+  name: 'Google News: 中国 创新药 临床'
+  id: aggregator-news-google-com-google-news-f140
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%8C%BB%E4%BF%9D+%E8%B0%88%E5%88%A4
+  name: 'Google News: 中国 医保 谈判'
+  id: aggregator-news-google-com-google-news-9135
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%8C%BB%E7%96%97AI+%E5%8C%BB%E7%96%97%E5%99%A8%E6%A2%B0
+  name: 'Google News: 中国 医疗AI 医疗器械'
+  id: aggregator-news-google-com-google-news-ai
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%8C%BB%E7%96%97%E5%8F%8D%E8%85%90+%E6%94%BF%E7%AD%96
+  name: 'Google News: 中国 医疗反腐 政策'
+  id: aggregator-news-google-com-google-news-2f3a
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%8C%BB%E7%96%97%E5%99%A8%E6%A2%B0+%E6%B3%A8%E5%86%8C
+  name: 'Google News: 中国 医疗器械 注册'
+  id: aggregator-news-google-com-google-news-bd44
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%8C%BB%E7%96%97%E5%99%A8%E6%A2%B0+%E9%9B%86%E9%87%87
+  name: 'Google News: 中国 医疗器械 集采'
+  id: aggregator-news-google-com-google-news-539c
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%8C%BB%E7%96%97%E6%9C%8D%E5%8A%A1+%E6%94%BF%E7%AD%96
+  name: 'Google News: 中国 医疗服务 政策'
+  id: aggregator-news-google-com-google-news-d042
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%8C%BB%E7%96%97%E8%A1%8C%E4%B8%9A+%E5%B9%B6%E8%B4%AD
+  name: 'Google News: 中国 医疗行业 并购'
+  id: aggregator-news-google-com-google-news-2334
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%9F%BA%E5%9B%A0%E6%B2%BB%E7%96%97+%E4%B8%B4%E5%BA%8A
+  name: 'Google News: 中国 基因治疗 临床'
+  id: aggregator-news-google-com-google-news-c295
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E5%9F%BA%E5%9B%A0%E7%BC%96%E8%BE%91
+  name: 'Google News: 中国 基因编辑'
+  id: aggregator-news-google-com-google-news-3152
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E6%A0%B8%E9%85%B8%E8%8D%AF%E7%89%A9
+  name: 'Google News: 中国 核酸药物'
+  id: aggregator-news-google-com-google-news-c5c0
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E7%94%9F%E7%89%A9%E5%8C%BB%E8%8D%AF+%E8%9E%8D%E8%B5%84
+  name: 'Google News: 中国 生物医药 融资'
+  id: aggregator-news-google-com-google-news-4365
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E7%94%9F%E7%89%A9%E7%A7%91%E6%8A%80+IPO
+  name: 'Google News: 中国 生物科技 IPO'
+  id: aggregator-news-google-com-google-news-ipo
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E7%94%9F%E7%89%A9%E7%B1%BB%E4%BC%BC%E8%8D%AF
+  name: 'Google News: 中国 生物类似药'
+  id: aggregator-news-google-com-google-news-ae18
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E7%BB%86%E8%83%9E%E6%B2%BB%E7%96%97
+  name: 'Google News: 中国 细胞治疗'
+  id: aggregator-news-google-com-google-news-d2c8
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E7%BD%95%E8%A7%81%E7%97%85+%E7%94%A8%E8%8D%AF
+  name: 'Google News: 中国 罕见病 用药'
+  id: aggregator-news-google-com-google-news-50b8
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E8%82%BF%E7%98%A4+%E6%96%B0%E8%8D%AF
+  name: 'Google News: 中国 肿瘤 新药'
+  id: aggregator-news-google-com-google-news-cbc3
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E8%8D%AF%E5%93%81+%E5%AE%A1%E8%AF%84
+  name: 'Google News: 中国 药品 审评'
+  id: aggregator-news-google-com-google-news-ad9a
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E8%8D%AF%E5%93%81+%E7%9C%9F%E5%AE%9E%E4%B8%96%E7%95%8C%E7%A0%94%E7%A9%B6
+  name: 'Google News: 中国 药品 真实世界研究'
+  id: aggregator-news-google-com-google-news-132c
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD+%E8%8D%AF%E5%93%81%E7%9B%91%E7%AE%A1+%E5%A4%84%E7%BD%9A
+  name: 'Google News: 中国 药品监管 处罚'
+  id: aggregator-news-google-com-google-news-3af1
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E5%9B%BD%E7%96%BE%E6%8E%A7%E4%B8%AD%E5%BF%83+%E4%BC%A0%E6%9F%93%E7%97%85
+  name: 'Google News: 中国疾控中心 传染病'
+  id: aggregator-news-google-com-google-news-0d9a
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E4%B8%AD%E6%A3%80%E9%99%A2+NIFDC
+  name: 'Google News: 中检院 NIFDC'
+  id: aggregator-news-google-com-google-news-nifdc
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E5%9B%BD%E5%AE%B6%E5%8C%BB%E4%BF%9D%E5%B1%80+%E9%9B%86%E9%87%87
+  name: 'Google News: 国家医保局 集采'
+  id: aggregator-news-google-com-google-news-93a3
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E5%9B%BD%E5%AE%B6%E5%8D%AB%E5%81%A5%E5%A7%94+%E5%8C%BB%E7%96%97+%E6%94%BF%E7%AD%96
+  name: 'Google News: 国家卫健委 医疗 政策'
+  id: aggregator-news-google-com-google-news-411a
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E5%9B%BD%E5%AE%B6%E8%8D%AF%E7%9B%91%E5%B1%80+%E8%8D%AF%E5%93%81+%E6%89%B9%E5%87%86
+  name: 'Google News: 国家药监局 药品 批准'
+  id: aggregator-news-google-com-google-news-3589
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  - cn
+  region: 中国
+  url: https://news.google.com/rss/search?ceid=CN%3Azh-Hans&gl=CN&hl=zh-CN&q=%E8%8D%AF%E7%89%A9%E4%B8%B4%E5%BA%8A%E8%AF%95%E9%AA%8C%E7%99%BB%E8%AE%B0%E4%B8%8E%E4%BF%A1%E6%81%AF%E5%85%AC%E7%A4%BA%E5%B9%B3%E5%8F%B0
+  name: 'Google News: 药物临床试验登记与信息公示平台'
+  id: aggregator-news-google-com-google-news-7cce
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=CDC+outbreak+investigation
+  name: 'Google News: CDC outbreak investigation'
+  id: aggregator-news-google-com-google-news-cdc-outbreak-investig
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=EMA+pharmacovigilance
+  name: 'Google News: EMA pharmacovigilance'
+  id: aggregator-news-google-com-google-news-ema-pharmacovigilance
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=FDA+warning+letter+pharma
+  name: 'Google News: FDA warning letter pharma'
+  id: aggregator-news-google-com-google-news-fda-warning-letter-ph
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=NEJM+drug+trial
+  name: 'Google News: NEJM drug trial'
+  id: aggregator-news-google-com-google-news-nejm-drug-trial
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=NIH+cancer+immunotherapy
+  name: 'Google News: NIH cancer immunotherapy'
+  id: aggregator-news-google-com-google-news-nih-cancer-immunother
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=Nature+Biotechnology+new
+  name: 'Google News: Nature Biotechnology new'
+  id: aggregator-news-google-com-google-news-nature-biotechnology
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=PLOS+medicine+trial
+  name: 'Google News: PLOS medicine trial'
+  id: aggregator-news-google-com-google-news-plos-medicine-trial
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=The+Lancet+clinical+trial
+  name: 'Google News: The Lancet clinical trial'
+  id: aggregator-news-google-com-google-news-the-lancet-clinical-t
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=WHO+vaccine+position+paper
+  name: 'Google News: WHO vaccine position paper'
+  id: aggregator-news-google-com-google-news-who-vaccine-position
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=alzheimer+drug+trial
+  name: 'Google News: alzheimer drug trial'
+  id: aggregator-news-google-com-google-news-alzheimer-drug-trial
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=biopharma+merger+acquisition
+  name: 'Google News: biopharma merger acquisition'
+  id: aggregator-news-google-com-google-news-biopharma-merger-acqu
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=cell+therapy+clinical+trial
+  name: 'Google News: cell therapy clinical trial'
+  id: aggregator-news-google-com-google-news-cell-therapy-clinical
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=gene+editing+clinical+trial
+  name: 'Google News: gene editing clinical trial'
+  id: aggregator-news-google-com-google-news-gene-editing-clinical
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=ivd+regulatory+update
+  name: 'Google News: ivd regulatory update'
+  id: aggregator-news-google-com-google-news-ivd-regulatory-update
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=medRxiv+clinical
+  name: 'Google News: medRxiv clinical'
+  id: aggregator-news-google-com-google-news-medrxiv-clinical
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=obesity+drug+phase+3
+  name: 'Google News: obesity drug phase 3'
+  id: aggregator-news-google-com-google-news-obesity-drug-phase-3
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=oncology+phase+3+trial
+  name: 'Google News: oncology phase 3 trial'
+  id: aggregator-news-google-com-google-news-oncology-phase-3-tria
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=rare+disease+drug+approval
+  name: 'Google News: rare disease drug approval'
+  id: aggregator-news-google-com-google-news-rare-disease-drug-app
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Acdc.gov+mmwr
+  name: 'Google News: site:cdc.gov mmwr'
+  id: aggregator-news-google-com-google-news-site-cdc-gov-mmwr
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Aclinicaltrials.gov+oncology
+  name: 'Google News: site:clinicaltrials.gov oncology'
+  id: aggregator-news-google-com-google-news-site-clinicaltrials-g
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Aema.europa.eu+new+medicines+human
+  name: 'Google News: site:ema.europa.eu new medicines human'
+  id: aggregator-news-google-com-google-news-site-ema-europa-eu-ne
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Afda.gov+drug+approval
+  name: 'Google News: site:fda.gov drug approval'
+  id: aggregator-news-google-com-google-news-site-fda-gov-drug-app
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Afda.gov+medical+device+recall
+  name: 'Google News: site:fda.gov medical device recall'
+  id: aggregator-news-google-com-google-news-site-fda-gov-medical
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Agov.uk+MHRA+medicines+safety
+  name: 'Google News: site:gov.uk MHRA medicines safety'
+  id: aggregator-news-google-com-google-news-site-gov-uk-mhra-medi
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Ahsa.gov.sg+health+products
+  name: 'Google News: site:hsa.gov.sg health products'
+  id: aggregator-news-google-com-google-news-site-hsa-gov-sg-healt
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Anih.gov+gene+therapy
+  name: 'Google News: site:nih.gov gene therapy'
+  id: aggregator-news-google-com-google-news-site-nih-gov-gene-the
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Apmda.go.jp+approval
+  name: 'Google News: site:pmda.go.jp approval'
+  id: aggregator-news-google-com-google-news-site-pmda-go-jp-appro
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Aswissmedic.ch+authorization
+  name: 'Google News: site:swissmedic.ch authorization'
+  id: aggregator-news-google-com-google-news-site-swissmedic-ch-au
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Atga.gov.au+medicine+safety
+  name: 'Google News: site:tga.gov.au medicine safety'
+  id: aggregator-news-google-com-google-news-site-tga-gov-au-medic
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+- tags:
+  - aggregator
+  - google_news
+  - ivd
+  region: Global
+  url: https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=site%3Awho.int+disease+outbreak+news
+  name: 'Google News: site:who.int disease outbreak news'
+  id: aggregator-news-google-com-google-news-site-who-int-disease
+  fetcher: google_news
+  enabled: true
+  notes: Google News RSS（关键词监测）；噪音高，仅兜底
+  trust_tier: C
+  priority: 18
+groups:
+  media_global:
+  - 360dx-rss
+  - biopharma-dive-rss
+  - clarivate-press-web
+  - fierce-biotech-rss
+  - genomeweb-rss
+  - globenewswire-press-rss
+  - iivd.rss
+  - medtech-dive-rss
+  - prnewswire-press-rss
+  - reuters-health-rss
+  - statnews-rss
+  - todays_clinical_lab_ivd
+  regulatory:
+  - ema_rss_index
+  - fda-device-recalls-rss
+  - fda-medwatch-rss
+  - fda_cdrh_news_updates
+  - fda_rss_medical_devices
+  - imdrf_news
+  - mhra-alerts-atom
+  - nmpa-home-web
+  - pmda-home-web
+  - tga-recall-rss
+  - tga-safety-rss
+  - who_prequal_ivd
+  journals:
+  - lancet-current-rss
+  - nature-rss
+  - nejm-etoc-rss
+  - science-stm-etoc-rss
+  preprints:
+  - biorxiv-all-rss
+  - biorxiv-genomics-atom
+  - medrxiv-all-rss
+  - medrxiv-infectious-atom
+  company_major:
+  - abbott_newsroom
+  - roche_media_subscribe
+  - roche_subscribe_investors
+  - siemens_healthineers_press
+  market_research_thinktank:
+  - kalorama_blog
+  - medtech_europe_newsletters
+  meta_aggregators:
+  - google_news_ivd_24h
+  - rsshub_template

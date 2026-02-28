@@ -9,7 +9,7 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - ./pgdata:/var/lib/postgresql/data
+      - ivd_pgdata:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ivd} -d ${POSTGRES_DB:-ivd} -h 127.0.0.1 || exit 1"]
@@ -84,3 +84,19 @@ services:
       interval: 30s
       timeout: 3s
       retries: 10
+
+  web:
+    build: ./web
+    container_name: ivd-web
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-/api}
+      ADMIN_API_INTERNAL_BASE: ${ADMIN_API_INTERNAL_BASE:-http://admin-api:8789}
+    depends_on:
+      admin-api:
+        condition: service_started
+    ports:
+      - "${WEB_PORT:-3001}:3000"
+    restart: unless-stopped
+
+volumes:
+  ivd_pgdata:

@@ -15,6 +15,7 @@ import math
 import os
 import re
 import sys
+import time
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -145,7 +146,16 @@ def _resolve_dedupe_cluster_config(
         if isinstance(incoming, dict):
             merged = deepcopy(base)
             merged.update(incoming)
-            return merged
+            base = merged
+    if use_enhanced:
+        ks = [str(x).strip() for x in (base.get("key_strategies") or []) if str(x).strip()]
+        pref = ["normalized_title_v1", "host_published_day_v1"]
+        out = []
+        for k in pref + ks:
+            if k and k not in out:
+                out.append(k)
+        if out:
+            base["key_strategies"] = out
     return base
 
 
@@ -209,6 +219,51 @@ def _dedupe_metrics_summary(
         "reduction_ratio": float(reduction_ratio),
         "primary_source_distribution": primary_source_distribution,
     }
+
+
+def _metrics_scope_summary(
+    *,
+    raw_items_loaded: int,
+    raw_items_after_basic_parsing: int,
+    dropped_investment_scope_count: int,
+    dedupe_metrics: dict[str, Any],
+) -> dict[str, Any]:
+    raw_loaded = int(raw_items_loaded or 0)
+    dropped_scope = int(dropped_investment_scope_count or 0)
+    ratio = 0.0
+    if raw_loaded > 0:
+        ratio = max(0.0, min(1.0, dropped_scope / float(raw_loaded)))
+    return {
+        "raw_items_loaded": raw_loaded,
+        "raw_items_after_basic_parsing": int(raw_items_after_basic_parsing or 0),
+        "dropped_investment_scope_count": dropped_scope,
+        "dropped_investment_scope_ratio": float(ratio),
+        "items_before_dedupe": int(dedupe_metrics.get("items_before_dedupe", 0) or 0),
+        "items_after_dedupe": int(dedupe_metrics.get("items_after_dedupe", 0) or 0),
+        "clusters_total": int(dedupe_metrics.get("clusters_total", 0) or 0),
+        "reduction_ratio": float(dedupe_metrics.get("reduction_ratio", 0.0) or 0.0),
+    }
+
+
+def _contains_cjk(text: str) -> bool:
+    s = str(text or "")
+    for ch in s:
+        if "\u4e00" <= ch <= "\u9fff":
+            return True
+    return False
+
+
+def _zh_summary_for_email(raw_summary: str, *, title: str, source: str) -> str:
+    raw = re.sub(r"\s+", " ", str(raw_summary or "")).strip()
+    if _contains_cjk(raw):
+        return raw
+    t = re.sub(r"\s+", " ", str(title or "")).strip()
+    s = re.sub(r"\s+", " ", str(source or "")).strip()
+    if t and s:
+        return f"摘要：该条目来自{s}，主题为“{t}”。建议结合原文核查细节并提炼可执行结论。"
+    if t:
+        return f"摘要：该条目主题为“{t}”。建议结合原文核查细节并提炼可执行结论。"
+    return "摘要：该条目原始摘要为英文，建议结合原文核查细节并提炼可执行结论。"
 
 
 def item_to_dict(it: Item) -> dict:
@@ -1897,6 +1952,10 @@ def main(dump_relevance_samples: int = 0) -> int:
     relaxed_pool: list[Item] = []
     track_contract_warnings: list[str] = []
     drop_reason_counts: dict[str, int] = {}
+    raw_items_loaded = 0
+    raw_items_after_basic_parsing = 0
+    dropped_investment_scope_count = 0
+    dropped_investment_scope_sources: dict[str, int] = {}
     keyword_pack_stats: dict[str, Any] = {
         "packs": {},
         "matched_any": 0,
@@ -2011,6 +2070,7 @@ def main(dump_relevance_samples: int = 0) -> int:
             stat["last_success_at"] = now_utc.isoformat()
 
             for row in entries:
+                raw_items_loaded += 1
                 title = row["title"]
                 link = row["link"]
                 if not title or not link:
@@ -2066,6 +2126,7 @@ def main(dump_relevance_samples: int = 0) -> int:
                 age = now_utc - pub
                 if age > dt.timedelta(days=7):
                     continue
+                raw_items_after_basic_parsing += 1
 
                 wt = window_tag(pub, now_utc)
                 region = cn_region(src_name, link) or default_region
@@ -2111,6 +2172,9 @@ def main(dump_relevance_samples: int = 0) -> int:
                 track, relevance_level, relevance_explain = compute_relevance(
                     combined,
                     {
+                        "source": src_name,
+                        "source_name": src_name,
+                        "source_id": source_id,
                         "source_group": str(source_group or ""),
                         "event_type": event_type,
                         "url": link,
@@ -2119,12 +2183,20 @@ def main(dump_relevance_samples: int = 0) -> int:
                     {
                         "anchors_pack": RUNTIME_CONTENT.get("anchors_pack", {}),
                         "negatives_pack": RUNTIME_CONTENT.get("negatives_pack", []),
+                        "negatives_strong_pack": RUNTIME_CONTENT.get("negatives_strong_pack", []),
+                        "investment_scope_enabled": bool(use_enhanced),
                     },
                 )
                 relevance_why = str(relevance_explain.get("final_reason", ""))
                 if str(track).strip().lower() == "drop":
                     why = str(relevance_explain.get("final_reason", "")).strip() or "drop"
                     drop_reason_counts[why] = int(drop_reason_counts.get(why, 0)) + 1
+                    if why == "investment_scope_filter":
+                        dropped_investment_scope_count += 1
+                        drop_sid = str(source_id or src_name or "unknown")
+                        dropped_investment_scope_sources[drop_sid] = int(
+                            dropped_investment_scope_sources.get(drop_sid, 0)
+                        ) + 1
                     continue
                 platform_explain_rows.append(
                     {
@@ -2238,6 +2310,21 @@ def main(dump_relevance_samples: int = 0) -> int:
         deduped_rows, dedupe_report = strong_dedupe(scored_dicts, scoring_cfg)
         items_before_cluster_count = int(dedupe_report.get("items_before", len(scored_dicts)))
         items_after_cluster_count = int(dedupe_report.get("items_after", len(deduped_rows)))
+
+        if runtime_rules.get("active_profile") == "enhanced":
+            clusterer = StoryClusterer(
+                config=RUNTIME_CONTENT.get("dedupe_cluster", {}),
+                source_priority=RUNTIME_CONTENT.get("source_priority", {}),
+            )
+            deduped_rows, cluster_explain = clusterer.cluster(deduped_rows)
+            items_after_cluster_count = len(deduped_rows)
+            dedupe_report = dict(dedupe_report or {})
+            dedupe_report["items_after"] = int(items_after_cluster_count)
+            dedupe_report["clusters"] = (
+                list((cluster_explain or {}).get("clusters", []))
+                if isinstance(cluster_explain, dict)
+                else []
+            )
 
         max_items = int(RUNTIME_CONTENT.get("max_items", 15))
         min_items = int(RUNTIME_CONTENT.get("min_items", 8))
@@ -2504,36 +2591,80 @@ def main(dump_relevance_samples: int = 0) -> int:
     )
     print(subject_line or f"全球IVD晨报 - {date_str}")
     print()
+    out_cfg = runtime_rules.get("output", {}) if isinstance(runtime_rules.get("output"), dict) else {}
+    style_cfg = out_cfg.get("style", {}) if isinstance(out_cfg.get("style"), dict) else {}
+    style_lang = "en" if str(style_cfg.get("language", "zh")).strip().lower() == "en" else "zh"
+    style_tone = str(style_cfg.get("tone", "concise_decision")).strip().lower()
+    style_no_fluff = bool(style_cfg.get("no_fluff", True))
 
-    print("A. 今日要点（8-15条，按重要性排序）")
+    def _sty(decision_zh: str, neutral_zh: str, decision_en: str, neutral_en: str) -> str:
+        if style_lang == "en":
+            s = neutral_en if style_tone == "neutral" else decision_en
+            return s if style_no_fluff else f"Note: {s}"
+        s = neutral_zh if style_tone == "neutral" else decision_zh
+        return s if style_no_fluff else f"背景：{s}"
+
+    def _sty_trend(decision_zh: str, neutral_zh: str, decision_en: str, neutral_en: str) -> str:
+        # E 段固定输出结论句，不添加“背景：/Note:”前缀。
+        if style_lang == "en":
+            return neutral_en if style_tone == "neutral" else decision_en
+        return neutral_zh if style_tone == "neutral" else decision_zh
+
+    sec_a = "A. Key Highlights (8-15 items, ranked by importance)" if style_lang == "en" else "A. 今日要点（8-15条，按重要性排序）"
+    sec_b = "B. Lane Snapshot (Oncology/Infectious/Repro-Genetics/Other)" if style_lang == "en" else "B. 分赛道速览（肿瘤/感染/生殖遗传/其他）"
+    sec_c = "C. Platform Radar (daily updates by platform)" if style_lang == "en" else "C. 技术平台雷达（按平台汇总当日进展）"
+    sec_d = "D. Regional Heatmap (NA/EU/APAC/CN)" if style_lang == "en" else "D. 区域热力图（北美/欧洲/亚太/中国）"
+    sec_g = "G. Quality Metrics (Quality Audit)" if style_lang == "en" else "G. 质量指标 (Quality Audit)"
+    lbl_summary = "Summary" if style_lang == "en" else "摘要"
+    lbl_published = "Published" if style_lang == "en" else "发布日期"
+    lbl_source = "Source" if style_lang == "en" else "来源"
+    lbl_region = "Region" if style_lang == "en" else "地区"
+    lbl_lane = "Lane" if style_lang == "en" else "赛道"
+    lbl_event = "Event Type" if style_lang == "en" else "事件类型"
+    lbl_platform = "Platform" if style_lang == "en" else "技术平台"
+
+    print(sec_a)
     if not report_items:
-        print("1) [7天补充] 今日未抓取到足够的可用条目（RSS源空/网络异常/关键词过滤过严）。")
-        print("摘要：建议检查 GitHub Actions 日志与源站可访问性，并补充中国/亚太官方源抓取。")
-        print(f"发布日期：{date_str}（北京时间）")
-        print("来源：自动生成")
-        print("地区：全球")
-        print("赛道：其他")
-        print("平台：跨平台/未标注")
+        print("1) [7天补充] " + _sty(
+            "今日未抓取到足够的可用条目（RSS源空/网络异常/关键词过滤过严）。",
+            "当前条目不足（可能因RSS空、网络波动或关键词过滤偏严）。",
+            "Not enough usable items were fetched today (empty feeds/network issues/strict filters).",
+            "Item count is currently low (possibly due to empty feeds, network instability, or strict filters).",
+        ))
+        print(f"{lbl_summary}: " + _sty(
+            "建议检查 GitHub Actions 日志与源站可访问性，并补充中国/亚太官方源抓取。",
+            "建议先核对任务日志与源站可达性，再补充中国/亚太官方源。",
+            "Check GitHub Actions logs and source reachability, then add more official CN/APAC feeds.",
+            "Review task logs and source reachability first, then add official CN/APAC feeds as needed.",
+        ))
+        print(f"{lbl_published}: {date_str}（北京时间）")
+        print(f"{lbl_source}: 自动生成")
+        print(f"{lbl_region}: 全球")
+        print(f"{lbl_lane}: 其他")
+        print(f"{lbl_platform}: 跨平台/未标注")
         print()
     else:
         for idx, i in enumerate(report_items, 1):
             pub_local = i.published.astimezone(ZoneInfo(tz_name)).strftime("%Y-%m-%d %H:%M %Z")
+            summary_out = str(i.summary_cn or "").strip()
+            if style_lang == "zh":
+                summary_out = _zh_summary_for_email(summary_out, title=i.title, source=i.source)
             print(f"{idx}) [{i.window_tag}] {i.title}")
-            print(f"{i.summary_cn}")
-            print(f"发布日期：{pub_local}")
-            print(f"来源：{i.source} | {i.link}")
-            print(f"地区：{i.region}")
-            print(f"赛道：{i.lane}")
-            print(f"事件类型：{i.event_type}")
-            print(f"技术平台：{i.platform}")
+            print(f"{summary_out}")
+            print(f"{lbl_published}: {pub_local}")
+            print(f"{lbl_source}: {i.source} | {i.link}")
+            print(f"{lbl_region}: {i.region}")
+            print(f"{lbl_lane}: {i.lane}")
+            print(f"{lbl_event}: {i.event_type}")
+            print(f"{lbl_platform}: {i.platform}")
             print()
 
-    print("B. 分赛道速览（肿瘤/感染/生殖遗传/其他）")
+    print(sec_b)
     for k in ["肿瘤检测", "感染检测", "生殖与遗传检测", "其他"]:
         print(f"- {k}：{len(lanes.get(k, []))} 条（以当日抓取为准）")
     print()
 
-    print("C. 技术平台雷达（按平台汇总当日进展）")
+    print(sec_c)
     if platforms:
         for p, c in sorted(platforms.items(), key=lambda x: (-x[1], x[0])):
             print(f"- {p}：{c} 条")
@@ -2541,7 +2672,7 @@ def main(dump_relevance_samples: int = 0) -> int:
         print("- 今日无有效平台统计。")
     print()
 
-    print("D. 区域热力图（北美/欧洲/亚太/中国）")
+    print(sec_d)
     print(f"- 北美：{regions.get('北美', 0)}")
     print(f"- 欧洲：{regions.get('欧洲', 0)}")
     print(f"- 亚太：{regions.get('亚太', 0)}")
@@ -2549,7 +2680,6 @@ def main(dump_relevance_samples: int = 0) -> int:
     print()
 
     # Output rules: trends/gaps counts (enhanced) should reflect output_rules settings.
-    out_cfg = runtime_rules.get("output", {}) if isinstance(runtime_rules.get("output"), dict) else {}
     e_cfg = out_cfg.get("E", {}) if isinstance(out_cfg.get("E"), dict) else {}
     f_cfg = out_cfg.get("F", {}) if isinstance(out_cfg.get("F"), dict) else {}
     try:
@@ -2564,39 +2694,68 @@ def main(dump_relevance_samples: int = 0) -> int:
     except Exception:
         gaps_max = 5
     gaps_max = max(1, min(gaps_max, 10))
+    sec_e = (
+        f"E. Key Trend Judgments ({trends_count} items; include industry and technology)"
+        if style_lang == "en"
+        else (f"E. 关键趋势判断（共{trends_count}条，产业与技术各至少1条）" if trends_count != 3 else "E. 三条关键趋势判断（产业与技术各至少1条）")
+    )
+    sec_f = (
+        f"F. Gaps & Next-day Tracking List ({gaps_max} items)"
+        if style_lang == "en"
+        else (f"F. 信息缺口与次日跟踪清单（共{gaps_max}条）" if gaps_max != 5 else "F. 信息缺口与次日跟踪清单（3-5条）")
+    )
 
-    if trends_count == 3:
-        print("E. 三条关键趋势判断（产业与技术各至少1条）")
-    else:
-        print(f"E. 关键趋势判断（共{trends_count}条，产业与技术各至少1条）")
+    print(sec_e)
     trends_pool = [
-        "产业：并购合作与产品注册更聚焦可快速放量场景，商业化节奏正由渠道与准入共同决定。",
-        "技术：PCR/NGS/免疫平台继续并行，组合菜单与自动化能力是实验室端的核心竞争变量。",
-        "监管：亚太监管与中国追溯体系持续强化，跨区域上市正从“单点获批”转向“体系化合规”。",
-        "产业：检测服务与区域实验室整合加速，医院外送与第三方检验渠道的规模效应更明显。",
-        "技术：多组学与质谱在特定临床路径的渗透提高，样本前处理与自动化决定可复制性。",
-        "市场：招采与支付端更关注“可及性+证据链”，真实世界数据与成本效益分析的重要性上升。",
-        "产品：菜单扩张与一体化平台绑定加深，试剂+仪器+软件的系统化交付成为竞争焦点。",
-        "合规：质量体系、数据可追溯与UDI对供应链协同提出更高要求，跨境业务门槛上移。",
+        _sty_trend(
+            "产业：并购合作与产品注册更聚焦可快速放量场景，商业化节奏正由渠道与准入共同决定。",
+            "产业：并购合作与注册节奏仍由渠道和准入共同驱动。",
+            "Industry: M&A/cooperation and product registration are concentrating on faster scale-up scenarios.",
+            "Industry: M&A/cooperation and registration pace continue to be shaped by channel access and market entry.",
+        ),
+        _sty_trend(
+            "技术：PCR/NGS/免疫平台继续并行，组合菜单与自动化能力是实验室端的核心竞争变量。",
+            "技术：PCR/NGS/免疫平台并行，菜单完整度与自动化能力仍是关键。",
+            "Technology: PCR/NGS/immuno platforms continue in parallel; menu breadth and automation remain key moats.",
+            "Technology: PCR/NGS/immuno platforms remain parallel, with menu breadth and automation as key factors.",
+        ),
+        _sty_trend(
+            "监管：亚太监管与中国追溯体系持续强化，跨区域上市正从“单点获批”转向“体系化合规”。",
+            "监管：亚太与中国追溯体系持续加强，跨区域上市更依赖体系化合规。",
+            "Regulatory: APAC and China traceability systems keep tightening, shifting cross-region launches to system-level compliance.",
+            "Regulatory: APAC/China traceability remains stricter, and cross-region launch paths rely more on system-level compliance.",
+        ),
     ]
     for idx in range(trends_count):
-        txt = trends_pool[idx] if idx < len(trends_pool) else "趋势：建议结合当日条目分布补充更具体的产业/技术判断。"
+        txt = trends_pool[idx] if idx < len(trends_pool) else _sty_trend(
+            "趋势：建议结合当日条目分布补充更具体的产业/技术判断。",
+            "趋势：可结合当日条目分布补充更具体判断。",
+            "Trend: add more specific industry/technology judgments based on today’s item mix.",
+            "Trend: you may refine the judgment using today’s item distribution.",
+        )
         print(f"{idx+1}) {txt}")
     print()
 
-    if gaps_max == 5:
-        print("F. 信息缺口与次日跟踪清单（3-5条）")
-    else:
-        print(f"F. 信息缺口与次日跟踪清单（共{gaps_max}条）")
+    print(sec_f)
     gaps_pool = [
-        "继续补齐中国招采高金额公告（ccgp/省级平台/三甲医院），提升需求侧信号强度。",
-        "跟踪亚太监管站点（TGA/HSA/PMDA/MFDS）新增审批与召回，避免区域偏置。",
-        "对并购融资与产品发布条目做二次核验，优先采用公司公告与监管数据库。",
-        "对未命中的关键监管/权威信源建立备用抓取路径（网页列表页 + 日期解析）。",
-        "补齐支付/DRG/DIP/医保目录与检验项目收费动态，识别放量瓶颈与机会。",
-        "扩充“平台关键词映射”与未标注诊断闭环，降低跨平台/未标注占比。",
-        "增强中国监管/NMPA 数据源结构化抓取（公告/技术审评/UDI），提升一手命中率。",
-        "针对重点企业合作/投融资新闻，补充交易条款/估值/产品管线关键信息。",
+        _sty(
+            "继续补齐中国招采高金额公告（ccgp/省级平台/三甲医院），提升需求侧信号强度。",
+            "补充中国高金额招采公告可增强需求侧信号。",
+            "Backfill high-value CN procurement notices (ccgp/provincial/top hospitals) to strengthen demand-side signals.",
+            "Adding high-value CN procurement notices can improve demand-side signal quality.",
+        ),
+        _sty(
+            "跟踪亚太监管站点（TGA/HSA/PMDA/MFDS）新增审批与召回，避免区域偏置。",
+            "持续跟踪亚太监管新增审批与召回，可降低区域偏置。",
+            "Track APAC regulators (TGA/HSA/PMDA/MFDS) for new approvals/recalls to avoid regional bias.",
+            "Continuous APAC regulator tracking helps reduce regional bias.",
+        ),
+        _sty(
+            "对并购融资与产品发布条目做二次核验，优先采用公司公告与监管数据库。",
+            "并购融资与产品发布建议二次核验，优先官方渠道。",
+            "Re-verify M&A/funding and product launch items, prioritizing company releases and regulatory databases.",
+            "M&A/funding and launch items should be re-checked with official sources first.",
+        ),
     ]
     if use_enhanced:
         frontier_sorted = sorted(
@@ -2620,14 +2779,29 @@ def main(dump_relevance_samples: int = 0) -> int:
                 )
             gaps_pool = radar + gaps_pool
         else:
-            reason_txt = "；".join(frontier_shortage_reasons[:3]) if frontier_shortage_reasons else "frontier信号不足"
-            gaps_pool = [f"frontier雷达：今日未命中高价值前沿条目（原因：{reason_txt}）"] + gaps_pool
+            reason_txt = "；".join(frontier_shortage_reasons[:3]) if frontier_shortage_reasons else _sty(
+                "frontier信号不足",
+                "frontier信号偏弱",
+                "insufficient frontier signal",
+                "frontier signal is currently weak",
+            )
+            gaps_pool = [_sty(
+                f"frontier雷达：今日未命中高价值前沿条目（原因：{reason_txt}）",
+                f"frontier雷达：今日前沿命中不足（原因：{reason_txt}）",
+                f"Frontier radar: no high-value frontier item hit today (reason: {reason_txt}).",
+                f"Frontier radar: frontier hits were limited today (reason: {reason_txt}).",
+            )] + gaps_pool
         if frontier_quota_used < frontier_quota:
             gaps_pool = [f"frontier配额占用：{frontier_quota_used}/{frontier_quota}（不足原因：{'；'.join(frontier_shortage_reasons[:3]) if frontier_shortage_reasons else 'frontier信号不足'}）"] + gaps_pool
     if routing_gaps:
         gaps_pool = [f"分流规则缺口：{routing_gaps[0]}"] + gaps_pool
     for idx in range(gaps_max):
-        txt = gaps_pool[idx] if idx < len(gaps_pool) else "补充：建议根据当日缺口与目标区域/赛道，添加专门跟踪项。"
+        txt = gaps_pool[idx] if idx < len(gaps_pool) else _sty(
+            "补充：建议根据当日缺口与目标区域/赛道，添加专门跟踪项。",
+            "补充：可按当日缺口与目标区域/赛道追加跟踪项。",
+            "Supplement: add targeted trackers by today’s gaps and priority regions/lanes.",
+            "Supplement: you may add trackers based on today’s gaps and target regions/lanes.",
+        )
         print(f"{idx+1}) {txt}")
     print()
 
@@ -2643,13 +2817,19 @@ def main(dump_relevance_samples: int = 0) -> int:
         cluster_explain=cluster_explain if isinstance(cluster_explain, dict) else {},
         topn=5,
     )
+    metrics_scope = _metrics_scope_summary(
+        raw_items_loaded=raw_items_loaded,
+        raw_items_after_basic_parsing=raw_items_after_basic_parsing,
+        dropped_investment_scope_count=dropped_investment_scope_count,
+        dedupe_metrics=dedupe_metrics,
+    )
     filtered_top, borderline_count, borderline_top = _relevance_reason_stats(items, report_items, topn=3)
     if drop_reason_counts:
         drop_top = [
             f"{k}:{v}" for k, v in sorted(drop_reason_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
         ]
         filtered_top = (drop_top + filtered_top)[:3]
-    print("G. 质量指标 (Quality Audit)")
+    print(sec_g)
     print(
         f"24H条目数 / 7D补充数：{n24} / {n7} | "
         f"亚太占比：{apac_share:.0%} | "
@@ -2665,12 +2845,25 @@ def main(dump_relevance_samples: int = 0) -> int:
         f"borderline_count(level=1~2)：{borderline_count} | "
         f"borderline_reason_top3：{'; '.join(borderline_top) if borderline_top else '无'}"
     )
+    investment_scope_source_top = "; ".join(
+        f"{k}:{v}" for k, v in sorted(dropped_investment_scope_sources.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+    ) if dropped_investment_scope_sources else "无"
+    print(
+        f"dropped_investment_scope_count：{dropped_investment_scope_count} | "
+        f"dropped_investment_scope_sources_topN：{investment_scope_source_top}"
+    )
+    print(
+        f"raw_pool：raw_items_loaded={metrics_scope.get('raw_items_loaded', 0)} | "
+        f"raw_items_after_basic_parsing={metrics_scope.get('raw_items_after_basic_parsing', 0)} | "
+        f"dropped_investment_scope_count={metrics_scope.get('dropped_investment_scope_count', 0)} | "
+        f"dropped_investment_scope_ratio={float(metrics_scope.get('dropped_investment_scope_ratio', 0.0) or 0.0):.1%}"
+    )
     print(
         f"dedupe_cluster_enabled：{dedupe_metrics.get('dedupe_cluster_enabled', False)} | "
-        f"items_before_dedupe：{dedupe_metrics.get('items_before_dedupe', 0)} | "
-        f"items_after_dedupe：{dedupe_metrics.get('items_after_dedupe', 0)} | "
-        f"clusters_total：{dedupe_metrics.get('clusters_total', 0)} | "
-        f"reduction_ratio：{float(dedupe_metrics.get('reduction_ratio', 0.0) or 0.0):.1%}"
+        f"filtered_pool：items_before_dedupe={metrics_scope.get('items_before_dedupe', 0)} | "
+        f"items_after_dedupe={metrics_scope.get('items_after_dedupe', 0)} | "
+        f"clusters_total={metrics_scope.get('clusters_total', 0)} | "
+        f"reduction_ratio={float(metrics_scope.get('reduction_ratio', 0.0) or 0.0):.1%}"
     )
     primary_source_dist = dedupe_metrics.get("primary_source_distribution", [])
     if isinstance(primary_source_dist, list):
@@ -2826,6 +3019,21 @@ def main(dump_relevance_samples: int = 0) -> int:
                     "profile": runtime_rules.get("active_profile", "legacy"),
                     "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
                     "dedupe": dedupe_metrics,
+                    "metrics_scope": metrics_scope,
+                    "raw_items_loaded": int(metrics_scope.get("raw_items_loaded", 0)),
+                    "raw_items_after_basic_parsing": int(metrics_scope.get("raw_items_after_basic_parsing", 0)),
+                    "dropped_investment_scope_count": dropped_investment_scope_count,
+                    "dropped_investment_scope_ratio": float(metrics_scope.get("dropped_investment_scope_ratio", 0.0)),
+                    "dropped_investment_scope_sources_topN": [
+                        {"source": k, "count": int(v)}
+                        for k, v in sorted(
+                            dropped_investment_scope_sources.items(), key=lambda kv: (-kv[1], kv[0])
+                        )[:5]
+                    ],
+                    "items_before_dedupe": int(metrics_scope.get("items_before_dedupe", 0)),
+                    "items_after_dedupe": int(metrics_scope.get("items_after_dedupe", 0)),
+                    "clusters_total": int(metrics_scope.get("clusters_total", 0)),
+                    "reduction_ratio": float(metrics_scope.get("reduction_ratio", 0.0)),
                     "cluster_explain_summary": {
                         "items_before_count": items_before_cluster_count,
                         "items_after_count": items_after_cluster_count,

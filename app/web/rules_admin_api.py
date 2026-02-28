@@ -15,17 +15,21 @@ from zoneinfo import ZoneInfo
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from app.rules.engine import RuleEngine
 from app.services.ops_metrics import evaluate_health, find_latest_json, normalize_metrics, safe_load_json
+from app.services.feed_db import FeedDBService
 from app.services.rules_store import RulesStore
 from app.services.rules_versioning import get_workspace_rules_root
 from app.services.source_registry import (
     load_sources_registry_bundle,
+    set_source_enabled_override,
     test_source,
+    upsert_source_registry,
 )
 from app.workers.dryrun import run_dryrun
 
@@ -156,7 +160,12 @@ def _is_valid_url(url: str) -> bool:
         return False
 
 
-def _source_errors(source: dict[str, Any], store: RulesStore) -> list[dict[str, str]]:
+def _source_errors(
+    source: dict[str, Any],
+    store: RulesStore,
+    *,
+    skip_url_exists_check: bool = False,
+) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     sid = str(source.get("id", "")).strip()
     if not sid:
@@ -186,7 +195,24 @@ def _source_errors(source: dict[str, Any], store: RulesStore) -> list[dict[str, 
         endpoint = str(fetch.get("endpoint", "")).strip()
         if not endpoint:
             out.append({"path": "$.fetch.endpoint", "message": "API 必须填写 endpoint（如 /v1/news）"})
-    if url and sid and store.source_url_exists(url, exclude_id=sid):
+        else:
+            ep_l = endpoint.lower()
+            if ep_l in {"/v1/news", "v1/news"}:
+                out.append({"path": "$.fetch.endpoint", "message": "endpoint 仍是模板占位值（/v1/news），请替换为真实 API 路径"})
+        try:
+            p = urlparse(url)
+            has_path = bool((p.path or "").strip() and (p.path or "").strip() != "/")
+            has_query = bool((p.query or "").strip())
+            if endpoint and (has_path or has_query):
+                out.append(
+                    {
+                        "path": "$.url",
+                        "message": "API url 请只填 base_url（如 https://api.sam.gov）；具体路径/参数放到 fetch.endpoint",
+                    }
+                )
+        except Exception:
+            pass
+    if (not skip_url_exists_check) and url and sid and store.source_url_exists(url, exclude_id=sid):
         out.append({"path": "$.url", "message": "url 已被其他 source 使用"})
 
     tt = str(source.get("trust_tier", "")).strip()
@@ -385,8 +411,17 @@ def _auth_guard(
 def create_app(project_root: Path | None = None) -> FastAPI:
     root = project_root or Path(__file__).resolve().parents[2]
     store = RulesStore(root)
+    feed_db = FeedDBService(store.database_url)
+    source_group_defaults_path = root / "data" / "source_group_defaults.json"
     engine = RuleEngine(project_root=root)
     app = FastAPI(title="Rules Admin API", version="1.0.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     dryrun_jobs: dict[str, dict[str, Any]] = {}
     dryrun_jobs_lock = threading.Lock()
 
@@ -504,6 +539,83 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "ts": datetime.now(timezone.utc).isoformat(),
         }
 
+    @app.get("/api/feed")
+    def api_feed(
+        cursor: str = "",
+        limit: int = 30,
+        view_mode: str = "balanced",
+        group: str = "",
+        region: str = "",
+        event_type: str = "",
+        trust_tier: str = "",
+        source_id: str = "",
+        q: str = "",
+        start: str = "",
+        end: str = "",
+        since: str = "",
+    ) -> dict[str, Any]:
+        return feed_db.list_stories(
+            cursor=cursor,
+            limit=limit,
+            view_mode=view_mode,
+            group=group,
+            region=region,
+            event_type=event_type,
+            trust_tier=trust_tier,
+            source_id=source_id,
+            q=q,
+            start=start,
+            end=end,
+            since=since,
+        )
+
+    @app.get("/api/feed/{item_id}")
+    def api_feed_detail(item_id: str) -> dict[str, Any]:
+        out = feed_db.get_story_detail(item_id)
+        if out is None:
+            raise HTTPException(status_code=404, detail="feed item not found")
+        return out
+
+    @app.get("/api/feed-items")
+    def api_feed_items(
+        cursor: str = "",
+        limit: int = 30,
+        view_mode: str = "latest",
+        group: str = "",
+        region: str = "",
+        event_type: str = "",
+        trust_tier: str = "",
+        source_id: str = "",
+        q: str = "",
+        start: str = "",
+        end: str = "",
+        since: str = "",
+    ) -> dict[str, Any]:
+        return feed_db.list_raw_items(
+            cursor=cursor,
+            limit=limit,
+            group=group,
+            region=region,
+            event_type=event_type,
+            trust_tier=trust_tier,
+            source_id=source_id,
+            q=q,
+            start=start,
+            end=end,
+            since=since,
+        )
+
+    @app.get("/api/feed-items/{item_id}")
+    def api_feed_item_detail(item_id: str) -> dict[str, Any]:
+        out = feed_db.get_raw_item_detail(item_id)
+        if out is None:
+            raise HTTPException(status_code=404, detail="feed item not found")
+        return out
+
+    @app.get("/api/feed-summary")
+    def api_feed_summary(mode: str = "item") -> dict[str, Any]:
+        return feed_db.get_feed_summary(mode=mode)
+
     @app.exception_handler(HTTPException)
     async def _http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:  # type: ignore[override]
         payload = {"ok": False, "error": {"code": f"HTTP_{exc.status_code}", "message": str(exc.detail)}}
@@ -511,9 +623,13 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 
     def _active_rules(ruleset: str, profile: str) -> dict[str, Any]:
         data = store.get_active_rules(ruleset, profile)
-        if data is not None:
-            meta = data.pop("_store_meta", {})
-            return {"source": "db", "config_json": data, "meta": meta}
+        if isinstance(data, dict):
+            # Defensive fallback: treat empty/malformed active rows as invalid
+            # and read file rules so UI does not render blank forms.
+            cfg_probe = dict(data)
+            meta = cfg_probe.pop("_store_meta", {}) if isinstance(cfg_probe, dict) else {}
+            if cfg_probe and str(cfg_probe.get("ruleset", "")).strip() == ruleset:
+                return {"source": "db", "config_json": cfg_probe, "meta": meta}
         sel = engine.load(ruleset, profile)
         return {
             "source": "file",
@@ -1411,6 +1527,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         profile: str = Field(default="enhanced")
         purpose: str = Field(default="collect")
         schedule_id: str = Field(default="manual")
+        force: bool = Field(default=False)
 
     @app.post("/admin/api/scheduler/trigger")
     def scheduler_trigger(
@@ -1426,18 +1543,26 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         q_profile = str(request.query_params.get("profile", "")).strip()
         q_purpose = str(request.query_params.get("purpose", "")).strip()
         q_schedule = str(request.query_params.get("schedule_id", "")).strip()
+        q_force = str(request.query_params.get("force", "")).strip()
         if q_profile:
             raw["profile"] = q_profile
         if q_purpose:
             raw["purpose"] = q_purpose
         if q_schedule:
             raw["schedule_id"] = q_schedule
+        if q_force:
+            raw["force"] = q_force
 
         purpose = str(raw.get("purpose") or "collect").strip().lower()
         if purpose not in {"collect", "digest"}:
             raise HTTPException(status_code=400, detail="purpose must be collect|digest")
         profile = str(raw.get("profile") or "enhanced").strip() or "enhanced"
         schedule_id = str(raw.get("schedule_id") or "manual").strip() or "manual"
+        force_raw = raw.get("force", False)
+        if isinstance(force_raw, bool):
+            force = force_raw
+        else:
+            force = str(force_raw).strip().lower() in {"1", "true", "yes", "y", "on"}
         cmd_dir = root / "data" / "scheduler_commands"
         cmd_dir.mkdir(parents=True, exist_ok=True)
         fname = f"cmd-{int(time.time())}-{os.getpid()}.json"
@@ -1448,17 +1573,67 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                     "purpose": purpose,
                     "profile": profile,
                     "schedule_id": schedule_id,
+                    "force": bool(force),
                 },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
         )
-        return {"ok": True, "enqueued": True, "file": fname}
+        return {"ok": True, "enqueued": True, "file": fname, "force": bool(force)}
 
     def _effective_source_row(source_id: str, *, include_deleted: bool = True) -> dict[str, Any] | None:
         bundle = load_sources_registry_bundle(root, rules_root=engine.rules_root, include_deleted=include_deleted)
         rows = bundle.get("sources", []) if isinstance(bundle, dict) else []
         return next((dict(x) for x in rows if str(x.get("id", "")).strip() == str(source_id).strip()), None)
+
+    def _default_source_groups() -> dict[str, dict[str, Any]]:
+        return {
+            "regulatory": {"group_key": "regulatory", "display_name": "regulatory", "default_interval_minutes": 20, "enabled": True},
+            "media": {"group_key": "media", "display_name": "media", "default_interval_minutes": 60, "enabled": True},
+            "evidence": {"group_key": "evidence", "display_name": "evidence", "default_interval_minutes": 720, "enabled": True},
+            "company": {"group_key": "company", "display_name": "company", "default_interval_minutes": 240, "enabled": True},
+            "procurement": {"group_key": "procurement", "display_name": "procurement", "default_interval_minutes": 60, "enabled": True},
+        }
+
+    def _load_source_group_defaults() -> list[dict[str, Any]]:
+        groups = _default_source_groups()
+        try:
+            if source_group_defaults_path.exists():
+                raw = json.loads(source_group_defaults_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    for k, v in raw.items():
+                        gk = str(k or "").strip().lower()
+                        if not gk:
+                            continue
+                        row = groups.get(gk, {"group_key": gk, "display_name": gk, "default_interval_minutes": 60, "enabled": True})
+                        if isinstance(v, dict):
+                            if "display_name" in v and str(v.get("display_name", "")).strip():
+                                row["display_name"] = str(v.get("display_name")).strip()
+                            if "default_interval_minutes" in v and v.get("default_interval_minutes") is not None:
+                                try:
+                                    row["default_interval_minutes"] = int(v.get("default_interval_minutes"))
+                                except Exception:
+                                    pass
+                            if "enabled" in v:
+                                row["enabled"] = bool(v.get("enabled"))
+                        groups[gk] = row
+        except Exception:
+            pass
+        return [groups[k] for k in sorted(groups.keys())]
+
+    def _save_source_group_defaults(groups: list[dict[str, Any]]) -> None:
+        payload: dict[str, Any] = {}
+        for g in groups:
+            gk = str(g.get("group_key", "")).strip().lower()
+            if not gk:
+                continue
+            payload[gk] = {
+                "display_name": str(g.get("display_name", gk) or gk).strip() or gk,
+                "default_interval_minutes": int(g.get("default_interval_minutes") or 60),
+                "enabled": bool(g.get("enabled", True)),
+            }
+        source_group_defaults_path.parent.mkdir(parents=True, exist_ok=True)
+        source_group_defaults_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     @app.get("/admin/api/sources")
     def sources_list(
@@ -1504,12 +1679,15 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         if fim is None and isinstance(source.get("fetch"), dict):
             fim = source.get("fetch", {}).get("interval_minutes")
         source["fetch_interval_minutes"] = int(fim) if fim is not None and str(fim).strip() != "" else None
-        errs = _source_errors(source, store)
+        existing = _effective_source_row(str(source.get("id", "")), include_deleted=True)
+        skip_url_exists_check = (
+            isinstance(existing, dict)
+            and str(existing.get("url", "")).strip() == str(source.get("url", "")).strip()
+        )
+        errs = _source_errors(source, store, skip_url_exists_check=skip_url_exists_check)
         if errs:
             return {"ok": False, "error": {"code": "SOURCE_VALIDATION_FAILED", "details": errs}}
-        out = store.upsert_source(source)
-        eff = _effective_source_row(str(source.get("id", "")), include_deleted=True)
-        return {"ok": True, "source": eff or out.get("source", {})}
+        return upsert_source_registry(root, source, rules_root=engine.rules_root)
 
     @app.patch("/admin/api/sources/{source_id}")
     def sources_patch(
@@ -1517,7 +1695,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         payload: SourcePatchPayload,
         _: dict[str, str] = Depends(_auth_guard),
     ) -> dict[str, Any]:
-        cur = store.get_source(source_id)
+        cur = _effective_source_row(source_id, include_deleted=True)
         if not isinstance(cur, dict):
             raise HTTPException(status_code=404, detail="source not found")
         patch = payload.model_dump(exclude_unset=True)
@@ -1525,12 +1703,11 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         nxt.update(patch)
         if "fetch_interval_minutes" in patch and patch.get("fetch_interval_minutes") is None:
             nxt["fetch_interval_minutes"] = None
-        errs = _source_errors(nxt, store)
+        skip_url_exists_check = str(cur.get("url", "")).strip() == str(nxt.get("url", "")).strip()
+        errs = _source_errors(nxt, store, skip_url_exists_check=skip_url_exists_check)
         if errs:
             return {"ok": False, "error": {"code": "SOURCE_VALIDATION_FAILED", "details": errs}}
-        out = store.upsert_source(nxt)
-        eff = _effective_source_row(source_id, include_deleted=True)
-        return {"ok": True, "source": eff or out.get("source", {})}
+        return upsert_source_registry(root, nxt, rules_root=engine.rules_root)
 
     @app.post("/admin/api/sources/{source_id}/toggle")
     def sources_toggle(
@@ -1538,30 +1715,39 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         payload: TogglePayload,
         _: dict[str, str] = Depends(_auth_guard),
     ) -> dict[str, Any]:
-        out = store.toggle_source(source_id, enabled=payload.enabled)
-        eff = _effective_source_row(source_id, include_deleted=True)
-        return {"ok": True, "source": eff or out.get("source", {})}
+        return set_source_enabled_override(root, source_id, enabled=payload.enabled, rules_root=engine.rules_root)
 
     @app.delete("/admin/api/sources/{source_id}")
     def sources_delete(
         source_id: str,
         _: dict[str, str] = Depends(_auth_guard),
     ) -> dict[str, Any]:
-        out = store.soft_delete_source(source_id)
-        return {"ok": True, "source": out.get("source", {})}
+        cur = _effective_source_row(source_id, include_deleted=True)
+        if not isinstance(cur, dict):
+            raise HTTPException(status_code=404, detail="source not found")
+        nxt = dict(cur)
+        nxt["enabled"] = False
+        nxt["deleted_at"] = datetime.now(timezone.utc).isoformat()
+        out = upsert_source_registry(root, nxt, rules_root=engine.rules_root)
+        return {"ok": True, "source": out.get("source", nxt)}
 
     @app.post("/admin/api/sources/{source_id}/restore")
     def sources_restore(
         source_id: str,
         _: dict[str, str] = Depends(_auth_guard),
     ) -> dict[str, Any]:
-        out = store.restore_source(source_id)
+        cur = _effective_source_row(source_id, include_deleted=True)
+        if not isinstance(cur, dict):
+            raise HTTPException(status_code=404, detail="source not found")
+        nxt = dict(cur)
+        nxt.pop("deleted_at", None)
+        out = upsert_source_registry(root, nxt, rules_root=engine.rules_root)
         eff = _effective_source_row(source_id, include_deleted=True)
-        return {"ok": True, "source": eff or out.get("source", {})}
+        return {"ok": True, "source": eff or out.get("source", nxt)}
 
     @app.get("/admin/api/source-groups")
     def source_groups_list(_: dict[str, str] = Depends(_auth_guard)) -> dict[str, Any]:
-        return {"ok": True, "groups": store.list_source_groups()}
+        return {"ok": True, "groups": _load_source_group_defaults()}
 
     @app.patch("/admin/api/source-groups/{group_key}")
     def source_groups_patch(
@@ -1569,12 +1755,20 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         payload: SourceGroupPatchPayload,
         _: dict[str, str] = Depends(_auth_guard),
     ) -> dict[str, Any]:
-        cur = {str(x.get("group_key", "")): x for x in store.list_source_groups()}
-        base = cur.get(group_key, {"group_key": group_key, "display_name": group_key, "enabled": True})
+        cur = {str(x.get("group_key", "")).strip().lower(): x for x in _load_source_group_defaults()}
+        gk = str(group_key or "").strip().lower()
+        base = cur.get(gk, {"group_key": gk, "display_name": gk, "default_interval_minutes": 60, "enabled": True})
         patch = payload.model_dump(exclude_unset=True)
         base.update(patch)
-        out = store.upsert_source_group(base)
-        return {"ok": True, "group": out.get("group", {})}
+        base["group_key"] = gk
+        if base.get("default_interval_minutes") is not None:
+            try:
+                base["default_interval_minutes"] = int(base.get("default_interval_minutes"))
+            except Exception:
+                base["default_interval_minutes"] = 60
+        cur[gk] = base
+        _save_source_group_defaults(list(cur.values()))
+        return {"ok": True, "group": base}
 
     @app.post("/admin/api/sources/{source_id}/test")
     def sources_test(source_id: str, _: dict[str, str] = Depends(_auth_guard)) -> dict[str, Any]:
@@ -1709,7 +1903,14 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 <label>启用开关</label><select id="enabled"><option value="true">启用</option><option value="false">停用</option></select>
                 <label>发送时间(小时)</label><input id="hour" type="number" min="0" max="23"/>
                 <label>发送时间(分钟)</label><input id="minute" type="number" min="0" max="59"/>
+                <label>发送时点（逗号分隔，HH:MM）</label><input id="send_times" placeholder="09:00,21:00"/>
+                <label>窗口模式（window_mode）</label>
+                <select id="window_mode">
+                  <option value="segmented">分段窗口（推荐：晨/晚互补）</option>
+                  <option value="rolling">滚动窗口（兼容）</option>
+                </select>
                 <label>收件人列表(逗号分隔)</label><input id="recipients" placeholder="a@b.com,c@d.com"/>
+                <div class="small">支持直接填写邮箱（推荐）。兼容旧格式：${TO_EMAIL:-a@b.com}。</div>
                 <label>主题模板</label><input id="subject_template" />
                 <label>主题前缀（subject_prefix，可选）</label><input id="subject_prefix" placeholder="例如：[Enhanced] "/>
                 <div class="small">如果你不想要标题前面的 <code>[Enhanced]</code>，把这里清空并发布即可。</div>
@@ -1726,7 +1927,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                     <ul>
                       <li><b>规则档位（Profile）</b>：灰度/配置档位。通常用 <code>legacy</code> 保持原行为，用 <code>enhanced</code> 启用增强规则。</li>
                       <li><b>启用开关</b>：关闭后不发送邮件（用于临时停发或维护窗口）。</li>
-                      <li><b>发送时间</b>：按北京时间定时触发（GitHub Actions 兜底补发逻辑不受这里影响）。</li>
+                      <li><b>发送时间</b>：保留 hour/minute 兼容字段。</li>
+                      <li><b>发送时点</b>：支持多个时点（例如 <code>09:00,21:00</code>）。</li>
+                      <li><b>窗口模式</b>：<code>segmented</code> 表示按相邻时点分段取数；<code>rolling</code> 表示按固定小时窗口。</li>
                       <li><b>收件人列表</b>：逗号分隔邮箱地址（将写入 rules 的 recipient 字段）。</li>
                       <li><b>主题模板</b>：支持占位符（例如 <code>{{date}}</code>），用于生成邮件主题。</li>
                       <li><b>主题前缀</b>：会拼在主题模板前（例如 <code>[Enhanced] </code>）。留空则不加前缀。</li>
@@ -1773,6 +1976,61 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
         }
         function splitCsv(s){ return (s||'').split(',').map(x=>x.trim()).filter(Boolean); }
+        function splitRecipients(s){
+          return String(s||'').split(/[,\\n;]+/).map(x=>x.trim()).filter(Boolean);
+        }
+        function looksLikeEnvToken(s){
+          return /^\\$\\{[A-Z][A-Z0-9_]*(?::-[^}]*)?\\}$/.test(String(s||'').trim());
+        }
+        function normalizeRecipientForInput(raw){
+          const s = String(raw||'').trim();
+          // Backward-compatible display: expand ${TO_EMAIL:-a@b.com} to plain emails for easier editing.
+          const m = s.match(/^\\$\\{TO_EMAIL:-([^}]*)\\}$/);
+          if(m) return String(m[1]||'').trim();
+          return s;
+        }
+        function normalizeRecipientsForSave(raw){
+          const vals = splitRecipients(raw);
+          return vals.join(',');
+        }
+        function parseSendTimes(raw){
+          const vals = String(raw||'').split(',').map(x=>x.trim()).filter(Boolean);
+          const out = [];
+          for(const v of vals){
+            const m = v.match(/^([01]\\d|2[0-3]):([0-5]\\d)$/);
+            if(!m){ continue; }
+            out.push(`${m[1]}:${m[2]}`);
+          }
+          return Array.from(new Set(out));
+        }
+        function validateRecipientsOrThrow(raw){
+          const vals = splitRecipients(raw);
+          if(!vals.length){
+            throw new Error('收件人不能为空，请填写至少一个邮箱地址');
+          }
+          const emailRe = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
+          const bad = vals.filter(v => !(emailRe.test(v) || looksLikeEnvToken(v)));
+          if(bad.length){
+            throw new Error(`收件人格式不正确: ${bad.join(', ')}`);
+          }
+        }
+        function normalizeSectionsOrder(arr){
+          const allowed = new Set(['A','B','C','D','E','F','G','H']);
+          const seen = new Set();
+          const out = [];
+          for(const x of (Array.isArray(arr) ? arr : [])){
+            const v = String(x||'').trim().toUpperCase();
+            if(!allowed.has(v) || seen.has(v)) continue;
+            seen.add(v); out.push(v);
+          }
+          if(!out.length){
+            return ['A','B','C','D','E','F','G','H'];
+          }
+          if(!out.includes('H')) out.push('H');
+          const withoutH = out.filter(x=>x !== 'H');
+          withoutH.push('H');
+          return withoutH;
+        }
         function highlightInEscaped(escapedText, terms, className){
           if(!terms || !terms.length) return escapedText;
           let out = escapedText;
@@ -1785,23 +2043,36 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           return out;
         }
             async function loadActive() {
-              const profile = document.getElementById('profile').value;
-              const j = await api(`/admin/api/email_rules/active?profile=${encodeURIComponent(profile)}`);
-              if (!j || !j.ok) { document.getElementById('status').textContent = JSON.stringify(j); toast('err','加载失败','读取生效配置失败'); return; }
-              currentConfig = j.config_json;
-              document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
-          document.getElementById('enabled').value = String(!!(currentConfig.overrides||{}).enabled);
-          const sw = (currentConfig.defaults||{}).send_window || {};
-          document.getElementById('hour').value = sw.hour ?? 8;
-          document.getElementById('minute').value = sw.minute ?? 30;
-          const rec = (currentConfig.defaults||{}).recipient || '';
-          document.getElementById('recipients').value = rec;
-          document.getElementById('subject_template').value = (currentConfig.defaults||{}).subject_template || '';
-          document.getElementById('subject_prefix').value = (currentConfig.overrides||{}).subject_prefix || '';
-              document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
-          document.getElementById('btnPublish').disabled = true;
-          currentDraftId = null;
-        }
+              try{
+                const profile = document.getElementById('profile').value;
+                const j = await api(`/admin/api/email_rules/active?profile=${encodeURIComponent(profile)}`);
+                if (!j || !j.ok) {
+                  document.getElementById('status').innerHTML = `<span class="err">读取生效配置失败</span> ${escHtml(JSON.stringify(j||{}))}`;
+                  toast('err','加载失败','读取生效配置失败');
+                  return;
+                }
+                currentConfig = j.config_json || {};
+                document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
+                document.getElementById('enabled').value = String(!!(currentConfig.overrides||{}).enabled);
+                const sw = (currentConfig.defaults||{}).send_window || {};
+                document.getElementById('hour').value = sw.hour ?? 8;
+                document.getElementById('minute').value = sw.minute ?? 30;
+                const st = Array.isArray((currentConfig.defaults||{}).send_times) ? (currentConfig.defaults||{}).send_times : [];
+                document.getElementById('send_times').value = st.length ? st.join(',') : `${String(sw.hour ?? 8).padStart(2,'0')}:${String(sw.minute ?? 30).padStart(2,'0')}`;
+                document.getElementById('window_mode').value = String((currentConfig.defaults||{}).window_mode || 'rolling');
+                const rec = (currentConfig.defaults||{}).recipient || '';
+                document.getElementById('recipients').value = normalizeRecipientForInput(rec);
+                document.getElementById('subject_template').value = (currentConfig.defaults||{}).subject_template || '';
+                document.getElementById('subject_prefix').value = (currentConfig.overrides||{}).subject_prefix || '';
+                document.getElementById('status').innerHTML = '<span class="ok">已加载生效配置</span>';
+                document.getElementById('btnPublish').disabled = true;
+                currentDraftId = null;
+              }catch(e){
+                const msg = String(e && e.message ? e.message : e);
+                document.getElementById('status').innerHTML = `<span class="err">页面加载异常</span> ${escHtml(msg)}`;
+                toast('err','页面脚本异常', msg);
+              }
+            }
         function buildConfig() {
           const cfg = JSON.parse(JSON.stringify(currentConfig||{}));
           if (!cfg.defaults) cfg.defaults = {};
@@ -1809,7 +2080,16 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           if (!cfg.overrides) cfg.overrides = {};
           cfg.defaults.send_window.hour = Number(document.getElementById('hour').value||8);
           cfg.defaults.send_window.minute = Number(document.getElementById('minute').value||30);
-          cfg.defaults.recipient = document.getElementById('recipients').value.trim();
+          const sendTimesRaw = document.getElementById('send_times').value.trim();
+          const parsedTimes = parseSendTimes(sendTimesRaw);
+          if(sendTimesRaw && !parsedTimes.length){
+            throw new Error('发送时点格式无效，请使用 HH:MM，例如 09:00,21:00');
+          }
+          cfg.defaults.send_times = parsedTimes.length ? parsedTimes : [`${String(cfg.defaults.send_window.hour).padStart(2,'0')}:${String(cfg.defaults.send_window.minute).padStart(2,'0')}`];
+          cfg.defaults.window_mode = document.getElementById('window_mode').value || 'rolling';
+          const recRaw = document.getElementById('recipients').value.trim();
+          validateRecipientsOrThrow(recRaw);
+          cfg.defaults.recipient = normalizeRecipientsForSave(recRaw);
           cfg.defaults.subject_template = document.getElementById('subject_template').value.trim();
           cfg.overrides.enabled = document.getElementById('enabled').value === 'true';
           cfg.overrides.subject_prefix = document.getElementById('subject_prefix').value;
@@ -1817,10 +2097,19 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           cfg.ruleset = 'email_rules';
           return cfg;
         }
-            async function saveDraft() {
+        async function saveDraft() {
           const profile = document.getElementById('profile').value;
           const created_by = document.getElementById('created_by').value || 'rules-admin-ui';
-          const j = await api('/admin/api/email_rules/draft','POST',{ profile, created_by, config_json: buildConfig() });
+          let payload = null;
+          try{
+            payload = buildConfig();
+          }catch(e){
+            document.getElementById('status').innerHTML = `<span class="err">${String(e && e.message ? e.message : e)}</span>`;
+            document.getElementById('btnPublish').disabled = true;
+            toast('err','收件人校验失败', String(e && e.message ? e.message : e));
+            return;
+          }
+          const j = await api('/admin/api/email_rules/draft','POST',{ profile, created_by, config_json: payload });
           if (!j) return;
           currentDraftId = j.draft?.id || null;
           const errs = j.draft?.validation_errors || [];
@@ -2936,18 +3225,19 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             <select id="profile"><option value="enhanced">增强（enhanced）</option><option value="legacy">保持现状（legacy）</option></select>
             <label>启用开关</label><select id="enabled"><option value="true">启用</option><option value="false">停用</option></select>
 
-            <label>栏目顺序（A..G，逗号分隔，G 必须最后）</label>
-            <input id="sections_order" placeholder="A,B,C,D,E,F,G"/>
-            <div class="small">强约束：G 段必须置尾；A-F 不允许出现质量指标字段。</div>
+            <label>栏目顺序（A..H，逗号分隔，H 必须最后）</label>
+            <input id="sections_order" placeholder="A,B,C,D,E,F,G,H"/>
+            <div class="small">强约束：H 段必须置尾；A-F 不允许出现质量指标字段（质量审计仅在 G 段）。</div>
             <label>栏目开关（sections.enabled）</label>
             <div class="box">
-              <label class="chk"><input type="checkbox" name="sec_enabled" value="A"/> A 今日要点</label>
-              <label class="chk"><input type="checkbox" name="sec_enabled" value="B"/> B 分赛道速览</label>
-              <label class="chk"><input type="checkbox" name="sec_enabled" value="C"/> C 技术平台雷达</label>
-              <label class="chk"><input type="checkbox" name="sec_enabled" value="D"/> D 区域热力图</label>
-              <label class="chk"><input type="checkbox" name="sec_enabled" value="E"/> E 趋势判断</label>
-              <label class="chk"><input type="checkbox" name="sec_enabled" value="F"/> F 信息缺口</label>
-              <label class="chk"><input type="checkbox" name="sec_enabled" value="G"/> G 质量指标</label>
+              <label class="chk"><input type="checkbox" name="sec_enabled" value="A" checked/> A 今日要点</label>
+              <label class="chk"><input type="checkbox" name="sec_enabled" value="B" checked/> B 分赛道速览</label>
+              <label class="chk"><input type="checkbox" name="sec_enabled" value="C" checked/> C 技术平台雷达</label>
+              <label class="chk"><input type="checkbox" name="sec_enabled" value="D" checked/> D 区域热力图</label>
+              <label class="chk"><input type="checkbox" name="sec_enabled" value="E" checked/> E 趋势判断</label>
+              <label class="chk"><input type="checkbox" name="sec_enabled" value="F" checked/> F 信息缺口</label>
+              <label class="chk"><input type="checkbox" name="sec_enabled" value="G" checked/> G 质量指标</label>
+              <label class="chk"><input type="checkbox" name="sec_enabled" value="H" checked/> H 机会强度指数</label>
             </div>
 
             <label>A 段条数最小/最大</label>
@@ -3020,6 +3310,24 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         let currentConfig = null;
         let currentDraftId = null;
         function splitCsv(s){ return (s||'').split(',').map(x=>x.trim()).filter(Boolean); }
+        function normalizeSectionsOrder(arr){
+          const allowed = new Set(['A','B','C','D','E','F','G','H']);
+          const seen = new Set();
+          const out = [];
+          for(const x of (Array.isArray(arr) ? arr : [])){
+            const v = String(x||'').trim().toUpperCase();
+            if(!allowed.has(v) || seen.has(v)) continue;
+            seen.add(v);
+            out.push(v);
+          }
+          if(!out.length){
+            return ['A','B','C','D','E','F','G','H'];
+          }
+          if(!out.includes('H')) out.push('H');
+          const withoutH = out.filter(x => x !== 'H');
+          withoutH.push('H');
+          return withoutH;
+        }
         function ensureRule(cfg, type, id, priority){
           cfg.rules = cfg.rules || [];
           let r = (cfg.rules||[]).find(x=>x && typeof x==='object' && x.type===type);
@@ -3056,11 +3364,18 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('verPill').textContent = `生效版本: ${j.meta?.version || j.meta?.path || '-'}`;
           document.getElementById('enabled').value = String(!!(currentConfig.overrides||{}).enabled);
           const d = currentConfig.defaults||{};
-          const order = (currentConfig.output && currentConfig.output.sections_order) ? currentConfig.output.sections_order : ['A','B','C','D','E','F','G'];
+          const rawOrder = (currentConfig.output && currentConfig.output.sections_order) ? currentConfig.output.sections_order : ['A','B','C','D','E','F','G','H'];
+          const order = normalizeSectionsOrder(rawOrder);
           document.getElementById('sections_order').value = (order||[]).join(',');
-          const secs = (d.sections||[]).filter(x=>x && typeof x==='object');
+          const secsRaw = d.sections;
+          let secs = [];
+          if(Array.isArray(secsRaw)){
+            secs = secsRaw.filter(x=>x && typeof x==='object');
+          }else if(secsRaw && typeof secsRaw === 'object'){
+            secs = Object.entries(secsRaw).map(([id, enabled])=>({id:String(id||''), enabled: !!enabled}));
+          }
           const enabledSecs = secs.filter(s=>s.enabled).map(s=>String(s.id));
-          setChecks('sec_enabled', enabledSecs.length ? enabledSecs : ['A','B','C','D','E','F','G']);
+          setChecks('sec_enabled', enabledSecs.length ? enabledSecs : ['A','B','C','D','E','F','G','H']);
           const A = d.A||{};
           document.getElementById('a_min').value = (A.items_range||{}).min ?? 8;
           document.getElementById('a_max').value = (A.items_range||{}).max ?? 15;
@@ -3104,7 +3419,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           cfg.overrides.enabled = document.getElementById('enabled').value === 'true';
           cfg.defaults.format = cfg.defaults.format || 'plain_text';
           cfg.output = cfg.output || {};
-          cfg.output.sections_order = splitCsv(document.getElementById('sections_order').value);
+          cfg.output.sections_order = normalizeSectionsOrder(splitCsv(document.getElementById('sections_order').value));
           const enabledSet = new Set(getChecks('sec_enabled'));
           cfg.defaults.sections = (cfg.output.sections_order||[]).map(id=>({id, enabled: enabledSet.has(String(id))}));
           cfg.defaults.A = cfg.defaults.A || {};
@@ -3126,7 +3441,11 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             tone: document.getElementById('style_tone').value || 'concise_decision',
             no_fluff: document.getElementById('style_no_fluff').value === 'true',
           };
-          cfg.defaults.constraints = { g_must_be_last: true, a_to_f_must_not_include_quality_metrics: true };
+          cfg.defaults.constraints = {
+            g_must_be_last: true,
+            h_must_be_last: true,
+            a_to_f_must_not_include_quality_metrics: true,
+          };
 
           // Keep rules in sync with defaults to avoid "rule overrides defaults" surprises.
           // This is the root cause of "trends_count set to 5 but output still shows 3".
@@ -3287,6 +3606,10 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   <button onclick="pauseNow(false)">恢复</button>
                   <button onclick="triggerNow('collect')">立即触发：采集（collect）</button>
                   <button onclick="triggerNow('digest')">立即触发：出日报（digest）</button>
+                  <select id="manual_collect_mode" title="采集触发模式" style="max-width:180px">
+                    <option value="standard">标准采集（按间隔）</option>
+                    <option value="force">强制采集（忽略间隔）</option>
+                  </select>
                   <button onclick="loadStatus()">刷新状态</button>
                 </div>
                 <div class="drawer" id="schedStatus"></div>
@@ -3439,8 +3762,18 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         }
         async function triggerNow(purpose){
           const profile = document.getElementById('profile').value;
-          await api('/admin/api/scheduler/trigger','POST',{ profile, purpose, schedule_id:'manual' });
-          toast('ok','已触发', purpose);
+          const collectModeEl = document.getElementById('manual_collect_mode');
+          const collectMode = collectModeEl ? collectModeEl.value : 'standard';
+          const force = (purpose === 'collect' && collectMode === 'force');
+          if(force){
+            const ok = window.confirm('将忽略 interval_minutes，对已启用信源立即抓取。继续吗？');
+            if(!ok){
+              toast('warn', '已取消', '未执行强制采集');
+              return;
+            }
+          }
+          await api('/admin/api/scheduler/trigger','POST',{ profile, purpose, schedule_id:'manual', force });
+          toast('ok','已触发', purpose + (force ? '（force）' : ''));
           await loadStatus();
         }
 
@@ -3565,7 +3898,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             </div>
             <label>信源ID（唯一）</label><input id="id" placeholder="例如：reuters-health-rss"/>
 	            <label>名称</label><input id="name" placeholder="例如：Reuters Healthcare"/>
-	            <label>采集方式</label>
+	            <label>采集连接器</label>
               <select id="connector">
                 <option value="rss">RSS（rss）</option>
                 <option value="html">网页（html）</option>
@@ -3573,9 +3906,17 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                 <option value="google_news">Google News RSS（google_news）</option>
                 <option value="api">API（api，可选）</option>
               </select>
-	            <label>URL（rss/html/google_news 必填；api 填 base_url）</label><input id="url" placeholder="https://... 或 rsshub://"/>
+              <label>解析模式</label>
+              <select id="parse_mode"></select>
+	            <label>URL（rss/html/google_news 必填；api/rsshub 填 base_url）</label><input id="url" placeholder="https://... 或 rsshub://"/>
 	            <label>地区</label><input id="region" placeholder="例如：中国/亚太/北美/欧洲/全球"/>
-	            <label>API endpoint（仅 api 需要，如 /v1/news）</label><input id="api_endpoint" placeholder="/v1/news"/>
+              <div id="rsshub_route_wrap">
+                <label>RSSHub Route（仅 rsshub 需要）</label><input id="rsshub_route" placeholder="/nmpa/ylqx/ylqxdt"/>
+                <div class="small">以 / 开头，例如 /newyorktimes/world</div>
+              </div>
+              <div id="api_endpoint_wrap">
+	              <label>API endpoint（仅 api 需要，如 /opportunities/v2/search?limit=10）</label><input id="api_endpoint" placeholder="/opportunities/v2/search?limit=10"/>
+              </div>
 
             <label>source_group</label>
             <select id="source_group">
@@ -3614,9 +3955,11 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               <div class="box">
                 <ul>
                   <li><b>信源ID</b>：全局唯一标识。建议用小写字母/数字/.-_ 组合，例如 <code>reuters-health-rss</code>。后续规则引用、统计、去重聚合都会用到它。</li>
-	                  <li><b>采集方式</b>：<code>rss</code> 支持自动发现 feed；<code>html</code> 抓取网页列表；<code>rsshub</code> 用路由转 RSS；<code>google_news</code> 为聚合 RSS（默认建议关闭）；<code>api</code> 适合 JSON API。</li>
+	                  <li><b>采集连接器</b>：<code>rss</code> 支持自动发现 feed；<code>html</code> 抓取网页；<code>rsshub</code> 用路由转 RSS；<code>google_news</code> 为聚合 RSS；<code>api</code> 适合 JSON API。</li>
+	                  <li><b>解析模式</b>：决定写入候选前的解析路径。<code>rss</code> / <code>html_article</code> / <code>html_list</code> / <code>api_json</code>，并随连接器联动约束。</li>
 	                  <li><b>URL</b>：rss/html/google_news 必填。api 时作为 <b>base_url</b> 使用。rsshub 可填 <code>rsshub://</code> 占位并配 <code>fetch.rsshub_route</code>。</li>
-	                  <li><b>API endpoint</b>：仅 api 需要，形如 <code>/v1/news</code>。test 会请求 base_url + endpoint。</li>
+	                  <li><b>RSSHub Route</b>：仅 rsshub 需要，必须以 <code>/</code> 开头，例如 <code>/newyorktimes/world</code>。</li>
+	                  <li><b>API endpoint</b>：仅 api 需要，形如 <code>/opportunities/v2/search?limit=10</code>。test 会请求 base_url + endpoint。</li>
 	                  <li><b>interval_minutes</b>：每个信源的采集频率（分钟）。后续 scheduler 会按该值决定是否抓取该 source。</li>
 	                  <li><b>timeout_seconds</b>：单次抓取超时（秒）。</li>
 	                  <li><b>headers_json</b>：附加请求头（JSON 对象）。</li>
@@ -3664,33 +4007,61 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           try { const o = JSON.parse(t); return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {}; }
           catch(e){ return { __parse_error__: String(e) }; }
         }
-        function fmtTime(iso){
-          if(!iso) return '';
-          try { return new Date(iso).toLocaleString(); } catch(e) { return String(iso); }
+        function fmtTime(raw){
+          const s = String(raw||'').trim();
+          if(!s) return '';
+          let d = null;
+          if(/^[0-9]+(\\.[0-9]+)?$/.test(s)){
+            const n = Number(s);
+            if(Number.isFinite(n)){
+              const ms = n > 1e12 ? n : n * 1000;
+              d = new Date(ms);
+            }
+          }else{
+            d = new Date(s);
+          }
+          if(!d || Number.isNaN(d.getTime())) return s;
+          const dtf = new Intl.DateTimeFormat('zh-CN', {
+            timeZone: 'Asia/Shanghai',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hour12: false,
+          });
+          return dtf.format(d).replaceAll('/', '-');
         }
-        function fmtRelativeTime(iso){
-          if(!iso) return { rel:'-', abs:'' };
-          const d = new Date(iso);
-          if(Number.isNaN(d.getTime())) return { rel:String(iso), abs:String(iso) };
+        function fmtRelativeTime(raw){
+          if(!raw) return { rel:'-', abs:'' };
+          const abs = fmtTime(raw);
+          const s = String(raw||'').trim();
+          let d = null;
+          if(/^[0-9]+(\\.[0-9]+)?$/.test(s)){
+            const n = Number(s);
+            if(Number.isFinite(n)){
+              const ms = n > 1e12 ? n : n * 1000;
+              d = new Date(ms);
+            }
+          }else{
+            d = new Date(s);
+          }
+          if(!d || Number.isNaN(d.getTime())) return { rel:String(raw), abs:abs || String(raw) };
           const now = new Date();
           const diffSec = Math.floor((now.getTime() - d.getTime()) / 1000);
-          const abs = d.toLocaleString();
-          if(diffSec < 0) return { rel:'just now', abs };
-          if(diffSec < 60) return { rel: diffSec + 's ago', abs };
+          if(diffSec < 0) return { rel:'刚刚', abs };
+          if(diffSec < 60) return { rel: diffSec + '秒前', abs };
           const m = Math.floor(diffSec / 60);
-          if(m < 60) return { rel: m + 'm ago', abs };
+          if(m < 60) return { rel: m + '分钟前', abs };
           const h = Math.floor(m / 60);
-          if(h < 24) return { rel: h + 'h ago', abs };
+          if(h < 24) return { rel: h + '小时前', abs };
           const day = Math.floor(h / 24);
-          return { rel: day + 'd ago', abs };
+          return { rel: day + '天前', abs };
         }
         function fmtDurationMin(totalMin){
           const v = Math.max(0, Math.floor(Number(totalMin)||0));
           const h = Math.floor(v / 60);
           const m = v % 60;
-          if(h > 0 && m > 0) return `${h}h ${m}m`;
-          if(h > 0) return `${h}h`;
-          return `${m}m`;
+          if(h > 0 && m > 0) return `${h}小时${m}分钟`;
+          if(h > 0) return `${h}小时`;
+          return `${m}分钟`;
         }
         function nextDueInfo(lastFetchedAt, intervalMinutes){
           if(!lastFetchedAt) return null;
@@ -3714,6 +4085,69 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           } catch(e) {
             return u || '';
           }
+        }
+        const CONNECTOR_MODE_MAP = {
+          rss: ['rss'],
+          html: ['html_article', 'html_list'],
+          rsshub: ['rss'],
+          google_news: ['rss'],
+          api: ['api_json'],
+        };
+        const KNOWN_PARSE_MODES = ['rss', 'html_article', 'html_list', 'api_json'];
+        function connectorFromMode(mode){
+          const m = String(mode || '').toLowerCase();
+          if(m === 'html_article' || m === 'html_list') return 'html';
+          if(m === 'api_json') return 'api';
+          return 'rss';
+        }
+        function defaultModeForConnector(connector){
+          const c = String(connector || '').toLowerCase();
+          const options = CONNECTOR_MODE_MAP[c] || ['rss'];
+          return options[0];
+        }
+        function normalizeParseMode(connector, mode){
+          const c = String(connector || '').toLowerCase();
+          const m = String(mode || '').toLowerCase();
+          const options = CONNECTOR_MODE_MAP[c] || ['rss'];
+          if(m && options.includes(m)) return m;
+          return options[0];
+        }
+        function sourceParseMode(s){
+          const connector = String(s.fetcher || s.connector || '').toLowerCase();
+          const rawMode = String((s.fetch||{}).mode || '').toLowerCase();
+          if(rawMode && KNOWN_PARSE_MODES.includes(rawMode)) return rawMode;
+          return normalizeParseMode(connector || 'rss', rawMode);
+        }
+        function modeLabel(mode){
+          const m = String(mode || '').toLowerCase();
+          if(m === 'rss') return 'rss';
+          if(m === 'html_article') return 'html_article';
+          if(m === 'html_list') return 'html_list';
+          if(m === 'api_json') return 'api_json';
+          return m || 'rss';
+        }
+        function renderParseModeOptions(connector, selectedMode){
+          const c = String(connector || '').toLowerCase() || 'rss';
+          const options = CONNECTOR_MODE_MAP[c] || ['rss'];
+          const selected = normalizeParseMode(c, selectedMode);
+          const el = document.getElementById('parse_mode');
+          if(!el) return;
+          el.innerHTML = options.map((m)=>`<option value="${esc(m)}"${m===selected?' selected':''}>${esc(modeLabel(m))}</option>`).join('');
+          el.value = selected;
+        }
+        function syncParseModeWithConnector(){
+          const connectorEl = document.getElementById('connector');
+          const modeEl = document.getElementById('parse_mode');
+          if(!connectorEl || !modeEl) return;
+          renderParseModeOptions(connectorEl.value || 'rss', modeEl.value || '');
+          setConnectorFieldVisibility(connectorEl.value || 'rss');
+        }
+        function setConnectorFieldVisibility(connector){
+          const c = String(connector || '').toLowerCase();
+          const rsshubWrap = document.getElementById('rsshub_route_wrap');
+          const apiWrap = document.getElementById('api_endpoint_wrap');
+          if(rsshubWrap) rsshubWrap.style.display = (c === 'rsshub') ? 'block' : 'none';
+          if(apiWrap) apiWrap.style.display = (c === 'api') ? 'block' : 'none';
         }
         function matchQ(s, q){
           if(!q) return true;
@@ -3790,7 +4224,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           if (s.enabled && st === 'skipped') {
             const nd = nextDueInfo(lastFetchRaw, intervalNum);
             if (nd && nd.remainMin > 0) {
-              statusSub = `<div class="status-sub" title="下次抓取：${esc(nd.dueAt.toLocaleString())}">下次 +${esc(fmtDurationMin(nd.remainMin))}</div>`;
+              statusSub = `<div class="status-sub" title="下次抓取：${esc(fmtTime(nd.dueAt.toISOString()))}">下次 +${esc(fmtDurationMin(nd.remainMin))}</div>`;
             }
           } else if (s.enabled && statusShort === '待抓取') {
             statusSub = intervalNum > 0
@@ -3807,7 +4241,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           const authPill = authRef
             ? (s.auth_configured ? `<span class="pill">鉴权✓</span>` : `<span class="pill err" title="未在容器环境变量中找到该 auth_ref">鉴权×</span>`)
             : '';
-          const mode = String((s.fetch||{}).mode || s.fetcher || s.connector || '');
+          const connector = String(s.fetcher || s.connector || 'rss').toLowerCase();
+          const mode = sourceParseMode(s);
           const tagsRaw = (s.tags||[]).join(',');
           const tags = esc(tagsRaw);
           const tagsCount = (s.tags||[]).length;
@@ -3839,7 +4274,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
                   <div class="details-grid">
                     <div><div class="k">ID</div><div class="v">${esc(s.id||'')}</div></div>
                     <div><div class="k">链接</div><div class="v">${urlCell || '-'}</div></div>
-                    <div><div class="k">方式</div><div class="v">${esc(s.fetcher || s.connector || '-')}</div></div>
+                    <div><div class="k">连接器</div><div class="v">${esc(connector || '-')}</div></div>
+                    <div><div class="k">解析模式</div><div class="v">${esc(mode || '-')}</div></div>
                     <div><div class="k">地区</div><div class="v">${esc(s.region||'-')}</div></div>
                     <div><div class="k">优先级</div><div class="v">${esc(s.priority ?? '-')}</div></div>
                     <div><div class="k">删除状态</div><div class="v">${s.deleted_at ? '已删除' : '-'}</div></div>
@@ -3862,7 +4298,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             if(fe==='enabled' && !s.enabled) return false;
             if(fe==='disabled' && s.enabled) return false;
             if(fg && String(s.source_group||'').toLowerCase() !== fg) return false;
-            const mode = String((s.fetch||{}).mode || s.fetcher || s.connector || '').toLowerCase();
+            const mode = sourceParseMode(s);
             if(fm && mode !== fm) return false;
             return matchQ(s,q);
           });
@@ -3880,11 +4316,14 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           const s = (window._sources||[]).find(x=>x.id===id); if(!s) return;
           document.getElementById('id').value = s.id||'';
           document.getElementById('name').value = s.name||'';
-          document.getElementById('connector').value = (s.fetcher||s.connector||'rss');
+          const connector = String(s.fetcher||s.connector||connectorFromMode(sourceParseMode(s))||'rss').toLowerCase();
+          document.getElementById('connector').value = connector;
+          renderParseModeOptions(connector, sourceParseMode(s));
           document.getElementById('url').value = s.url||'';
           document.getElementById('region').value = s.region||'全球';
           const f = s.fetch||{};
           document.getElementById('api_endpoint').value = f.endpoint||'';
+          document.getElementById('rsshub_route').value = f.rsshub_route||'';
           document.getElementById('fetch_interval').value = (s.fetch_interval_minutes ?? f.interval_minutes ?? '');
           document.getElementById('fetch_timeout').value = (f.timeout_seconds ?? '');
           document.getElementById('fetch_headers').value = (f.headers_json && Object.keys(f.headers_json||{}).length) ? JSON.stringify(f.headers_json||{}) : '';
@@ -3901,15 +4340,18 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('trust_tier').value = s.trust_tier||'B';
           document.getElementById('tags').value = (s.tags||[]).join(',');
           document.getElementById('enabled').value = String(!!s.enabled);
+          setConnectorFieldVisibility(connector);
           toast('ok','已载入到左侧表单', id);
         }
         function clearForm(){
           document.getElementById('id').value = '';
           document.getElementById('name').value = '';
           document.getElementById('connector').value = 'rss';
+          renderParseModeOptions('rss', 'rss');
           document.getElementById('url').value = '';
           document.getElementById('region').value = '';
           document.getElementById('api_endpoint').value = '';
+          document.getElementById('rsshub_route').value = '';
           document.getElementById('fetch_interval').value = '';
           document.getElementById('fetch_timeout').value = '';
           document.getElementById('fetch_headers').value = '';
@@ -3923,6 +4365,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('trust_tier').value = 'B';
           document.getElementById('tags').value = '';
           document.getElementById('enabled').value = 'true';
+          setConnectorFieldVisibility('rss');
         }
         async function saveSource(){
           const headersObj = parseJsonOrEmpty(document.getElementById('fetch_headers').value);
@@ -3930,11 +4373,34 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             toast('err','headers_json JSON 解析失败', headersObj.__parse_error__);
             return;
           }
+          const connector = document.getElementById('connector').value;
+          let rsshubRoute = document.getElementById('rsshub_route').value.trim();
+          if (connector === 'rsshub') {
+            if(!rsshubRoute){
+              toast('err','保存失败','RSSHub 路由不能为空（例如 /newyorktimes/world）');
+              return;
+            }
+            if(!rsshubRoute.startsWith('/')) rsshubRoute = '/' + rsshubRoute;
+          }
+          const fetchCfg = {
+            mode: normalizeParseMode(connector, document.getElementById('parse_mode').value),
+            interval_minutes: document.getElementById('fetch_interval').value ? Number(document.getElementById('fetch_interval').value) : undefined,
+            timeout_seconds: document.getElementById('fetch_timeout').value ? Number(document.getElementById('fetch_timeout').value) : undefined,
+            headers_json: headersObj,
+            auth_ref: document.getElementById('fetch_auth_ref').value.trim() || undefined,
+          };
+          if (connector === 'api') {
+            fetchCfg.endpoint = document.getElementById('api_endpoint').value.trim() || undefined;
+          }
+          if (connector === 'rsshub') {
+            fetchCfg.base_url = document.getElementById('url').value.trim() || undefined;
+            fetchCfg.rsshub_route = rsshubRoute;
+          }
           const payload = {
             id: document.getElementById('id').value.trim(),
             name: document.getElementById('name').value.trim(),
-            connector: document.getElementById('connector').value,
-            fetcher: document.getElementById('connector').value,
+            connector: connector,
+            fetcher: connector,
             url: document.getElementById('url').value.trim(),
             region: document.getElementById('region').value.trim() || '全球',
             priority: Number(document.getElementById('priority').value||0),
@@ -3943,13 +4409,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             trust_tier: document.getElementById('trust_tier').value,
             tags: arr(document.getElementById('tags').value),
             enabled: document.getElementById('enabled').value === 'true',
-            fetch: {
-              interval_minutes: document.getElementById('fetch_interval').value ? Number(document.getElementById('fetch_interval').value) : undefined,
-              timeout_seconds: document.getElementById('fetch_timeout').value ? Number(document.getElementById('fetch_timeout').value) : undefined,
-              headers_json: headersObj,
-              auth_ref: document.getElementById('fetch_auth_ref').value.trim() || undefined,
-              endpoint: document.getElementById('api_endpoint').value.trim() || undefined,
-            },
+            fetch: fetchCfg,
             rate_limit: {
               rps: document.getElementById('rl_rps').value ? Number(document.getElementById('rl_rps').value) : undefined,
               burst: document.getElementById('rl_burst').value ? Number(document.getElementById('rl_burst').value) : undefined,
@@ -4031,6 +4491,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         document.getElementById('filter_group').addEventListener('change', ()=>{ loadSources(); });
         document.getElementById('filter_mode').addEventListener('change', ()=>{ loadSources(); });
         document.getElementById('show_deleted').addEventListener('change', ()=>{ loadSources(); });
+        document.getElementById('connector').addEventListener('change', ()=>{ syncParseModeWithConnector(); });
+        renderParseModeOptions('rss', 'rss');
+        setConnectorFieldVisibility('rss');
         loadSources();
         loadGroups();
         """
@@ -4397,14 +4860,14 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           }
         </style>
         <div class="card" style="margin-bottom:14px">
-          <h4>Health Status</h4>
+          <h4>健康状态</h4>
           <div id="healthOverall" style="font-size:18px;font-weight:800">加载中...</div>
           <div id="healthRules" style="margin-top:8px">加载中...</div>
         </div>
         <div class="ops-grid">
           <div class="card ops-card">
             <div class="ops-head">
-              <h4>Digest</h4>
+              <h4>出刊（Digest）</h4>
             </div>
             <div class="ops-body">
               <div class="kvs" id="digestMeta">
@@ -4416,7 +4879,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           </div>
           <div class="card ops-card">
             <div class="ops-head">
-              <h4>Collect</h4>
+              <h4>采集（Collect）</h4>
             </div>
             <div class="ops-body">
               <div class="kvs" id="collectMeta">
@@ -4428,7 +4891,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           </div>
           <div class="card ops-card">
             <div class="ops-head">
-              <h4>Acceptance</h4>
+              <h4>验收（Acceptance）</h4>
             </div>
             <div class="ops-body">
               <div class="kvs" id="acceptanceMeta">
@@ -4440,7 +4903,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           </div>
           <div class="card ops-card">
             <div class="ops-head">
-              <h4>Procurement Probe</h4>
+              <h4>采购探测（Probe）</h4>
             </div>
             <div class="ops-body">
               <div class="kvs" id="probeMeta">
@@ -4452,16 +4915,38 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           </div>
         </div>
         <div class="card" style="margin-top:14px">
-          <h4>Warnings</h4>
+          <h4>告警</h4>
           <div id="warnings" class="ops-warn-list">加载中...</div>
         </div>
         """
         js = """
         function esc(s){ return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
         function fmt(v){ return (v===null || v===undefined || v==='') ? '暂无数据/文件缺失' : String(v); }
+        function fmtTime(raw){
+          const s = String(raw||'').trim();
+          if(!s) return '';
+          let d = null;
+          if(/^[0-9]+(\\.[0-9]+)?$/.test(s)){
+            const n = Number(s);
+            if(Number.isFinite(n)){
+              const ms = n > 1e12 ? n : n * 1000;
+              d = new Date(ms);
+            }
+          }else{
+            d = new Date(s);
+          }
+          if(!d || Number.isNaN(d.getTime())) return s;
+          const dtf = new Intl.DateTimeFormat('zh-CN', {
+            timeZone: 'Asia/Shanghai',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hour12: false,
+          });
+          return dtf.format(d).replaceAll('/', '-');
+        }
         function renderMeta(elId, filePath, data){
           const ts = data && data.timestamp ? data.timestamp : '';
-          const tsTxt = fmt(ts);
+          const tsTxt = ts ? fmtTime(ts) : fmt(ts);
           const fileTxt = fmt(filePath);
           document.getElementById(elId).innerHTML = `
             <div>时间戳</div><b class="ellipsis" title="${esc(tsTxt)}">${esc(tsTxt)}</b>
@@ -4480,7 +4965,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           document.getElementById('healthOverall').textContent = label;
           const rules = Array.isArray(health?.rules_triggered) ? health.rules_triggered.slice(0,5) : [];
           document.getElementById('healthRules').innerHTML = rules.length
-            ? `<ul>${rules.map(r => `<li>${esc(r.metric)}: value=${esc(JSON.stringify(r.value))}, threshold=${esc(JSON.stringify(r.threshold))}, level=${esc(r.level)}</li>`).join('')}</ul>`
+            ? `<ul>${rules.map(r => `<li>${esc(r.metric)}：当前值=${esc(JSON.stringify(r.value))}，阈值=${esc(JSON.stringify(r.threshold))}，级别=${esc(r.level)}</li>`).join('')}</ul>`
             : '无触发规则';
         }
         async function loadOps(){
@@ -4497,7 +4982,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           const errs = Array.isArray(j?.errors) ? j.errors : [];
           document.getElementById('warnings').innerHTML = errs.length
             ? `<ul>${errs.map(e=>`<li>${esc(e)}</li>`).join('')}</ul>`
-            : '<div class="ops-empty">无</div>';
+            : '<div class="ops-empty">无告警</div>';
         }
         loadOps();
         """
@@ -4506,6 +4991,55 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     @app.get("/admin/runs", response_class=HTMLResponse)
     def page_runs(_: dict[str, str] = Depends(_auth_guard)) -> str:
         body = """
+        <style>
+          .runs-wrap {
+            max-height: 68vh;
+            min-height: 420px;
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: rgba(8,14,28,.28);
+          }
+          .runs-table {
+            width: 100%;
+            table-layout: fixed;
+          }
+          .runs-table thead th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: #0c1630;
+          }
+          .runs-id {
+            max-width: 220px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-weight: 600;
+          }
+          .runs-fail {
+            max-width: 340px;
+          }
+          .runs-fail-title {
+            font-weight: 700;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+          .time-rel {
+            font-weight: 700;
+          }
+          .time-abs {
+            color: var(--muted);
+            font-size: 12px;
+            margin-top: 2px;
+          }
+          @media (max-width: 1280px){
+            .runs-wrap { max-height: 58vh; min-height: 340px; }
+            .runs-id { max-width: 160px; }
+            .runs-fail { max-width: 220px; }
+          }
+        </style>
         <div class="layout">
           <div>
             <div class="card" style="margin-bottom:12px">
@@ -4537,7 +5071,9 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           </div>
           <div class="card">
             <h4>最近 30 条运行记录（按时间降序）</h4>
-            <div id="runTable"></div>
+            <div class="runs-wrap">
+              <div id="runTable"></div>
+            </div>
           </div>
         </div>
         """
@@ -4546,8 +5082,17 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         function fmtTime(raw){
           const s = String(raw||'').trim();
           if(!s) return '';
-          const d = new Date(s);
-          if(Number.isNaN(d.getTime())) return s;
+          let d = null;
+          if(/^[0-9]+(\\.[0-9]+)?$/.test(s)){
+            const n = Number(s);
+            if(Number.isFinite(n)){
+              const ms = n > 1e12 ? n : n * 1000;
+              d = new Date(ms);
+            }
+          }else{
+            d = new Date(s);
+          }
+          if(!d || Number.isNaN(d.getTime())) return s;
           const dtf = new Intl.DateTimeFormat('zh-CN', {
             timeZone: 'Asia/Shanghai',
             year: 'numeric', month: '2-digit', day: '2-digit',
@@ -4556,6 +5101,30 @@ def create_app(project_root: Path | None = None) -> FastAPI:
           });
           // "2026/02/18 18:56:22" -> "2026-02-18 18:56:22"
           return dtf.format(d).replaceAll('/', '-');
+        }
+        function fmtRelative(raw){
+          const s = String(raw||'').trim();
+          if(!s) return '-';
+          let d = null;
+          if(/^[0-9]+(\\.[0-9]+)?$/.test(s)){
+            const n = Number(s);
+            if(Number.isFinite(n)){
+              const ms = n > 1e12 ? n : n * 1000;
+              d = new Date(ms);
+            }
+          }else{
+            d = new Date(s);
+          }
+          if(!d || Number.isNaN(d.getTime())) return '-';
+          const diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
+          if(diffSec < 0) return '刚刚';
+          if(diffSec < 60) return `${diffSec}秒前`;
+          const m = Math.floor(diffSec / 60);
+          if(m < 60) return `${m}分钟前`;
+          const h = Math.floor(m / 60);
+          if(h < 24) return `${h}小时前`;
+          const day = Math.floor(h / 24);
+          return `${day}天前`;
         }
         function mapStatus(s){
           const st = String(s||'').toLowerCase();
@@ -4569,6 +5138,13 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         function short(s, n=120){
           const t = String(s||'').trim();
           return t.length > n ? t.slice(0, n-1) + '…' : t;
+        }
+        function mapSourceLabel(s){
+          const x = String(s||'').toLowerCase();
+          if(x === 'ledger') return '调度账本';
+          if(x === 'fallback') return '回退记录';
+          if(x === 'scheduler') return '调度器';
+          return s || '-';
         }
         function summarizeFail(raw){
           const s = String(raw||'').trim();
@@ -4605,19 +5181,24 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 
           const rows = (j.runs||[]).map(r=>{
             const fail = summarizeFail(r.failed_reason_summary||'');
+            const absTime = fmtTime(r.time||'');
+            const relTime = fmtRelative(r.time||'');
             return `<tr>
-              <td>${esc(r.run_id||'')}</td>
-              <td class="nowrap" title="${esc(String(r.time||''))}">${esc(fmtTime(r.time||''))}<div class="small">北京时间</div></td>
+              <td><div class="runs-id" title="${esc(r.run_id||'')}">${esc(r.run_id||'-')}</div></td>
+              <td class="nowrap" title="${esc(String(r.time||''))}">
+                <div class="time-rel">${esc(relTime)}</div>
+                <div class="time-abs">${esc(absTime || '-')}</div>
+              </td>
               <td>${esc(mapStatus(r.status))}</td>
-              <td>${esc(r.source||'')}</td>
-              <td title="${esc(fail.raw||'')}">
-                <div style="font-weight:700">${esc(fail.title||'')}</div>
+              <td title="${esc(r.source||'')}">${esc(mapSourceLabel(r.source))}</td>
+              <td class="runs-fail" title="${esc(fail.raw||'')}">
+                <div class="runs-fail-title">${esc(fail.title||'')}</div>
                 <div class="small">${esc(fail.hint||'')}</div>
               </td>
             </tr>`;
           }).join('');
-          document.getElementById('runTable').innerHTML = `<table>
-            <thead><tr><th>Run ID</th><th>时间</th><th>状态</th><th>来源</th><th>失败原因摘要</th></tr></thead>
+          document.getElementById('runTable').innerHTML = `<table class="runs-table">
+            <thead><tr><th>运行ID</th><th>时间</th><th>状态</th><th>来源</th><th>失败原因摘要</th></tr></thead>
             <tbody>${rows || '<tr><td colspan=\"5\">暂无数据</td></tr>'}</tbody>
           </table>`;
 
@@ -4628,7 +5209,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
               <td>${esc(r.fail_count||0)}</td>
             </tr>`).join('');
           document.getElementById('sourceFailTop').innerHTML = `<table>
-            <thead><tr><th>#</th><th>source_id</th><th>失败次数</th></tr></thead>
+            <thead><tr><th>#</th><th>信源ID</th><th>失败次数</th></tr></thead>
             <tbody>${topRows || '<tr><td colspan=\"3\">暂无失败记录</td></tr>'}</tbody>
           </table>`;
         }

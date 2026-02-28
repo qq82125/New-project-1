@@ -1,0 +1,27 @@
+version: "1.0.0"
+sources:
+  - id: nmpa-home-web
+    enabled: true
+    connector: web
+    url: https://www.nmpa.gov.cn/
+    name: NMPA
+    region: 中国
+    trust_tier: A
+    priority: 95
+    tags:
+      - regulatory
+      - cn
+      - zh
+
+  - id: pmda-home-web
+    enabled: true
+    connector: web
+    url: https://www.pmda.go.jp/english/index.html
+    name: PMDA
+    region: 亚太
+    trust_tier: A
+    priority: 92
+    tags:
+      - regulatory
+      - apac
+      - en
